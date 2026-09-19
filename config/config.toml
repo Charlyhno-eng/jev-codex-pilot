@@ -1,0 +1,9 @@
+# Local-only JEV Codex Pilot settings. Do not commit this file.
+
+[vercel_ai_gateway]
+# API key used by JEV through Vercel AI Gateway.
+api_key = ""
+
+[jev]
+# Provider adapter selected by the application.
+provider = "vercel-ai-gateway"

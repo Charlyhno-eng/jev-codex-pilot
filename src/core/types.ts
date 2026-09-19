@@ -1,0 +1,91 @@
+export type Complexity = "trivial" | "low" | "medium" | "high" | "very_high";
+export type CodexModel = "luna" | "terra" | "sol";
+export type Reasoning = "low" | "medium" | "high" | "xhigh";
+export type JobStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "SKIPPED";
+export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";
+
+export interface TaskSpec {
+  description: string;
+}
+export type ExecutionPhase = "QUEUED" | "STARTING" | "THINKING" | "WORKING" | "FINISHING" | "COMPLETED" | "ERROR";
+
+export interface ExecutionEvent {
+  id: string;
+  timestamp: string;
+  kind: "system" | "reasoning" | "command" | "file" | "message" | "error";
+  title: string;
+  detail?: string;
+  status?: "active" | "success" | "error";
+}
+
+export interface ExecutionState {
+  phase: ExecutionPhase;
+  model: string;
+  reasoning: Reasoning;
+  startedAt: string;
+  lastActivityAt: string;
+  completedAt?: string;
+  pid?: number;
+  threadId?: string;
+  usage?: CodexUsage;
+  compactedAfterTask?: boolean;
+  verification: "not_run" | "build_only" | "tests_passed" | "functional_verified";
+  events: ExecutionEvent[];
+}
+
+export interface CodexUsage {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+}
+
+export interface JevAnalysis {
+  complexity: Complexity;
+  complexity_score?: number;
+  task_types: string[];
+  model: CodexModel;
+  reasoning: Reasoning;
+  context_files: string[];
+  files_to_modify: string[];
+  rationale: string[];
+  evaluator: "typesafe-ai/jev";
+  evaluation_usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    /** Local estimate from the published JEV input-token rate. */
+    estimated_cost_usd?: number;
+  };
+}
+
+export interface Job {
+  id: string;
+  projectId: string;
+  batchId?: string;
+  order?: number;
+  projectPath: string;
+  tasks: TaskSpec[];
+  status: JobStatus;
+  analysis?: JevAnalysis;
+  createdAt: string;
+  updatedAt: string;
+  output?: string;
+  error?: string;
+  attempts: number;
+  /** Archived tasks stay in history but are hidden from the active board. */
+  archivedAt?: string;
+  execution?: ExecutionState;
+}
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  path: string;
+  /** True only when JEV created the project's initial AGENTS.md file. */
+  agentsCreatedByJev?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectFile { path: string; size: number; }
