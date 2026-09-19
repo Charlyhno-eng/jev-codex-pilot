@@ -50,3 +50,20 @@ describe("pending recommendation tuning", () => {
     expect(queue.adjustAnalysis(job.id, "model", -1)?.analysis?.model).toBe("luna");
   });
 });
+
+describe("automatic retry scheduling", () => {
+  it("returns only a failed task to pending and records why", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-retry-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const queue = new JobQueue(join(root, "data"));
+    const job = queue.create("project", project, [{ description: "Repair the button" }]);
+    queue.transition(job.id, "FAILED", { error: "Temporary failure" });
+
+    const retried = queue.scheduleAutomaticRetry(job.id, "Update the layout")!;
+    expect(retried.status).toBe("PENDING");
+    expect(retried.error).toBeUndefined();
+    expect(retried.execution).toBeUndefined();
+    expect(() => queue.scheduleAutomaticRetry(job.id, "Update the layout")).toThrow("Only failed tasks");
+  });
+});

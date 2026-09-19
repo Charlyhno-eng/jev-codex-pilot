@@ -31,7 +31,10 @@ createServer(async (request, response) => {
     if (request.method === "OPTIONS") return json(response, 204, {});
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
     if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true });
-    if (request.method === "GET" && url.pathname === "/api/jobs") return json(response, 200, queue.list(url.searchParams.get("projectId") ?? undefined));
+    if (request.method === "GET" && url.pathname === "/api/jobs") {
+      const projectId = url.searchParams.get("projectId") ?? undefined;
+      return json(response, 200, queue.list(projectId).filter(job => Boolean(projects.get(job.projectId))));
+    }
     if (request.method === "GET" && url.pathname === "/api/usage") {
       const jobs = [...sessionJevJobIds].map(id => queue.get(id)).filter((job): job is NonNullable<typeof job> => Boolean(job));
       const inputTokens = jobs.reduce((total, job) => total + (job.analysis?.evaluation_usage?.input_tokens ?? 0), 0);
@@ -48,6 +51,12 @@ createServer(async (request, response) => {
     if (request.method === "GET" && projectMatch) {
       const project = projects.get(projectMatch[1]);
       return project ? json(response, 200, project) : json(response, 404, { error: "Project not found" });
+    }
+    if (request.method === "DELETE" && projectMatch) {
+      const project = projects.get(projectMatch[1]);
+      if (!project) return json(response, 404, { error: "Project not found" });
+      if (queue.list(project.id).some(job => job.status === "RUNNING")) return json(response, 409, { error: "Wait for the active Codex execution to finish before removing this project." });
+      return json(response, 200, projects.unregister(project.id));
     }
     if (request.method === "GET" && url.pathname === "/api/billing") {
       const apiKey = appConfig.read().aiGatewayApiKey;
@@ -103,6 +112,15 @@ createServer(async (request, response) => {
     if (request.method === "PUT" && agentsMatch) {
       const input = await body(request) as { content?: string };
       return json(response, 200, { content: projects.updateAgents(agentsMatch[1], input.content ?? "") });
+    }
+    const threadControlMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/thread\/(compact|clear)$/);
+    if (threadControlMatch) {
+      const [, projectId, action] = threadControlMatch;
+      if (!projects.get(projectId)) return json(response, 404, { error: "Project not found" });
+      if (request.method === "GET") return json(response, 200, orchestrator.projectThreadStatus(projectId));
+      if (request.method !== "POST") return json(response, 405, { error: "Method not allowed" });
+      if (queue.list(projectId).some(job => job.status === "RUNNING")) return json(response, 409, { error: "Wait for the active Codex execution to finish before changing this project thread." });
+      return json(response, 200, action === "compact" ? await orchestrator.compactProjectThread(projectId) : await orchestrator.clearProjectThread(projectId));
     }
     const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|skip|archive|unarchive|move|adjust))?$/);
     if (!match) return json(response, 404, { error: "Route not found" });

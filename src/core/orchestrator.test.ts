@@ -12,6 +12,7 @@ afterEach(() => { process.env.PATH = originalPath; });
 
 const analyzerFor = (taskType: TaskType, complexity: Complexity = "low") =>
   (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity, complexityScore: 5 }));
+const accountUsage = async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", todayTokens: 42, lifetimeTokens: 420 });
 
 describe("Codex orchestration", () => {
   it("closes stdin and streams JSONL until the child exits", async () => {
@@ -28,7 +29,7 @@ describe("Codex orchestration", () => {
 
     const queue = new JobQueue(join(root, "queue"));
     const job = queue.create("project-1", project, [{ description: "Install dependencies" }]);
-    const orchestrator = new Orchestrator(queue, analyzerFor("installation"));
+    const orchestrator = new Orchestrator(queue, analyzerFor("installation"), async () => undefined, accountUsage);
     await orchestrator.prepare(job);
     const completed = await orchestrator.run(job.id);
 
@@ -44,7 +45,7 @@ describe("Codex orchestration", () => {
     expect(readFileSync(args, "utf8")).toContain('model_reasoning_effort="medium"');
   }, 3000);
 
-  it("runs every task as a separate Codex process in sequence", async () => {
+  it("groups compatible consecutive tasks into one Codex prompt", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-batch-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
@@ -67,19 +68,21 @@ describe("Codex orchestration", () => {
     const orchestrator = new Orchestrator(
       queue,
       (projectPath, tasks) => analyze(projectPath, tasks, async () => ({ taskType: decisions[decision++], complexity: "low", complexityScore: 2 })),
-      async () => undefined
+      async () => undefined,
+      accountUsage
     );
     await orchestrator.runBatch(jobs[0].id);
 
     expect(queue.listBatch(jobs[0].batchId!).map(job => job.status)).toEqual(["SUCCESS", "SUCCESS", "SUCCESS"]);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(3);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
     expect(queue.listBatch(jobs[0].batchId!)[0].analysis?.model).toBe("luna");
     expect(queue.listBatch(jobs[0].batchId!)[1].analysis?.model).toBe("luna");
+    expect(queue.listBatch(jobs[0].batchId!)[0].execution?.group?.size).toBe(3);
     expect(queue.listBatch(jobs[0].batchId!)[2].execution?.events.some(event => event.title === "Codex /compact started")).toBe(true);
     expect(queue.listBatch(jobs[0].batchId!)[2].execution?.events.some(event => event.title === "Codex /compact confirmed")).toBe(true);
   }, 3000);
 
-  it("keeps independent tasks moving when one task reports an implementation failure", async () => {
+  it("keeps a failed compatible group visible without stopping the batch", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-failure-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
@@ -96,9 +99,159 @@ describe("Codex orchestration", () => {
       { description: "First change" },
       { description: "Tests that depend on the change" }
     ]);
-    await new Orchestrator(queue, analyzerFor("feature")).runBatch(jobs[0].id);
+    await new Orchestrator(queue, analyzerFor("feature"), async () => undefined, accountUsage).runBatch(jobs[0].id);
 
     expect(queue.listBatch(jobs[0].batchId!).map(job => job.status)).toEqual(["FAILED", "FAILED"]);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
   }, 3000);
+
+  it("retries an earlier failed task once after a later task succeeds", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-retry-batch-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    const counter = join(root, "counter");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "main.ts"), "export {};");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\ncount=$(cat '${counter}' 2>/dev/null || echo 0)\ncount=$((count + 1))\nprintf '%s' "$count" > '${counter}'\nprintf 'run\\n' >> '${calls}'\nif [ "$count" = 1 ]; then\n  printf '%s\\n' '2026-01-01 ERROR patch rejected: writing is blocked by read-only sandbox' >&2\nelse\n  printf '%s\\n' '{"type":"thread.started","thread_id":"retry-thread"}' '{"type":"turn.completed"}'\nfi\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+
+    const queue = new JobQueue(join(root, "queue"));
+    const jobs = queue.createBatch("project-1", project, [
+      { description: "First change" },
+      { description: "Independent follow-up" }
+    ]);
+    const decisions = [
+      { model: "luna", reasoning: "low" },
+      { model: "terra", reasoning: "medium" }
+    ] as const;
+    let index = 0;
+    await new Orchestrator(queue, async () => ({
+      complexity: "low", task_types: ["feature"], complexity_score: 4,
+      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+    }), async () => undefined, accountUsage).runBatch(jobs[0].id);
+
+    const result = queue.listBatch(jobs[0].batchId!);
+    expect(result.map(job => job.status)).toEqual(["SUCCESS", "SUCCESS"]);
+    expect(result[0].attempts).toBe(2);
+    expect(result[1].attempts).toBe(1);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(3);
+  }, 3000);
+
+  it("groups Luna Low with Luna Medium, but not a later Luna High task", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-group-boundary-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "package.json"), "{}");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf 'run\\n' >> '${calls}'\nprintf '%s\\n' '{"type":"thread.started","thread_id":"group-thread"}' '{"type":"turn.completed","usage":{"input_tokens":7}}'\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const jobs = queue.createBatch("project-1", project, [{ description: "First small change" }, { description: "Second small change" }, { description: "Third focused change" }]);
+    const decisions = [
+      { model: "luna", reasoning: "low" },
+      { model: "luna", reasoning: "medium" },
+      { model: "luna", reasoning: "high" }
+    ] as const;
+    let index = 0;
+    await new Orchestrator(queue, async () => ({
+      complexity: "low", task_types: ["feature"], complexity_score: 4,
+      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+    }), async () => undefined, accountUsage).runBatch(jobs[0].id);
+
+    const result = queue.listBatch(jobs[0].batchId!);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(result.map(job => job.status)).toEqual(["SUCCESS", "SUCCESS", "SUCCESS"]);
+    expect(result[0].execution?.group?.size).toBe(2);
+    expect(result[1].execution?.group?.position).toBe(2);
+    expect(result[2].execution?.group).toBeUndefined();
+    expect(result[0].execution?.reasoning).toBe("medium");
+    expect(result[2].execution?.reasoning).toBe("high");
+  }, 3000);
+
+  it("groups Luna Medium with a following Luna Low task in the same prompt", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-descending-group-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "package.json"), "{}");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf 'run\\n' >> '${calls}'\nprintf '%s\\n' '{"type":"thread.started","thread_id":"descending-thread"}' '{"type":"turn.completed"}'\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const jobs = queue.createBatch("project-1", project, [{ description: "First routine change" }, { description: "Second trivial change" }]);
+    const decisions = [
+      { model: "luna", reasoning: "medium" },
+      { model: "luna", reasoning: "low" }
+    ] as const;
+    let index = 0;
+    await new Orchestrator(queue, async () => ({
+      complexity: "low", task_types: ["feature"], complexity_score: 4,
+      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+    }), async () => undefined, accountUsage).runBatch(jobs[0].id);
+
+    const result = queue.listBatch(jobs[0].batchId!);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(result.map(job => job.execution?.group?.size)).toEqual([2, 2]);
+    expect(result.map(job => job.execution?.reasoning)).toEqual(["medium", "medium"]);
+  }, 3000);
+
+  it("groups the next compatible project ticket even when it was submitted in a later batch", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-cross-batch-group-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "package.json"), "{}");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf 'run\\n' >> '${calls}'\nprintf '%s\\n' '{"type":"thread.started","thread_id":"cross-batch-thread"}' '{"type":"turn.completed"}'\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const firstBatch = queue.createBatch("project-1", project, [{ description: "Fix the upper obstacle" }]);
+    const secondBatch = queue.createBatch("project-1", project, [{ description: "Apply the cyberpunk theme" }]);
+    const decisions = [
+      { model: "luna", reasoning: "medium" },
+      { model: "luna", reasoning: "medium" }
+    ] as const;
+    let index = 0;
+    await new Orchestrator(queue, async () => ({
+      complexity: "low", task_types: ["feature"], complexity_score: 4,
+      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+    }), async () => undefined, accountUsage).runBatch(firstBatch[0].id);
+
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(queue.get(firstBatch[0].id)?.execution?.group?.size).toBe(2);
+    expect(queue.get(secondBatch[0].id)?.execution?.group?.position).toBe(2);
+    expect(queue.get(secondBatch[0].id)?.status).toBe("SUCCESS");
+  }, 3000);
+
+  it("compacts and clears an idle project thread without deleting task history", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-thread-controls-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Completed work" }]);
+    queue.transition(job.id, "SUCCESS", { execution: { phase: "COMPLETED", model: "gpt-5.6-luna", reasoning: "low", startedAt: "2026-01-01T00:00:00.000Z", lastActivityAt: "2026-01-01T00:00:00.000Z", threadId: "thread-to-control", verification: "not_run", events: [] } });
+    queue.recordProjectThread("project-1", "thread-to-control");
+    queue.recordSuccessfulTasks("project-1", 1);
+    const compacted: string[] = [];
+    const archived: string[] = [];
+    const orchestrator = new Orchestrator(queue, analyzerFor("feature"), async threadId => { compacted.push(threadId); }, accountUsage, async threadId => { archived.push(threadId); });
+
+    await expect(orchestrator.compactProjectThread("project-1")).resolves.toMatchObject({ threadId: "thread-to-control", successfulSinceCompaction: 0 });
+    expect(compacted).toEqual(["thread-to-control"]);
+    await expect(orchestrator.clearProjectThread("project-1")).resolves.toMatchObject({ threadId: "thread-to-control", successfulSinceCompaction: 0 });
+    expect(archived).toEqual(["thread-to-control"]);
+    expect(queue.get(job.id)?.status).toBe("SUCCESS");
+    expect(queue.get(job.id)?.execution?.threadArchivedAt).toBeTruthy();
+    expect(orchestrator.projectThreadStatus("project-1").threadId).toBeUndefined();
+  });
 });

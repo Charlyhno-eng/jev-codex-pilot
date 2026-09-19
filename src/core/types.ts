@@ -27,7 +27,13 @@ export interface ExecutionState {
   completedAt?: string;
   pid?: number;
   threadId?: string;
+  /** The rollout was archived through the project's explicit /clear control. */
+  threadArchivedAt?: string;
   usage?: CodexUsage;
+  /** A best-effort account-wide usage snapshot captured from Codex app-server. */
+  accountUsage?: CodexAccountUsage;
+  /** Present when compatible, independently analysed jobs shared one Codex prompt. */
+  group?: CodexExecutionGroup;
   compactedAfterTask?: boolean;
   verification: "not_run" | "build_only" | "tests_passed" | "functional_verified";
   events: ExecutionEvent[];
@@ -38,6 +44,20 @@ export interface CodexUsage {
   cached_input_tokens?: number;
   output_tokens?: number;
   reasoning_output_tokens?: number;
+}
+
+export interface CodexAccountUsage {
+  capturedAt: string;
+  lifetimeTokens?: number;
+  peakDailyTokens?: number;
+  todayTokens?: number;
+  unavailableReason?: string;
+}
+
+export interface CodexExecutionGroup {
+  id: string;
+  size: number;
+  position: number;
 }
 
 export interface JevAnalysis {
@@ -84,6 +104,8 @@ export interface ProjectRecord {
   path: string;
   /** True only when JEV created the project's initial AGENTS.md file. */
   agentsCreatedByJev?: boolean;
+  /** Hidden from the JEV workspace list, but retained locally so history can be restored by re-adding the same folder. */
+  removedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

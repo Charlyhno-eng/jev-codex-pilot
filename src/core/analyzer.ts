@@ -25,22 +25,32 @@ function describeError(error: unknown): string {
   return messages.join(" → ") || String(error);
 }
 
-function selectPolicy(taskType: TaskType, complexity: Complexity): { model: CodexModel; reasoning: Reasoning; reason: string } {
-  if (complexity === "trivial") return { model: "luna", reasoning: "low", reason: "The task is tiny and deterministic, so it uses the lowest-cost Codex setting." };
-  if (taskType === "installation") return { model: "luna", reasoning: "medium", reason: "Installation is a routine, bounded operation." };
-  if (complexity === "low") return { model: "luna", reasoning: "low", reason: "The task is small and bounded, so it uses the lowest-cost Codex setting." };
-  if (taskType === "ui_ux") {
-    if (complexity === "very_high") return { model: "sol", reasoning: "high", reason: "This UI/UX task is broad enough to need deeper implementation reasoning." };
-    if (complexity === "high") return { model: "sol", reasoning: "medium", reason: "This UI/UX task is substantial enough to need Sol." };
-    return { model: "terra", reasoning: "medium", reason: "This UI/UX task is substantial but does not require the highest model." };
+function selectPolicy(taskType: TaskType, complexity: Complexity, complexityScore: number): { model: CodexModel; reasoning: Reasoning; reason: string } {
+  if (complexity === "trivial" || complexityScore <= 3) {
+    return { model: "luna", reasoning: "low", reason: "This is a small, obvious change, so it uses the fastest and lowest-cost Codex setting." };
   }
-  if (taskType === "architecture" || taskType === "security") {
-    return complexity === "high" || complexity === "very_high"
-      ? { model: "sol", reasoning: "high", reason: "Architecture or security work needs deeper cross-project reasoning." }
-      : { model: "terra", reasoning: "medium", reason: "The scoped architecture or security task needs balanced reasoning." };
+  if (complexity === "low") {
+    return { model: "luna", reasoning: "medium", reason: "This is clearly defined routine development work, so Luna with medium reasoning is sufficient." };
   }
-  if (complexity === "medium") return { model: "terra", reasoning: "medium", reason: "Several related changes require balanced implementation reasoning." };
-  return { model: "sol", reasoning: complexity === "very_high" ? "high" : "medium", reason: "This task spans several substantial changes." };
+  if (complexity === "medium") {
+    if (taskType === "bugfix" || taskType === "performance") {
+      return { model: "terra", reasoning: "high", reason: "This needs investigation across related code, so it raises reasoning before model size." };
+    }
+    if (taskType === "architecture" || taskType === "security") {
+      return { model: "sol", reasoning: "medium", reason: "This involves important technical choices, so it uses Sol while the scope remains defined." };
+    }
+    return { model: "terra", reasoning: "medium", reason: "This is normal multi-file application work, so Terra provides the right capability and cost balance." };
+  }
+  if (complexity === "high") {
+    if (taskType === "bugfix" || taskType === "performance") {
+      return { model: "terra", reasoning: "high", reason: "This is a difficult investigation, so it increases reasoning before escalating to the largest model." };
+    }
+    if (taskType === "architecture" || taskType === "security" || taskType === "refactoring") {
+      return { model: "sol", reasoning: "high", reason: "This is a substantial engineering change with important cross-project decisions." };
+    }
+    return { model: "sol", reasoning: "medium", reason: "This is a substantial but well-scoped implementation task." };
+  }
+  return { model: "sol", reasoning: "xhigh", reason: "This is an exceptional, high-risk task where deeper exploration and verification are justified." };
 }
 
 export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator: TaskEvaluator = createConfiguredJevProvider(new AppConfigStore().read()).evaluate): Promise<JevAnalysis> {
@@ -84,7 +94,7 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
   if (installationOnly) {
     filesToModify.push(...files.filter(file => /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|cargo\.toml|go\.mod)$/i.test(file.path)).map(file => file.path));
   }
-  const policy = selectPolicy(decision.taskType, decision.complexity);
+  const policy = selectPolicy(decision.taskType, decision.complexity, decision.complexityScore);
 
   return {
     complexity: decision.complexity,

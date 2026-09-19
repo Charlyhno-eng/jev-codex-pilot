@@ -45,4 +45,21 @@ describe("project AGENTS.md setup", () => {
     expect(store.updateAgents(project.id, "# Edited instructions\n\nThe complete context.")).toBe("# Edited instructions\n\nThe complete context.\n");
     expect(readFileSync(join(projectPath, "AGENTS.md"), "utf8")).toBe("# Edited instructions\n\nThe complete context.\n");
   });
+
+  it("removes only the JEV workspace entry and restores it when the same folder is re-added", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-project-remove-"));
+    const projectPath = join(root, "removable-project");
+    mkdirSync(projectPath);
+    const store = new ProjectStore(join(root, "data"));
+    const project = store.create(projectPath, "Removable project", "A project that stays on disk.");
+
+    store.unregister(project.id);
+    expect(store.list()).toEqual([]);
+    expect(existsSync(projectPath)).toBe(true);
+    expect(existsSync(join(projectPath, "AGENTS.md"))).toBe(true);
+
+    const restored = store.create(projectPath);
+    expect(restored.id).toBe(project.id);
+    expect(store.list()).toHaveLength(1);
+  });
 });

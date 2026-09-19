@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { analyze } from "./analyzer.js";
 
 describe("JEV model policy", () => {
-  it("uses Luna medium when JEV classifies installation work", async () => {
+  it("uses Luna low for a small, clearly scoped installation task", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-install-"));
     writeFileSync(join(root, "AGENTS.md"), "Project rules");
     writeFileSync(join(root, "package.json"), "{}");
     const result = await analyze(root, [{ description: "Install the libraries required for the game" }], async () => ({ taskType: "installation", complexity: "low", complexityScore: 3 }));
     expect(result.model).toBe("luna");
-    expect(result.reasoning).toBe("medium");
+    expect(result.reasoning).toBe("low");
     expect(result.files_to_modify).toContain("package.json");
   });
 
@@ -35,6 +35,27 @@ describe("JEV model policy", () => {
     const result = await analyze(root, [{ description: "Redesign the settings panel" }], async () => ({ taskType: "ui_ux", complexity: "medium", complexityScore: 5 }));
     expect(result.model).toBe("terra");
     expect(result.reasoning).toBe("medium");
+  });
+
+  it("uses Luna medium for clearly defined routine development", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-routine-"));
+    const result = await analyze(root, [{ description: "Add a small API endpoint" }], async () => ({ taskType: "feature", complexity: "low", complexityScore: 4 }));
+    expect(result.model).toBe("luna");
+    expect(result.reasoning).toBe("medium");
+  });
+
+  it("raises reasoning before model size for difficult debugging", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-debug-"));
+    const result = await analyze(root, [{ description: "Investigate an intermittent state bug" }], async () => ({ taskType: "bugfix", complexity: "medium", complexityScore: 7 }));
+    expect(result.model).toBe("terra");
+    expect(result.reasoning).toBe("high");
+  });
+
+  it("uses Sol extra high for exceptional high-risk work", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-critical-"));
+    const result = await analyze(root, [{ description: "Audit the critical distributed security architecture" }], async () => ({ taskType: "security", complexity: "very_high", complexityScore: 10 }));
+    expect(result.model).toBe("sol");
+    expect(result.reasoning).toBe("xhigh");
   });
 
   it("uses JEV's decision and never recommends Astra", async () => {

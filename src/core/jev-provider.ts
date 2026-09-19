@@ -34,16 +34,16 @@ const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
 };
 
 const COMPLEXITY_CRITERIA = [
-  "1/10 — tiny deterministic change with negligible implementation judgment",
-  "2/10 — very small bounded change",
-  "3/10 — routine change in one well-understood area",
-  "4/10 — bounded change with some implementation judgment",
-  "5/10 — normal feature requiring several coordinated decisions",
-  "6/10 — moderately broad change across related files",
-  "7/10 — difficult change spanning important parts of the project",
-  "8/10 — broad change with significant uncertainty or integration risk",
-  "9/10 — very difficult project-wide change",
-  "10/10 — exceptional scope, ambiguity, or technical risk"
+  "1/10 — rename a variable, correct a typo, change a constant, or make one obvious text edit",
+  "2/10 — move or resize a small UI element, make a tiny CSS adjustment, or add one simple field",
+  "3/10 — a small, localized and clearly specified change in one well-understood area",
+  "4/10 — a routine function, component, endpoint, script, unit test, or bounded bug fix",
+  "5/10 — a normal feature requiring several coordinated implementation decisions",
+  "6/10 — multi-file application work with a few interactions, tests, or an API integration",
+  "7/10 — difficult debugging, a broad feature, or a change with meaningful technical uncertainty",
+  "8/10 — a major multi-service feature, migration, or substantial refactoring",
+  "9/10 — a very difficult project-wide change, critical review, or architectural migration",
+  "10/10 — exceptional ambiguity, risk, distributed behavior, security sensitivity, or deep cross-system reasoning"
 ] as const;
 
 export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
@@ -71,12 +71,12 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
               high: "A broad or technically difficult task spanning important subsystems or significant uncertainty.",
               very_high: "An exceptional, project-wide task with substantial ambiguity, risk, or deep cross-system reasoning."
             },
-            instructions: "Estimate only this one task. Do not inflate complexity because other tasks may exist. Package installation by itself is low at most."
+            instructions: "Estimate only this one task. Do not inflate complexity because other tasks may exist, the repository is large, the task is UI work, or the code uses Python. Moving, resizing, or repositioning a few buttons or other UI elements is trivial. Use low for clearly defined routine development such as a small endpoint, component, script, CRUD operation, or unit test."
           },
           complexityScore: {
             type: "score",
             criteria: COMPLEXITY_CRITERIA,
-            instructions: "Give this task a whole-number complexity level from 1 to 10. Return 1 for the smallest task and 10 for the most complex project-wide task."
+            instructions: "Give this task a whole-number complexity level from 1 to 10. Use 1–3 for obvious localized changes such as a typo, a constant, a simple field, or repositioning a few buttons. Return 10 only for exceptional project-wide risk or ambiguity."
           }
         }
       });

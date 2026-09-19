@@ -15,14 +15,21 @@ export class ProjectStore {
   }
 
   private persist() { writeFileSync(this.file, JSON.stringify(this.projects, null, 2)); }
-  list() { return [...this.projects].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
-  get(id: string) { return this.projects.find(project => project.id === id); }
+  list() { return this.projects.filter(project => !project.removedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
+  get(id: string) { return this.projects.find(project => project.id === id && !project.removedAt); }
 
   create(path: string, name?: string, context?: string): ProjectRecord {
     const absolute = resolve(path);
     if (!existsSync(absolute) || !statSync(absolute).isDirectory()) throw new Error("The selected project directory does not exist");
     const existing = this.projects.find(project => project.path === absolute);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.removedAt) {
+        existing.removedAt = undefined;
+        existing.updatedAt = new Date().toISOString();
+        this.persist();
+      }
+      return existing;
+    }
     const agentsFile = join(absolute, "AGENTS.md");
     const hasAgents = existsSync(agentsFile);
     if (!hasAgents && !context?.trim()) throw new Error("Describe the application context before creating a project without AGENTS.md");
@@ -77,6 +84,15 @@ export class ProjectStore {
     if (!project) return;
     project.updatedAt = new Date().toISOString();
     this.persist();
+  }
+
+  unregister(id: string) {
+    const project = this.get(id);
+    if (!project) throw new Error("Project not found");
+    project.removedAt = new Date().toISOString();
+    project.updatedAt = project.removedAt;
+    this.persist();
+    return project;
   }
 }
 

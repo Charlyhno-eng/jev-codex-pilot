@@ -15,6 +15,30 @@ Completed work remains available through the project history.<br>
 JEV usage and estimated costs are visible during the current session.<br>
 The application is designed for local, deliberate, and reversible project work.
 
+---
+
+## See JEV Codex Pilot in action
+
+![JEV Codex Pilot example1](assets/1.png)
+
+![JEV Codex Pilot example2](assets/2.png)
+
+---
+
+## Getting your Vercel AI Gateway API key
+
+To use JEV, you need a Vercel account and an AI Gateway API key.
+
+1. Create a Vercel account or sign in at [Vercel](https://vercel.com).
+2. Open the [JEV model page on Vercel AI Gateway](https://vercel.com/ai-gateway/models/jev).
+3. Follow the instructions to enable AI Gateway and create an API key.
+4. Copy your API key and add it to the application configuration.
+5. Start the classification process.
+
+The API key is used to authenticate requests to JEV through Vercel AI Gateway.
+
+---
+
 ## Quickstart
 
 ### Install
