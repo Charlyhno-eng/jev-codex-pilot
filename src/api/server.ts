@@ -13,12 +13,35 @@ import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
 import { assessTaskPrecision } from "../core/analyzer.js";
 import { estimateJevInputCost } from "../core/jev-pricing.js";
+import { TelegramBot } from "../core/telegram-bot.js";
 
 const queue = new JobQueue(resolve(process.cwd(), ".jev"));
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
 const orchestrator = new Orchestrator(queue);
 const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
+const telegram = new TelegramBot({
+  config: () => appConfig.read(),
+  listProjects: () => projects.list(),
+  listJobs: projectId => queue.list(projectId),
+  createTicket: (project, description) => {
+    if (!projects.hasAgents(project.id)) throw new Error("AGENTS.md is required");
+    projects.touch(project.id);
+    return queue.create(project.id, project.path, [{ description: description.trim() }]);
+  },
+  removeTicket: jobId => queue.removePending(jobId),
+  runPending: project => {
+    if (queue.list(project.id).some(job => job.status === "RUNNING")) return "running";
+    const next = queue.listProjectExecutionOrder(project.id).find(job => !job.archivedAt && job.status === "PENDING");
+    if (!next || orchestrator.isBatchRunning(next.id)) return "empty";
+    void orchestrator.runBatch(next.id).catch(error => {
+      const current = queue.get(next.id);
+      if (current && current.status !== "SUCCESS") queue.transition(next.id, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start" });
+    });
+    return "started";
+  },
+  pairChat: chatId => { appConfig.write({ telegramAllowedChatId: chatId, telegramEnabled: true }); }
+}, resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
 const sessionJevPrecisionUsage = { checks: 0, inputTokens: 0, estimatedCostUsd: 0 };
 const port = Number(process.env.PORT ?? 3000);
@@ -86,18 +109,48 @@ createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/settings") {
       const settings = appConfig.read();
-      return json(response, 200, { configured: Boolean(settings.aiGatewayApiKey), maskedApiKey: maskedApiKey(settings.aiGatewayApiKey) });
+      return json(response, 200, {
+        configured: Boolean(settings.aiGatewayApiKey),
+        maskedApiKey: maskedApiKey(settings.aiGatewayApiKey),
+        telegram: {
+          configured: Boolean(settings.telegramBotToken),
+          maskedBotToken: maskedApiKey(settings.telegramBotToken),
+          enabled: settings.telegramEnabled && Boolean(settings.telegramBotToken && settings.telegramAllowedChatId),
+          allowedChatId: settings.telegramAllowedChatId
+        }
+      });
     }
-    if (request.method === "GET" && url.pathname === "/api/settings/api-key") {
+    if (request.method === "GET" && url.pathname === "/api/settings/secrets") {
       const settings = appConfig.read();
-      if (!settings.aiGatewayApiKey) return json(response, 404, { error: "No Vercel AI Gateway API key has been configured." });
-      return json(response, 200, { apiKey: settings.aiGatewayApiKey });
+      return json(response, 200, { apiKey: settings.aiGatewayApiKey, telegramBotToken: settings.telegramBotToken });
     }
     if (request.method === "PUT" && url.pathname === "/api/settings") {
-      const input = await body(request) as { apiKey?: unknown };
-      if (typeof input.apiKey !== "string" || !input.apiKey.trim()) return json(response, 400, { error: "A Vercel AI Gateway API key is required." });
-      const settings = appConfig.write({ aiGatewayApiKey: input.apiKey.trim() });
-      return json(response, 200, { configured: true, maskedApiKey: maskedApiKey(settings.aiGatewayApiKey) });
+      const input = await body(request) as { apiKey?: unknown; telegramBotToken?: unknown; telegramAllowedChatId?: unknown; telegramEnabled?: unknown };
+      const change: Parameters<AppConfigStore["write"]>[0] = {};
+      if (input.apiKey !== undefined) {
+        if (typeof input.apiKey !== "string" || !input.apiKey.trim()) return json(response, 400, { error: "A Vercel AI Gateway API key is required." });
+        change.aiGatewayApiKey = input.apiKey.trim();
+      }
+      if (input.telegramBotToken !== undefined) {
+        if (typeof input.telegramBotToken !== "string" || !input.telegramBotToken.trim()) return json(response, 400, { error: "A Telegram bot token is required when replacing it." });
+        change.telegramBotToken = input.telegramBotToken.trim();
+      }
+      if (input.telegramAllowedChatId !== undefined) {
+        if (typeof input.telegramAllowedChatId !== "string" || !/^-?\d+$/.test(input.telegramAllowedChatId.trim())) return json(response, 400, { error: "The authorized Telegram chat ID must be numeric." });
+        change.telegramAllowedChatId = input.telegramAllowedChatId.trim();
+      }
+      if (input.telegramEnabled !== undefined) {
+        if (typeof input.telegramEnabled !== "boolean") return json(response, 400, { error: "Telegram enabled must be true or false." });
+        change.telegramEnabled = input.telegramEnabled;
+      }
+      if (!Object.keys(change).length) return json(response, 400, { error: "Provide at least one setting to update." });
+      const settings = appConfig.write(change);
+      telegram.refresh();
+      return json(response, 200, {
+        configured: Boolean(settings.aiGatewayApiKey),
+        maskedApiKey: maskedApiKey(settings.aiGatewayApiKey),
+        telegram: { configured: Boolean(settings.telegramBotToken), maskedBotToken: maskedApiKey(settings.telegramBotToken), enabled: settings.telegramEnabled && Boolean(settings.telegramBotToken && settings.telegramAllowedChatId), allowedChatId: settings.telegramAllowedChatId }
+      });
     }
     if (request.method === "POST" && url.pathname === "/api/system/select-directory") {
       return json(response, 200, { path: await selectDirectory() });
@@ -213,4 +266,7 @@ createServer(async (request, response) => {
     }
     return json(response, 405, { error: "Method not allowed" });
   } catch (error) { return json(response, 500, { error: error instanceof Error ? error.message : "Internal server error" }); }
-}).listen(port, "127.0.0.1", () => console.log(`JEV API ready at http://localhost:${port}`));
+}).listen(port, "127.0.0.1", () => {
+  telegram.start();
+  console.log(`JEV API ready at http://localhost:${port}`);
+});

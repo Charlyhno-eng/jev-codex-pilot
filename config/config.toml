@@ -1,9 +1,15 @@
 # Local-only JEV Codex Pilot settings. Do not commit this file.
 
+[jev]
+# Provider adapter selected by the application. Add a new adapter in src/core/jev-provider.ts when this changes.
+provider = "vercel-ai-gateway"
+
 [vercel_ai_gateway]
 # API key used by JEV through Vercel AI Gateway.
 api_key = ""
 
-[jev]
-# Provider adapter selected by the application.
-provider = "vercel-ai-gateway"
+[telegram]
+# Optional local Telegram integration. The bot only accepts this one private chat.
+enabled = true
+bot_token = ""
+allowed_chat_id = ""

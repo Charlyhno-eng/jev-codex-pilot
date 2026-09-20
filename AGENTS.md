@@ -45,3 +45,9 @@ This section is maintained by Codex. Append one concise English bullet for each 
 - Persisted a visible per-task JEV precision score, added queue scrolling after analysis and save-to-close context editing, and corrected Codex app-server compaction completion handling.
 - Changed draft precision checks to run only when the user explicitly validates a task with the checkmark or Ctrl+Enter.
 - Fixed JEV task-precision scoring to use the supported ten-level scale and added permanent pending-ticket removal from its editor.
+- Added an optional, private-chat-only Telegram bot for per-project progress and guided pending-ticket creation, with local TOML configuration.
+- Restored local credential reveal controls and added Telegram chat-ID pairing before private bot activation.
+- Refined the Telegram bot with an English rich-message interface, masked token display, and chat clearing for bot-managed messages.
+- Added Telegram-controlled Codex launch for explicitly selected projects that have pending tickets.
+- Reworked Telegram as a button-guided dashboard after `/start`, including a reliable inline ticket-cancellation action.
+- Rebuilt Telegram as a versioned single-screen flow with startup chat cleanup and confirmed deletion of newly created pending tickets.

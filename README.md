@@ -51,3 +51,13 @@ npm run dev
 ```
 
 Open `http://localhost:5173`, configure the Vercel AI Gateway key in Settings, and select or create a local project.
+
+## Optional Telegram bot
+
+Telegram can provide a private mobile view of project progress and a guided way to add tickets. It is disabled by default and works only while the local JEV API server is running.
+
+In **Settings**, paste the BotFather token and save it. The first private chat to send `/start` is paired automatically, its numeric ID is stored in `config/config.toml`, and the integration is enabled. The token can be revealed from the local settings dialog and is never sent to a project or Codex. Once paired, every other Telegram chat is ignored, preventing other users from reading project data or creating work.
+
+`/start` is the only command needed. It opens a single button-driven dashboard for project progress, ticket creation, and explicit Codex launches. The bot edits that dashboard in place, accepts only actions valid for the current step, removes typed ticket descriptions from the chat, and offers a confirmed delete action immediately after ticket creation.
+
+When the bot service or a new `/start` session begins, it clears the private chat before presenting a fresh dashboard. Telegram only permits bots to delete messages sent within the previous 48 hours, so older messages may remain when Telegram enforces that platform limit.
