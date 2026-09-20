@@ -4,16 +4,13 @@
 
 ---
 
-JEV Codex Pilot is a local workspace for coordinating software projects with Codex.<br>
-It keeps several projects available from one focused interface.<br>
-Each task is evaluated independently before execution begins.<br>
-The workspace records the recommended model and reasoning level for every task.<br>
-Codex runs tasks in separate sessions while preserving project continuity.<br>
-Live events make progress, verification, and token usage easy to follow.<br>
-Project context is kept in `AGENTS.md` and can be reviewed from the workspace.<br>
-Completed work remains available through the project history.<br>
-JEV usage and estimated costs are visible during the current session.<br>
-The application is designed for local, deliberate, and reversible project work.
+JEV Codex Pilot turns a backlog into a clear, controlled development workflow. Bring your projects, context, and ideas into one focused cockpit. JEV sizes every 
+task and recommends the right Codex model and reasoning level. Launch focused work with the confidence that each ticket has its own plan.
+
+Watch Codex work live, with progress, verification, visuals, and token usage in view. Keep project memory close through an editable `AGENTS.md` context. Move 
+from idea to implementation without losing the thread. Review completed work, recover tasks, and inspect every local Git change. See JEV usage and estimated cost as your session moves forward.
+
+One workspace to turn sharper decisions into better software, faster.
 
 ---
 

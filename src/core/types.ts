@@ -7,6 +7,16 @@ export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refact
 export interface TaskSpec {
   description: string;
 }
+
+/** A local visual reference attached to one independently analysed ticket. */
+export interface JobAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  /** Private local path used only when JEV starts Codex with --image. */
+  path: string;
+  size: number;
+}
 export type ExecutionPhase = "QUEUED" | "STARTING" | "THINKING" | "WORKING" | "FINISHING" | "COMPLETED" | "ERROR";
 
 export interface ExecutionEvent {
@@ -86,6 +96,7 @@ export interface Job {
   order?: number;
   projectPath: string;
   tasks: TaskSpec[];
+  attachments?: JobAttachment[];
   status: JobStatus;
   analysis?: JevAnalysis;
   createdAt: string;

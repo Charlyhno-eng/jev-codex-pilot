@@ -116,17 +116,18 @@ export class JobQueue {
     this.persist();
   }
   transition(id: string, status: JobStatus, more: Partial<Job> = {}) { return this.update(id, { ...more, status }); }
-  moveFailed(id: string, status: "PENDING" | "SUCCESS") {
+  moveManually(id: string, status: "PENDING" | "SUCCESS") {
     const job = this.get(id);
     if (!job) throw new Error("Job not found");
-    if (job.status !== "FAILED") throw new Error("Only failed tasks can be moved manually");
+    const allowed = (job.status === "FAILED" && (status === "PENDING" || status === "SUCCESS")) || (job.status === "SUCCESS" && status === "PENDING");
+    if (!allowed) throw new Error("Only failed tasks, or successful tasks returned to pending, can be moved manually");
     const now = new Date().toISOString();
     const event = {
       id: randomUUID(),
       timestamp: now,
       kind: "system" as const,
       title: status === "SUCCESS" ? "Task manually validated" : "Task returned to pending",
-      detail: status === "SUCCESS" ? "A user confirmed that this task is complete." : "A user returned this failed task to the pending column.",
+      detail: status === "SUCCESS" ? "A user confirmed that this task is complete." : `A user returned this ${job.status.toLowerCase()} task to the pending column.`,
       status: "success" as const
     };
     return this.update(id, {
@@ -140,6 +141,14 @@ export class JobQueue {
         events: [...job.execution.events, event]
       } : undefined
     });
+  }
+  updatePendingTask(id: string, description: string) {
+    const job = this.get(id);
+    if (!job) throw new Error("Job not found");
+    if (job.status !== "PENDING") throw new Error("Only pending tasks can be edited");
+    const text = description.trim();
+    if (!text) throw new Error("A task description is required");
+    return this.update(id, { tasks: [{ description: text }], analysis: undefined, error: undefined });
   }
   scheduleAutomaticRetry(id: string, completedTaskDescription: string) {
     const job = this.get(id);

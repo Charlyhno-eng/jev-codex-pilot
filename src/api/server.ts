@@ -1,12 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { resolve } from "node:path";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { JobQueue } from "../core/queue.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { ProjectStore } from "../core/projects.js";
 import { fetchGatewayCredits } from "../core/gateway-credits.js";
 import { AppConfigStore, maskedApiKey } from "../core/app-config.js";
 import { listProjectFiles } from "../core/project-reader.js";
+import { readProjectDiff } from "../core/git-diff.js";
+import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
 
@@ -14,6 +16,7 @@ const queue = new JobQueue(resolve(process.cwd(), ".jev"));
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
 const orchestrator = new Orchestrator(queue);
 const appConfig = new AppConfigStore();
+const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
 const port = Number(process.env.PORT ?? 3000);
 
@@ -22,7 +25,7 @@ function json(response: ServerResponse, status: number, data: unknown) {
   response.end(JSON.stringify(data));
 }
 async function body(request: IncomingMessage): Promise<unknown> {
-  let raw = ""; for await (const chunk of request) raw += chunk;
+  let raw = ""; for await (const chunk of request) { raw += chunk; if (Buffer.byteLength(raw) > 28 * 1024 * 1024) throw new Error("The request is too large. Attach at most four images of 5 MB each."); }
   return raw ? JSON.parse(raw) : {};
 }
 
@@ -57,6 +60,11 @@ createServer(async (request, response) => {
       if (!project) return json(response, 404, { error: "Project not found" });
       if (queue.list(project.id).some(job => job.status === "RUNNING")) return json(response, 409, { error: "Wait for the active Codex execution to finish before removing this project." });
       return json(response, 200, projects.unregister(project.id));
+    }
+    const diffMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/diff$/);
+    if (request.method === "GET" && diffMatch) {
+      const project = projects.get(diffMatch[1]);
+      return project ? json(response, 200, readProjectDiff(project.path)) : json(response, 404, { error: "Project not found" });
     }
     if (request.method === "GET" && url.pathname === "/api/billing") {
       const apiKey = appConfig.read().aiGatewayApiKey;
@@ -95,13 +103,17 @@ createServer(async (request, response) => {
       return json(response, 200, { path: absolute, files, count: files.length, truncated: files.length >= 5000, hasAgents: existsSync(resolve(absolute, "AGENTS.md")) });
     }
     if (request.method === "POST" && url.pathname === "/api/jobs") {
-      const input = await body(request) as { projectId?: string; tasks?: TaskSpec[] };
-      const tasks = Array.isArray(input.tasks) ? input.tasks.filter(task => task?.description?.trim()).map(task => ({ description: task.description.trim() })) : [];
+      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[] }> };
+      const taskInputs = Array.isArray(input.tasks) ? input.tasks.filter(task => task?.description?.trim()) : [];
+      for (const task of taskInputs) attachments.validate(task.attachments);
+      const tasks = taskInputs.map(task => ({ description: task.description.trim() }));
       const project = input.projectId ? projects.get(input.projectId) : undefined;
       if (!project || !tasks.length) return json(response, 400, { error: "A saved project and at least one task are required" });
       if (!projects.hasAgents(project.id)) return json(response, 400, { error: "Describe the application and create AGENTS.md before analyzing tasks." });
       projects.touch(project.id);
-      return json(response, 201, queue.createBatch(project.id, project.path, tasks));
+      const created = queue.createBatch(project.id, project.path, tasks);
+      const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments) })!);
+      return json(response, 201, withAttachments);
     }
     const agentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/agents$/);
     if (request.method === "GET" && agentsMatch) return json(response, 200, { content: projects.readAgents(agentsMatch[1]) });
@@ -122,7 +134,15 @@ createServer(async (request, response) => {
       if (queue.list(projectId).some(job => job.status === "RUNNING")) return json(response, 409, { error: "Wait for the active Codex execution to finish before changing this project thread." });
       return json(response, 200, action === "compact" ? await orchestrator.compactProjectThread(projectId) : await orchestrator.clearProjectThread(projectId));
     }
-    const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|skip|archive|unarchive|move|adjust))?$/);
+    const attachmentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)$/);
+    if (request.method === "GET" && attachmentMatch) {
+      const job = queue.get(attachmentMatch[1]);
+      const attachment = job?.attachments?.find(candidate => candidate.id === attachmentMatch[2]);
+      if (!attachment || !existsSync(attachment.path)) return json(response, 404, { error: "Image attachment not found" });
+      response.writeHead(200, { "Content-Type": attachment.mimeType, "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+      return response.end(readFileSync(attachment.path));
+    }
+    const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|skip|archive|unarchive|move|adjust|edit))?$/);
     if (!match) return json(response, 404, { error: "Route not found" });
     const [, id, action] = match; const job = queue.get(id);
     if (!job) return json(response, 404, { error: "Job not found" });
@@ -134,8 +154,19 @@ createServer(async (request, response) => {
     if (request.method === "POST" && action === "unarchive") return json(response, 200, queue.unarchive(id));
     if (request.method === "POST" && action === "move") {
       const input = await body(request) as { status?: unknown };
-      if (input.status !== "PENDING" && input.status !== "SUCCESS") return json(response, 400, { error: "A failed task can only be moved to pending or success." });
-      return json(response, 200, queue.moveFailed(id, input.status));
+      if (input.status !== "PENDING" && input.status !== "SUCCESS") return json(response, 400, { error: "Choose Pending or Success as the destination." });
+      return json(response, 200, queue.moveManually(id, input.status));
+    }
+    if (request.method === "POST" && action === "edit") {
+      const input = await body(request) as { description?: unknown; attachments?: ImageAttachmentInput[] };
+      if (typeof input.description !== "string") return json(response, 400, { error: "A task description is required." });
+      attachments.validate(input.attachments);
+      const updated = queue.updatePendingTask(id, input.description)!;
+      const nextAttachments = input.attachments === undefined ? updated.attachments : [...(updated.attachments ?? []), ...attachments.saveForJob(updated.id, input.attachments)];
+      if (nextAttachments !== updated.attachments) queue.update(updated.id, { attachments: nextAttachments });
+      const prepared = await orchestrator.prepare(queue.get(updated.id)!);
+      sessionJevJobIds.add(id);
+      return json(response, 200, prepared);
     }
     if (request.method === "POST" && action === "adjust") {
       const input = await body(request) as { dimension?: unknown; delta?: unknown };

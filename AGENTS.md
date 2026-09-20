@@ -35,3 +35,9 @@ This section is maintained by Codex. Append one concise English bullet for each 
 - Added compatible-task prompt grouping for adjacent jobs that share a model and differ by no more than one reasoning level.
 - Made compatible-task grouping direction-independent and added idle-only, project-scoped Codex `/compact` and reversible `/clear` controls with a persistent compaction counter.
 - Extended grouping to the next compatible project ticket across submission batches, required English AGENTS.md and README.md updates from every Codex ticket, and added reversible project removal from the web workspace.
+- Added reversible Success-to-Pending task recovery, pending-ticket editing with fresh JEV analysis and visual references, plus a read-only Git change-review workspace.
+- Updated the Codex launch label to count exactly the currently pending tasks in the project queue.
+- Made project change review prominent with a dedicated “Review changes” action and strengthened the “Create Workspace” control.
+- Simplified the project header, added a dedicated Git-review card, and enabled previous/next navigation across task recommendations.
+- Centered task-review navigation controls to keep previous and next actions aligned on narrow layouts.
+- Removed the redundant Changes navbar link and grouped the Vercel credits and settings controls more tightly.

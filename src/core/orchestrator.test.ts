@@ -29,6 +29,9 @@ describe("Codex orchestration", () => {
 
     const queue = new JobQueue(join(root, "queue"));
     const job = queue.create("project-1", project, [{ description: "Install dependencies" }]);
+    const image = join(root, "reference.png");
+    writeFileSync(image, "visual reference");
+    queue.update(job.id, { attachments: [{ id: "reference", name: "reference.png", mimeType: "image/png", size: 16, path: image }] });
     const orchestrator = new Orchestrator(queue, analyzerFor("installation"), async () => undefined, accountUsage);
     await orchestrator.prepare(job);
     const completed = await orchestrator.run(job.id);
@@ -43,6 +46,8 @@ describe("Codex orchestration", () => {
     expect(readFileSync(args, "utf8")).toContain("--model");
     expect(readFileSync(args, "utf8")).toContain("gpt-5.6-luna");
     expect(readFileSync(args, "utf8")).toContain('model_reasoning_effort="medium"');
+    expect(readFileSync(args, "utf8")).toContain("--image");
+    expect(readFileSync(args, "utf8")).toContain(image);
   }, 3000);
 
   it("groups compatible consecutive tasks into one Codex prompt", async () => {

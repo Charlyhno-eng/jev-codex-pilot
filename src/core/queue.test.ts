@@ -27,16 +27,42 @@ describe("task archive", () => {
     const job = queue.create("project", project, [{ description: "Repair the game movement" }]);
     queue.transition(job.id, "FAILED", { error: "A duplicate launch was reported" });
 
-    const restored = queue.moveFailed(job.id, "PENDING")!;
+    const restored = queue.moveManually(job.id, "PENDING")!;
     expect(restored.status).toBe("PENDING");
     expect(restored.error).toBeUndefined();
     queue.transition(job.id, "FAILED");
-    expect(queue.moveFailed(job.id, "SUCCESS")?.status).toBe("SUCCESS");
-    expect(() => queue.moveFailed(job.id, "PENDING")).toThrow("Only failed tasks");
+    expect(queue.moveManually(job.id, "SUCCESS")?.status).toBe("SUCCESS");
+    expect(queue.moveManually(job.id, "PENDING")?.status).toBe("PENDING");
+    expect(() => queue.moveManually(job.id, "SUCCESS")).toThrow("Only failed tasks");
+  });
+
+  it("returns a successful task to pending when a user wants it redone", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-success-move-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const queue = new JobQueue(join(root, "data"));
+    const job = queue.create("project", project, [{ description: "Completed work that needs revision" }]);
+    queue.transition(job.id, "SUCCESS");
+
+    const restored = queue.moveManually(job.id, "PENDING")!;
+    expect(restored.status).toBe("PENDING");
   });
 });
 
 describe("pending recommendation tuning", () => {
+  it("edits a pending task and invalidates its old JEV recommendation", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-edit-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const queue = new JobQueue(join(root, "data"));
+    const job = queue.create("project", project, [{ description: "Move one button" }]);
+    queue.update(job.id, { analysis: { complexity: "low", complexity_score: 2, task_types: ["ui_ux"], model: "luna", reasoning: "low", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
+
+    const edited = queue.updatePendingTask(job.id, "Move both navigation buttons")!;
+    expect(edited.tasks[0].description).toBe("Move both navigation buttons");
+    expect(edited.analysis).toBeUndefined();
+  });
+
   it("moves model and reasoning one level while the task is pending", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-tuning-"));
     const project = join(root, "project");

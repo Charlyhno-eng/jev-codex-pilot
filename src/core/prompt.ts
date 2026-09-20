@@ -1,11 +1,12 @@
-import type { JevAnalysis, Job, TaskSpec } from "./types.js";
+import type { JevAnalysis, Job, JobAttachment, TaskSpec } from "./types.js";
 
 function section(title: string, values: string[]) { return values.length ? `\n${title}:\n${values.map(x => `- ${x}`).join("\n")}` : ""; }
 
-export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis): string {
+export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attachments: JobAttachment[] = []): string {
   return [
     "You are executing one task prepared by JEV. Implement only this task.",
     "Task:", ...tasks.map(task => `- ${task.description}`),
+    ...(attachments.length ? [`Visual references: ${attachments.map(attachment => attachment.name).join(", ")}. They are attached to this prompt; inspect them and use them only as context for this task.`] : []),
     section("Relevant context (read only these files before expanding if necessary)", analysis.context_files),
     section("Known files likely to change", analysis.files_to_modify),
     "Choose the implementation and exact files yourself from the project architecture.",
@@ -20,7 +21,7 @@ export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis): stri
  * JEV decisions remain per job. This only combines the implementation prompts
  * for a small compatible execution group.
  */
-export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis">>): string {
+export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis" | "attachments">>): string {
   return [
     "You are executing a small compatible group of tasks prepared independently by JEV.",
     "Complete every numbered task below. Do not merge their scope or skip a task.",
@@ -30,6 +31,7 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
       return [
         `\nTask ${index + 1}:`,
         ...job.tasks.map(task => `- ${task.description}`),
+        ...(job.attachments?.length ? [`Task ${index + 1} visual references: ${job.attachments.map(attachment => attachment.name).join(", ")}. These images are attached to the shared prompt; use them only for this numbered task.`] : []),
         section(`Task ${index + 1} relevant context (read these files first)`, analysis.context_files),
         section(`Task ${index + 1} likely files to change`, analysis.files_to_modify)
       ].filter(Boolean);

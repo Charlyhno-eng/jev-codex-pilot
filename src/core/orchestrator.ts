@@ -262,7 +262,7 @@ export class Orchestrator {
     if (Math.max(...ranks) - Math.min(...ranks) > 1) throw new Error("Grouped tasks may differ by at most one reasoning level.");
     const reasoning = prepared.map(job => job.analysis!.reasoning).sort((a, b) => reasoningRank[b] - reasoningRank[a])[0];
     const groupId = prepared.length > 1 ? randomUUID() : undefined;
-    const prompt = prepared.length === 1 ? buildCodexPrompt(first.tasks, first.analysis!) : buildCodexGroupPrompt(prepared);
+    const prompt = prepared.length === 1 ? buildCodexPrompt(first.tasks, first.analysis!, first.attachments) : buildCodexGroupPrompt(prepared);
     const startedAt = new Date().toISOString();
     for (const [index, job] of prepared.entries()) {
       this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, execution: { phase: "STARTING", model: `gpt-5.6-${model}`, reasoning, startedAt, lastActivityAt: startedAt, verification: "not_run", group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: gpt-5.6-${model} · ${reasoning}.`, status: "success" as const }] : [])] } });
@@ -271,15 +271,18 @@ export class Orchestrator {
       const excluded = new Set(prepared.map(job => job.id));
       const previous = this.queue.list(first.projectId).filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
       const common = ["--json", "--skip-git-repo-check", "--model", `gpt-5.6-${model}`, "-c", `model_reasoning_effort=\"${reasoning}\"`];
-      const args = previous?.execution?.threadId ? ["exec", "resume", ...common, previous.execution.threadId, prompt] : ["exec", ...common, "--color", "never", "--approve-for-me", prompt];
+      const imageArgs = prepared.flatMap(job => (job.attachments ?? []).flatMap(attachment => ["--image", attachment.path]));
+      const args = previous?.execution?.threadId ? ["exec", "resume", ...common, ...imageArgs, previous.execution.threadId, prompt] : ["exec", ...common, "--color", "never", "--approve-for-me", ...imageArgs, prompt];
       const child = spawn("codex", args, { cwd: first.projectPath, shell: false });
       child.stdin.end();
       const launchedAt = new Date().toISOString();
       const tag = prepared.length > 1 ? `${first.id.slice(0, 8)}+${prepared.length - 1}` : first.id.slice(0, 8);
-      const commandSummary = `codex ${args.map(arg => arg === prompt ? "<task prompt>" : arg).join(" ")}`;
+      const imagePaths = new Set(prepared.flatMap(job => (job.attachments ?? []).map(attachment => attachment.path)));
+      const commandSummary = `codex ${args.map(arg => arg === prompt ? "<task prompt>" : imagePaths.has(arg) ? "<attached image>" : arg).join(" ")}`;
       process.stdout.write(`\x1b[36m[codex:${tag}] JEV SELECTED model=gpt-5.6-${model} reasoning=${reasoning}${groupId ? ` group=${prepared.length}` : ""}\x1b[0m\n`);
       process.stdout.write(`\x1b[36m[codex:${tag}] EXEC ${commandSummary}\x1b[0m\n`);
-      this.updateGroup(prepared, execution => ({ ...execution, pid: child.pid, lastActivityAt: launchedAt, events: [...execution.events, { id: randomUUID(), timestamp: launchedAt, kind: "system", title: "JEV selection applied", detail: `Model used: gpt-5.6-${model} · reasoning used: ${reasoning}`, status: "success" }, { id: randomUUID(), timestamp: launchedAt, kind: "command", title: "Codex command launched", detail: commandSummary, status: "success" }] }));
+      const attachmentCount = prepared.reduce((total, job) => total + (job.attachments?.length ?? 0), 0);
+      this.updateGroup(prepared, execution => ({ ...execution, pid: child.pid, lastActivityAt: launchedAt, events: [...execution.events, { id: randomUUID(), timestamp: launchedAt, kind: "system", title: "JEV selection applied", detail: `Model used: gpt-5.6-${model} · reasoning used: ${reasoning}`, status: "success" }, ...(attachmentCount ? [{ id: randomUUID(), timestamp: launchedAt, kind: "system" as const, title: "Visual references attached", detail: `${attachmentCount} image${attachmentCount === 1 ? "" : "s"} sent to Codex with --image.`, status: "success" as const }] : []), { id: randomUUID(), timestamp: launchedAt, kind: "command", title: "Codex command launched", detail: commandSummary, status: "success" }] }));
       let rawOutput = ""; let stdoutBuffer = ""; let settled = false; let reportedFailure = false; let usage: CodexUsage | undefined; let verification: Verification = "not_run";
       const record = (line: string) => {
         if (!line.trim()) return;
