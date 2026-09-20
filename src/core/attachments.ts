@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import type { JobAttachment } from "./types.js";
@@ -38,6 +38,10 @@ export class AttachmentStore {
     const directory = join(this.root, jobId);
     mkdirSync(directory, { recursive: true });
     return (input as unknown[]).map((value, index) => this.saveOne(directory, index, value as ImageAttachmentInput));
+  }
+
+  removeForJob(jobId: string) {
+    rmSync(join(this.root, jobId), { recursive: true, force: true });
   }
 
   private saveOne(directory: string, index: number, input: ImageAttachmentInput): JobAttachment {

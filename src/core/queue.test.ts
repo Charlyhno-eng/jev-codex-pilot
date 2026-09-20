@@ -50,6 +50,20 @@ describe("task archive", () => {
 });
 
 describe("pending recommendation tuning", () => {
+  it("permanently removes a pending task without allowing completed history to be removed", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-remove-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const queue = new JobQueue(join(root, "data"));
+    const pending = queue.create("project", project, [{ description: "Discard this draft" }]);
+    const completed = queue.create("project", project, [{ description: "Keep this completed task" }]);
+    queue.transition(completed.id, "SUCCESS");
+
+    expect(queue.removePending(pending.id)?.id).toBe(pending.id);
+    expect(queue.get(pending.id)).toBeUndefined();
+    expect(() => queue.removePending(completed.id)).toThrow("Only pending tasks");
+  });
+
   it("edits a pending task and invalidates its old JEV recommendation", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-edit-"));
     const project = join(root, "project");

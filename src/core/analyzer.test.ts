@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analyze } from "./analyzer.js";
+import { analyze, assessTaskPrecision } from "./analyzer.js";
 
 describe("JEV model policy", () => {
   it("uses Luna low for a small, clearly scoped installation task", async () => {
@@ -77,5 +77,24 @@ describe("JEV model policy", () => {
     writeFileSync(join(root, "README.md"), "Project overview");
     const result = await analyze(root, [{ description: "Fix the game" }], async () => ({ taskType: "bugfix", complexity: "low", complexityScore: 2 }));
     expect(result.context_files.slice(0, 2)).toEqual(["AGENTS.md", "README.md"]);
+  });
+
+  it("assesses draft-task precision against the project's AGENTS.md context", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-precision-"));
+    writeFileSync(join(root, "AGENTS.md"), "This project is a browser game. Keep controls keyboard accessible.");
+    let state = "";
+    const result = await assessTaskPrecision(root, "Move the jump button below the score", async value => {
+      state = value;
+      return { score: 70, usage: { inputTokens: 18, totalTokens: 22 } };
+    });
+
+    expect(result.score).toBe(70);
+    expect(state).toContain("browser game");
+    expect(state).toContain("Move the jump button");
+  });
+
+  it("requires AGENTS.md for a draft-task precision check", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-precision-no-context-"));
+    await expect(assessTaskPrecision(root, "Move a button", async () => ({ score: 80 }))).rejects.toThrow("AGENTS.md is required");
   });
 });

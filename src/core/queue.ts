@@ -208,5 +208,13 @@ export class JobQueue {
     if (!job) return undefined;
     return this.update(id, { archivedAt: undefined });
   }
+  removePending(id: string) {
+    const index = this.jobs.findIndex(job => job.id === id);
+    if (index < 0) return undefined;
+    if (this.jobs[index].status !== "PENDING") throw new Error("Only pending tasks can be removed");
+    const [removed] = this.jobs.splice(index, 1);
+    this.persist();
+    return removed;
+  }
   clear() { this.jobs = []; this.persist(); }
 }

@@ -1,13 +1,14 @@
 import { basename, extname } from "node:path";
 import { listProjectFiles, readProjectFile } from "./project-reader.js";
 import { AppConfigStore } from "./app-config.js";
-import { createConfiguredJevProvider, type JevDecision } from "./jev-provider.js";
+import { createConfiguredJevProvider, type JevDecision, type JevTaskPrecision } from "./jev-provider.js";
 import { estimateJevInputCost } from "./jev-pricing.js";
 import type { CodexModel, Complexity, JevAnalysis, Reasoning, TaskSpec, TaskType } from "./types.js";
 
 const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".rb", ".php", ".vue", ".svelte"]);
 
 export type TaskEvaluator = (state: string) => Promise<JevDecision>;
+export type TaskPrecisionEvaluator = (state: string) => Promise<JevTaskPrecision>;
 
 function unique<T>(items: T[]): T[] { return [...new Set(items)]; }
 function mentions(value: string): string[] {
@@ -99,6 +100,7 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
   return {
     complexity: decision.complexity,
     complexity_score: decision.complexityScore,
+    precision_score: decision.taskPrecision,
     task_types: [decision.taskType],
     model: policy.model,
     reasoning: policy.reasoning,
@@ -120,4 +122,25 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
       estimated_cost_usd: estimateJevInputCost(decision.usage.inputTokens ?? decision.usage.totalTokens ?? 0)
     } : undefined
   };
+}
+
+/**
+ * Gives a draft task an advisory clarity score before it becomes a queue job.
+ * It deliberately reads only the project's AGENTS.md, never writes to the
+ * target project, and remains separate from the per-job execution analysis.
+ */
+export async function assessTaskPrecision(projectPath: string, description: string, evaluator: TaskPrecisionEvaluator = createConfiguredJevProvider(new AppConfigStore().read()).evaluateTaskPrecision): Promise<JevTaskPrecision> {
+  const task = description.trim();
+  if (!task) throw new Error("A task description is required for the JEV precision check.");
+  const agents = readProjectFile(projectPath, "AGENTS.md");
+  if (!agents) throw new Error("AGENTS.md is required before JEV can assess task precision.");
+  try {
+    return await evaluator(JSON.stringify({
+      task,
+      project: { agents: agents.slice(0, 12_000) },
+      question: "How precisely does this task describe the intended work in this project's context?"
+    }));
+  } catch (error) {
+    throw new Error(`JEV task-precision check failed: ${describeError(error)}`);
+  }
 }

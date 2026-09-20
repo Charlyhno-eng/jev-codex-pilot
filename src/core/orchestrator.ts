@@ -18,6 +18,16 @@ function text(value: unknown): string | undefined {
 }
 function messageOf(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
+export function isCompactionComplete(message: Record<string, unknown>) {
+  const item = (message.params as { item?: { type?: unknown } } | undefined)?.item;
+  return (message.method === "item/completed" || message.method === "item.completed") && item?.type === "contextCompaction";
+}
+
+function isCompactionFailure(message: Record<string, unknown>) {
+  const turn = (message.params as { turn?: { status?: unknown } } | undefined)?.turn;
+  return (message.method === "turn/completed" || message.method === "turn.completed") && turn?.status === "failed";
+}
+
 function describe(event: JsonEvent): { phase: ExecutionPhase; item?: Omit<ExecutionEvent, "id" | "timestamp">; threadId?: string } {
   const type = event.type ?? "event";
   const item = event.item ?? {};
@@ -48,7 +58,7 @@ function compactThread(threadId: string): Promise<void> {
     const child = spawn("codex", ["app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
-    const timer = setTimeout(() => finish(new Error("Codex compaction timed out")), 60_000);
+    const timer = setTimeout(() => finish(new Error("Codex compaction timed out after 5 minutes")), 300_000);
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
     const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill(); error ? reject(error) : resolve(); };
     lines.on("line", line => {
@@ -59,8 +69,8 @@ function compactThread(threadId: string): Promise<void> {
       if (message.id === 1 && message.result?.thread) send({ method: "thread/compact/start", id: 2, params: { threadId } });
       if (message.id === 1 && message.error) return finish(new Error(message.error.message ?? "Could not resume Codex thread"));
       if (message.id === 2 && message.error) return finish(new Error(message.error.message ?? "Could not compact Codex thread"));
-      if (message.method === "item/completed" && message.params?.item?.type === "contextCompaction") finish();
-      if (message.method === "turn/completed" && message.params?.turn?.status === "failed") finish(new Error("Codex compaction failed"));
+      if (isCompactionComplete(message)) finish();
+      if (isCompactionFailure(message)) finish(new Error("Codex compaction failed"));
     });
     child.on("error", finish);
     child.on("close", code => { if (!settled) finish(code === 0 ? undefined : new Error(`Codex app server exited with code ${code}`)); });

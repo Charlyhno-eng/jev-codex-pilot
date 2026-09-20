@@ -73,6 +73,8 @@ export interface CodexExecutionGroup {
 export interface JevAnalysis {
   complexity: Complexity;
   complexity_score?: number;
+  /** Advisory clarity of the task wording within the project's AGENTS.md context. */
+  precision_score?: number;
   task_types: string[];
   model: CodexModel;
   reasoning: Reasoning;

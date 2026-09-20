@@ -41,3 +41,7 @@ This section is maintained by Codex. Append one concise English bullet for each 
 - Simplified the project header, added a dedicated Git-review card, and enabled previous/next navigation across task recommendations.
 - Centered task-review navigation controls to keep previous and next actions aligned on narrow layouts.
 - Removed the redundant Changes navbar link and grouped the Vercel credits and settings controls more tightly.
+- Improved draft-task composition with mouse-friendly text editing, direct image attachments, auto-growing inputs, contextual JEV precision guidance, and a simplified launch-only execution action.
+- Persisted a visible per-task JEV precision score, added queue scrolling after analysis and save-to-close context editing, and corrected Codex app-server compaction completion handling.
+- Changed draft precision checks to run only when the user explicitly validates a task with the checkmark or Ctrl+Enter.
+- Fixed JEV task-precision scoring to use the supported ten-level scale and added permanent pending-ticket removal from its editor.

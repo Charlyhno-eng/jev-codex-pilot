@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JobQueue } from "./queue.js";
-import { Orchestrator } from "./orchestrator.js";
+import { isCompactionComplete, Orchestrator } from "./orchestrator.js";
 import { analyze } from "./analyzer.js";
 import type { Complexity, TaskType } from "./types.js";
 
@@ -15,6 +15,11 @@ const analyzerFor = (taskType: TaskType, complexity: Complexity = "low") =>
 const accountUsage = async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", todayTokens: 42, lifetimeTokens: 420 });
 
 describe("Codex orchestration", () => {
+  it("recognizes the current app-server context-compaction completion notification", () => {
+    expect(isCompactionComplete({ method: "item/completed", params: { item: { type: "contextCompaction" } } })).toBe(true);
+    expect(isCompactionComplete({ method: "item.started", params: { item: { type: "contextCompaction" } } })).toBe(false);
+  });
+
   it("closes stdin and streams JSONL until the child exits", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-run-"));
     const project = join(root, "project");

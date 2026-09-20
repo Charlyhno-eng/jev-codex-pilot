@@ -11,6 +11,8 @@ import { readProjectDiff } from "../core/git-diff.js";
 import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
+import { assessTaskPrecision } from "../core/analyzer.js";
+import { estimateJevInputCost } from "../core/jev-pricing.js";
 
 const queue = new JobQueue(resolve(process.cwd(), ".jev"));
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
@@ -18,6 +20,7 @@ const orchestrator = new Orchestrator(queue);
 const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
+const sessionJevPrecisionUsage = { checks: 0, inputTokens: 0, estimatedCostUsd: 0 };
 const port = Number(process.env.PORT ?? 3000);
 
 function json(response: ServerResponse, status: number, data: unknown) {
@@ -42,7 +45,12 @@ createServer(async (request, response) => {
       const jobs = [...sessionJevJobIds].map(id => queue.get(id)).filter((job): job is NonNullable<typeof job> => Boolean(job));
       const inputTokens = jobs.reduce((total, job) => total + (job.analysis?.evaluation_usage?.input_tokens ?? 0), 0);
       const estimatedCostUsd = jobs.reduce((total, job) => total + (job.analysis?.evaluation_usage?.estimated_cost_usd ?? 0), 0);
-      return json(response, 200, { analyses: jobs.length, inputTokens, estimatedCostUsd });
+      return json(response, 200, {
+        analyses: jobs.length,
+        precisionChecks: sessionJevPrecisionUsage.checks,
+        inputTokens: inputTokens + sessionJevPrecisionUsage.inputTokens,
+        estimatedCostUsd: estimatedCostUsd + sessionJevPrecisionUsage.estimatedCostUsd
+      });
     }
     if (request.method === "GET" && url.pathname === "/api/projects") return json(response, 200, projects.list());
     if (request.method === "POST" && url.pathname === "/api/projects") {
@@ -125,6 +133,20 @@ createServer(async (request, response) => {
       const input = await body(request) as { content?: string };
       return json(response, 200, { content: projects.updateAgents(agentsMatch[1], input.content ?? "") });
     }
+    const taskPrecisionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/task-precision$/);
+    if (request.method === "POST" && taskPrecisionMatch) {
+      const project = projects.get(taskPrecisionMatch[1]);
+      if (!project) return json(response, 404, { error: "Project not found" });
+      if (!projects.hasAgents(project.id)) return json(response, 400, { error: "AGENTS.md is required before JEV can assess task precision." });
+      const input = await body(request) as { description?: unknown };
+      if (typeof input.description !== "string" || !input.description.trim()) return json(response, 400, { error: "A task description is required." });
+      const result = await assessTaskPrecision(project.path, input.description);
+      const inputTokens = result.usage?.inputTokens ?? result.usage?.totalTokens ?? 0;
+      sessionJevPrecisionUsage.checks += 1;
+      sessionJevPrecisionUsage.inputTokens += inputTokens;
+      sessionJevPrecisionUsage.estimatedCostUsd += estimateJevInputCost(inputTokens);
+      return json(response, 200, { precision: result.score });
+    }
     const threadControlMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/thread\/(compact|clear)$/);
     if (threadControlMatch) {
       const [, projectId, action] = threadControlMatch;
@@ -142,7 +164,7 @@ createServer(async (request, response) => {
       response.writeHead(200, { "Content-Type": attachment.mimeType, "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
       return response.end(readFileSync(attachment.path));
     }
-    const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|skip|archive|unarchive|move|adjust|edit))?$/);
+    const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|skip|archive|unarchive|remove|move|adjust|edit))?$/);
     if (!match) return json(response, 404, { error: "Route not found" });
     const [, id, action] = match; const job = queue.get(id);
     if (!job) return json(response, 404, { error: "Job not found" });
@@ -152,6 +174,11 @@ createServer(async (request, response) => {
     if (request.method === "POST" && action === "skip") return json(response, 200, queue.transition(id, "SKIPPED"));
     if (request.method === "POST" && action === "archive") return json(response, 200, queue.archive(id));
     if (request.method === "POST" && action === "unarchive") return json(response, 200, queue.unarchive(id));
+    if (request.method === "POST" && action === "remove") {
+      const removed = queue.removePending(id);
+      if (removed) attachments.removeForJob(removed.id);
+      return json(response, 200, { id: removed?.id, removed: true });
+    }
     if (request.method === "POST" && action === "move") {
       const input = await body(request) as { status?: unknown };
       if (input.status !== "PENDING" && input.status !== "SUCCESS") return json(response, 400, { error: "Choose Pending or Success as the destination." });

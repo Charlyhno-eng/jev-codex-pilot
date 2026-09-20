@@ -8,6 +8,12 @@ export type JevDecision = {
   taskType: TaskType;
   complexity: Complexity;
   complexityScore: number;
+  taskPrecision?: number;
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+};
+
+export type JevTaskPrecision = {
+  score: number;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 };
 
@@ -15,6 +21,7 @@ export type JevProvider = {
   id: string;
   inputUsdPerMillionTokens: number;
   evaluate(state: string): Promise<JevDecision>;
+  evaluateTaskPrecision(state: string): Promise<JevTaskPrecision>;
 };
 
 const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
@@ -45,6 +52,22 @@ const COMPLEXITY_CRITERIA = [
   "9/10 — a very difficult project-wide change, critical review, or architectural migration",
   "10/10 — exceptional ambiguity, risk, distributed behavior, security sensitivity, or deep cross-system reasoning"
 ] as const;
+
+export const TASK_PRECISION_CRITERIA = [
+  "0% — no actionable outcome, scope, or useful relation to the project context.",
+  "10% — a vague request with almost no implementation detail.",
+  "20% — an outcome is hinted at, but the intended behavior is unclear.",
+  "35% — a concrete intent is present, with several important ambiguities remaining.",
+  "45% — the main outcome is understandable, but key constraints or acceptance expectations are absent.",
+  "55% — the task is workable, though Codex would need to make notable assumptions.",
+  "65% — the outcome and relevant context are almost clear enough for normal implementation.",
+  "75% — the task is specific, scoped, and well aligned with the project context.",
+  "90% — the task has clear behavior, boundaries, and useful acceptance expectations.",
+  "100% — the requested outcome, scope, constraints, and success criteria are unambiguous in context."
+] as const;
+
+const TASK_PRECISION_PERCENTAGES = [0, 10, 20, 35, 45, 55, 65, 75, 90, 100] as const;
+export function taskPrecisionPercentage(level: number) { return TASK_PRECISION_PERCENTAGES[Math.max(0, Math.min(TASK_PRECISION_PERCENTAGES.length - 1, Math.round(level)))]!; }
 
 export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
   if (!config.aiGatewayApiKey) throw new Error("Configure a Vercel AI Gateway API key before analyzing a task.");
@@ -77,6 +100,11 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
             type: "score",
             criteria: COMPLEXITY_CRITERIA,
             instructions: "Give this task a whole-number complexity level from 1 to 10. Use 1–3 for obvious localized changes such as a typo, a constant, a simple field, or repositioning a few buttons. Return 10 only for exceptional project-wide risk or ambiguity."
+          },
+          taskPrecision: {
+            type: "score",
+            criteria: TASK_PRECISION_CRITERIA,
+            instructions: "Score how precisely this single task is stated for Codex in the supplied AGENTS.md project context. Judge clarity of the requested outcome, boundaries, expected behavior, and relevant constraints. Do not lower the score merely because implementation will be difficult. A score below 70 means Codex would benefit from a clearer task description; this is advisory only."
           }
         }
       });
@@ -84,6 +112,24 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
         taskType: result.answers.taskType.choice,
         complexity: result.answers.complexity.choice,
         complexityScore: Math.max(1, Math.min(10, Math.round(result.answers.complexityScore.score) + 1)),
+        taskPrecision: taskPrecisionPercentage(result.answers.taskPrecision.score),
+        usage: result.usage
+      };
+    },
+    async evaluateTaskPrecision(state) {
+      const result = await evaluate({
+        model,
+        state,
+        questions: {
+          precision: {
+            type: "score",
+            criteria: TASK_PRECISION_CRITERIA,
+            instructions: "Score how precisely this single task is stated for Codex in the supplied AGENTS.md project context. Judge clarity of the requested outcome, boundaries, expected behavior, and relevant constraints. Do not lower the score merely because implementation will be difficult. A score below 70 means Codex would benefit from a clearer task description; this is advisory only."
+          }
+        }
+      });
+      return {
+        score: taskPrecisionPercentage(result.answers.precision.score),
         usage: result.usage
       };
     }
