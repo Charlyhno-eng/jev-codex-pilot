@@ -11,8 +11,23 @@ import type { JobQueue } from "./queue.js";
 import type { CodexAccountUsage, CodexModel, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
 
 type JsonEvent = Record<string, unknown> & { type?: string; item?: Record<string, unknown> };
-type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified";
+type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
 const reasoningRank = Object.fromEntries(REASONING_LEVELS.map((level, index) => [level, index])) as Record<Reasoning, number>;
+
+function totalCodexTokens(usage?: CodexUsage) {
+  if (!usage) return undefined;
+  const total = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0);
+  return total > 0 ? total : undefined;
+}
+
+function estimateExecutionTokens(prompt: string, jobs: Job[], reasoning: Reasoning) {
+  const promptTokens = Math.ceil(prompt.length / 4);
+  const complexityReserve = { trivial: 300, low: 700, medium: 1_400, high: 2_600, very_high: 4_500 };
+  const reasoningReserve = { low: 300, medium: 700, high: 1_400, xhigh: 2_500 };
+  const scopeReserve = jobs.reduce((total, job) => total + ((job.analysis?.context_files.length ?? 0) + (job.analysis?.files_to_modify.length ?? 0)) * 80, 0);
+  const workReserve = jobs.reduce((total, job) => total + complexityReserve[job.analysis!.complexity], 0);
+  return Math.max(1_000, Math.ceil((promptTokens + scopeReserve + workReserve + reasoningReserve[reasoning] + 500) / 100) * 100);
+}
 
 function text(value: unknown): string | undefined {
   if (typeof value === "string") return value.slice(0, 4000);
@@ -20,6 +35,22 @@ function text(value: unknown): string | undefined {
   return JSON.stringify(value).slice(0, 4000);
 }
 function messageOf(error: unknown) { return error instanceof Error ? error.message : String(error); }
+
+function missingVerificationDependencies(output: string): string[] {
+  const names = [...output.matchAll(/(?:No module named|ModuleNotFoundError:\s*No module named|Cannot find module)\s+['"`]?([\w.-]+)/gi)].map(match => match[1]);
+  names.push(...[...output.matchAll(/(?:^|\n)([\w.-]+):\s*command not found/gi)].map(match => match[1]));
+  return [...new Set(names)];
+}
+
+function verificationDecision(outcome: "passed" | "failed" | "environment_blocked" | undefined, commands: Array<{ output: string; exitCode?: number }>) {
+  const blockers = [...new Set(commands.flatMap(command => missingVerificationDependencies(command.output)))];
+  const hasCodeFailure = commands.some(command => /(?:\b\d+\s+failed\b|AssertionError|error TS\d+|SyntaxError|(?:^|\n)FAIL\s+|FAILED\s+\S+::)/i.test(command.output));
+  const unexplainedCommandFailure = commands.some(command => command.exitCode !== undefined && command.exitCode !== 0 && !missingVerificationDependencies(command.output).length);
+  if (blockers.length && !hasCodeFailure && !unexplainedCommandFailure) return { kind: "environment_blocked" as const, blockers };
+  if (outcome === "passed" && !hasCodeFailure) return { kind: "passed" as const, blockers: [] };
+  if (outcome === "failed" || outcome === "environment_blocked" || hasCodeFailure || unexplainedCommandFailure) return { kind: "failed" as const, blockers: [] };
+  return { kind: "passed" as const, blockers: [] };
+}
 
 /** Performs this backend operation. */
 export function isCompactionComplete(message: Record<string, unknown>) {
@@ -314,8 +345,9 @@ export class Orchestrator {
     const groupId = prepared.length > 1 ? randomUUID() : undefined;
     const prompt = prepared.length === 1 ? buildCodexPrompt(first.tasks, first.analysis!, first.attachments) : buildCodexGroupPrompt(prepared);
     const startedAt = new Date().toISOString();
+    const estimatedTokens = estimateExecutionTokens(prompt, prepared, reasoning);
     for (const [index, job] of prepared.entries()) {
-      this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, execution: { phase: "STARTING", model: modelId, reasoning, startedAt, lastActivityAt: startedAt, verification: "not_run", group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: ${modelId} · ${reasoning}.`, status: "success" as const }] : [])] } });
+      this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, execution: { phase: "STARTING", model: modelId, reasoning, startedAt, lastActivityAt: startedAt, verification: "not_run", metrics: { estimatedTokens, turns: 1, repairs: 0, routes: [{ stage: "implementation", model: modelId, reasoning }] }, group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: ${modelId} · ${reasoning}.`, status: "success" as const }] : [])] } });
     }
     return new Promise(resolve => {
       const excluded = new Set(prepared.map(job => job.id));
@@ -335,7 +367,8 @@ export class Orchestrator {
       this.updateGroup(prepared, execution => ({ ...execution, pid: child.pid, lastActivityAt: launchedAt, events: [...execution.events, { id: randomUUID(), timestamp: launchedAt, kind: "system", title: "JEV selection applied", detail: `Model used: ${modelId} · reasoning used: ${reasoning}`, status: "success" }, ...(attachmentCount ? [{ id: randomUUID(), timestamp: launchedAt, kind: "system" as const, title: "Visual references attached", detail: `${attachmentCount} image${attachmentCount === 1 ? "" : "s"} sent to Codex with --image.`, status: "success" as const }] : []), { id: randomUUID(), timestamp: launchedAt, kind: "command", title: "Codex command launched", detail: commandSummary, status: "success" }] }));
       let rawOutput = ""; let stdoutBuffer = ""; let settled = false; let reportedFailure = false; let usage: CodexUsage | undefined; let verification: Verification = "not_run";
       let activeStage: "implementation" | "verification" | "repair" = "implementation";
-      let stageTurnFailed = false; let verificationCommandFailed = false; let verificationReportedFailed = false;
+      let stageTurnFailed = false; let verificationOutcome: "passed" | "failed" | "environment_blocked" | undefined;
+      let verificationCommands: Array<{ output: string; exitCode?: number }> = [];
       let requestedRoute: { tier: CodexModel; effort: Reasoning } | undefined;
       const record = (line: string) => {
         if (!line.trim()) return;
@@ -354,8 +387,15 @@ export class Orchestrator {
           const requested = String(item.text ?? "").match(/(?:^|\n)JEV_ROUTE=(luna|terra|sol):(low|medium|high|xhigh)\s*$/);
           requestedRoute = requested ? { tier: requested[1] as CodexModel, effort: requested[2] as Reasoning } : undefined;
         }
-        if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "command_execution" && typeof item.exit_code === "number" && item.exit_code !== 0 && /\b(test|vitest|jest|pytest|cargo test|go test|playwright|cypress|build|tsc)\b/i.test(String(item.command ?? ""))) verificationCommandFailed = true;
-        if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "agent_message" && /JEV_VERIFICATION_FAILED/.test(String(item.text ?? ""))) verificationReportedFailed = true;
+        if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "command_execution") {
+          verificationCommands.push({ output: String(item.aggregated_output ?? ""), exitCode: typeof item.exit_code === "number" ? item.exit_code : undefined });
+        }
+        if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "agent_message") {
+          const message = String(item.text ?? "");
+          if (/JEV_VERIFICATION_PASSED/.test(message)) verificationOutcome = "passed";
+          if (/JEV_VERIFICATION_FAILED/.test(message)) verificationOutcome = "failed";
+          if (/JEV_VERIFICATION_ENVIRONMENT_BLOCKED/.test(message)) verificationOutcome = "environment_blocked";
+        }
         if (parsed.type === "item.completed" && item.type === "command_execution" && item.exit_code === 0) {
           const command = String(item.command ?? "");
           if (/playwright|cypress|webdriver|browser/i.test(command)) verification = "functional_verified";
@@ -383,11 +423,11 @@ export class Orchestrator {
           if (!threadId) return { code: null, error: "Codex did not provide a thread ID for continuation" };
           const nextModelId = await activeCodexModelId(tier);
           activeStage = stage; stageTurnFailed = false;
-          if (stage === "verification") { verificationCommandFailed = false; verificationReportedFailed = false; }
+          if (stage === "verification") { verificationCommands = []; verificationOutcome = undefined; }
           const routedAt = new Date().toISOString();
           const previousSetting = this.queue.get(first.id)?.execution;
           logJev(`[codex:${tag}] Model route for ${stage}: ${previousSetting?.model ?? "unknown"}/${previousSetting?.reasoning ?? "unknown"} → ${nextModelId}/${effort}`);
-          this.updateGroup(prepared, execution => ({ ...execution, model: nextModelId, reasoning: effort, lastActivityAt: routedAt, events: [...execution.events, { id: randomUUID(), timestamp: routedAt, kind: "system", title: "Codex model changed", detail: `${stage}: ${nextModelId} · ${effort} reasoning`, status: "active" }] }));
+          this.updateGroup(prepared, execution => ({ ...execution, model: nextModelId, reasoning: effort, lastActivityAt: routedAt, metrics: execution.metrics ? { ...execution.metrics, turns: execution.metrics.turns + 1, repairs: execution.metrics.repairs + (stage === "repair" ? 1 : 0), routes: [...execution.metrics.routes, { stage, model: nextModelId, reasoning: effort }] } : execution.metrics, events: [...execution.events, { id: randomUUID(), timestamp: routedAt, kind: "system", title: "Codex model changed", detail: `${stage}: ${nextModelId} · ${effort} reasoning`, status: "active" }] }));
           return resumeCodexTurn(first.projectPath, threadId, nextModelId, effort, instruction, tag, record, pid => this.updateGroup(prepared, execution => ({ ...execution, pid })));
         };
         if (success) {
@@ -401,22 +441,32 @@ export class Orchestrator {
           if (requestedRoute && success) { success = false; failureMessage = "Codex requested more than three implementation routing turns"; }
         }
         if (success) {
-          const checked = await runStage("verification", "luna", "low", "Verify the work completed in the previous turn. Run the relevant existing tests or build checks for every task in this execution. Do not change project files in this verification turn. If a check fails, report the failure and end your final message with JEV_VERIFICATION_FAILED. If there are no applicable checks, explain that briefly. Do not claim success for checks that did not run.");
+          const checked = await runStage("verification", "luna", "low", "Verify the work completed in the previous turn. Run relevant existing tests or build checks for every task. Do not change project source files. Distinguish code failures from missing environment tools or dependencies. If a missing dependency is declared in the project and can be installed in the existing environment, install it and rerun the affected check. If checks fail because of code, end with JEV_VERIFICATION_FAILED. If all applicable checks pass, end with JEV_VERIFICATION_PASSED. If only checks blocked by missing environment dependencies remain, report which checks passed and which could not run, then end with JEV_VERIFICATION_ENVIRONMENT_BLOCKED. Do not claim success for checks that did not run.");
           success = checked.code === 0 && !checked.error && !stageTurnFailed;
           if (!success) failureMessage = checked.error ?? `Codex verification turn exited with code ${checked.code}`;
-          let failedChecks = verificationCommandFailed || verificationReportedFailed;
-          for (let attempt = 0; success && failedChecks && attempt < 2; attempt++) {
-            const repairTier = MODEL_LEVELS[Math.max(MODEL_LEVELS.indexOf(model), MODEL_LEVELS.indexOf("terra"))];
-            const repairEffort = REASONING_LEVELS[Math.max(reasoningRank[reasoning], reasoningRank.high)];
-            const repaired = await runStage("repair", repairTier, repairEffort, "The previous verification turn found failing checks. Diagnose and fix the cause for the current ticket or ticket group. Preserve the requested scope and update documentation if your fix changes it. Finish with a concise explanation; verification will run separately.");
+          let decision = verificationDecision(verificationOutcome, verificationCommands);
+          const recordValidation = (result: typeof decision) => {
+            const validatedAt = new Date().toISOString();
+            if (result.kind === "environment_blocked") {
+              verification = "environment_blocked";
+              logJev(`[codex:${tag}] Verification partially blocked by missing environment dependencies: ${result.blockers.join(", ") || "see Codex verification output"}`);
+            }
+            this.updateGroup(prepared, execution => ({ ...execution, metrics: execution.metrics ? { ...execution.metrics, stoppedAfterValidation: true } : execution.metrics, events: [...execution.events, { id: randomUUID(), timestamp: validatedAt, kind: "system", title: result.kind === "environment_blocked" ? "Verification partially blocked" : "Verification satisfied", detail: result.kind === "environment_blocked" ? `Missing environment dependencies: ${result.blockers.join(", ") || "see Codex verification output"}. Development completed; affected checks were not verified.` : "Validation passed; no further repair turn was started.", status: result.kind === "environment_blocked" ? "active" : "success" }] }));
+          };
+          if (success && decision.kind !== "failed") recordValidation(decision);
+          for (let attempt = 0; success && decision.kind === "failed" && attempt < 2; attempt++) {
+            const repairTier = attempt === 0 ? MODEL_LEVELS[Math.max(MODEL_LEVELS.indexOf(model), MODEL_LEVELS.indexOf("terra"))] : "sol";
+            const repairEffort = attempt === 0 ? REASONING_LEVELS[Math.max(reasoningRank[reasoning], reasoningRank.high)] : "high";
+            const repaired = await runStage("repair", repairTier, repairEffort, `The previous verification found a real failing check. Diagnose the root cause and fix the current ticket${attempt ? ". A previous repair did not resolve it; reconsider the diagnosis and inspect the exact failing output." : "."} Check whether a missing tool or dependency explains a failure before changing application code. Preserve scope and update documentation if the fix changes it. Verification will run separately.`);
             success = repaired.code === 0 && !repaired.error && !stageTurnFailed && !reportedFailure;
             if (!success) { failureMessage = repaired.error ?? `Codex repair turn exited with code ${repaired.code}`; break; }
-            const rechecked = await runStage("verification", "luna", "low", "Run the relevant tests or build checks again after the repair. Do not change project files. If any check fails, report the failure and end your final message with JEV_VERIFICATION_FAILED. Report skipped checks honestly.");
+            const rechecked = await runStage("verification", attempt === 0 ? "luna" : "terra", attempt === 0 ? "low" : "medium", "Run the relevant checks again after the repair. Do not change project files. Report actual outcomes and skipped checks. End with JEV_VERIFICATION_PASSED when all applicable checks pass, JEV_VERIFICATION_ENVIRONMENT_BLOCKED when only missing environment dependencies block checks, or JEV_VERIFICATION_FAILED for code or test failures.");
             success = rechecked.code === 0 && !rechecked.error && !stageTurnFailed;
             if (!success) { failureMessage = rechecked.error ?? `Codex verification turn exited with code ${rechecked.code}`; break; }
-            failedChecks = verificationCommandFailed || verificationReportedFailed;
+            decision = verificationDecision(verificationOutcome, verificationCommands);
+            if (decision.kind !== "failed") recordValidation(decision);
           }
-          if (success && failedChecks) { success = false; failureMessage = "Verification checks still fail after two repair attempts"; }
+          if (success && decision.kind === "failed") { success = false; failureMessage = "Verification checks still fail after two repair attempts"; }
         }
         const now = new Date().toISOString();
         const representative = this.queue.get(first.id)!; let compactedAfterTask = false; let compactionError: string | undefined;
@@ -435,7 +485,7 @@ export class Orchestrator {
           const latest = this.queue.get(job.id)!;
           const checkpoint: ExecutionEvent = { id: randomUUID(), timestamp: now, kind: "system", title: "Codex status checkpoint", detail: JSON.stringify({ model: latest.execution?.model, reasoning: latest.execution?.reasoning, taskUsage: usage, accountUsage, verification, groupedTasks: prepared.length }), status: "success" };
           const compactEvents: ExecutionEvent[] = compactedAfterTask ? [{ id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact confirmed", detail: "Codex app-server confirmed automatic compaction after exactly three successful tasks.", status: "success" }] : compactionError ? [{ id: randomUUID(), timestamp: now, kind: "error", title: "Automatic compaction failed", detail: compactionError, status: "error" }] : [];
-          return this.queue.transition(job.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", lastActivityAt: now, completedAt: now, usage, accountUsage, verification, compactedAfterTask, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.") : failureMessage, status: success ? "success" : "error" }] } })!;
+          return this.queue.transition(job.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", lastActivityAt: now, completedAt: now, usage, accountUsage, metrics: latest.execution!.metrics ? { ...latest.execution!.metrics, actualTokens: totalCodexTokens(usage) } : latest.execution!.metrics, verification, compactedAfterTask, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verification === "environment_blocked" ? "Development completed; some checks could not run because environment dependencies are missing." : verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.") : failureMessage, status: success ? "success" : "error" }] } })!;
         });
         if (success) for (const job of completed) logTicketCompleted(tag, job.tasks[0]?.description ?? job.id);
         resolve(completed);

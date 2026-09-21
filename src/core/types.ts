@@ -42,10 +42,12 @@ export interface ExecutionState {
   usage?: CodexUsage;
   /** A best-effort account-wide usage snapshot captured from Codex app-server. */
   accountUsage?: CodexAccountUsage;
+  /** Planning and reported usage metrics for this Codex execution. */
+  metrics?: CodexExecutionMetrics;
   /** Present when compatible, independently analysed jobs shared one Codex prompt. */
   group?: CodexExecutionGroup;
   compactedAfterTask?: boolean;
-  verification: "not_run" | "build_only" | "tests_passed" | "functional_verified";
+  verification: "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
   events: ExecutionEvent[];
 }
 
@@ -54,6 +56,15 @@ export interface CodexUsage {
   cached_input_tokens?: number;
   output_tokens?: number;
   reasoning_output_tokens?: number;
+}
+
+export interface CodexExecutionMetrics {
+  estimatedTokens: number;
+  actualTokens?: number;
+  turns: number;
+  repairs: number;
+  stoppedAfterValidation?: boolean;
+  routes: Array<{ stage: "implementation" | "verification" | "repair"; model: string; reasoning: Reasoning }>;
 }
 
 export interface CodexAccountUsage {

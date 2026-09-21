@@ -1,4 +1,4 @@
-![JEV Codex Pilot banner](assets/jev-codex-pilot-banner.png)
+![JEV Codex Pilot banner](assets/jev-codex-pilot-banner2.png)
 
 # JEV Codex Pilot
 

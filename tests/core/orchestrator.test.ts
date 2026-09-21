@@ -119,12 +119,119 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_toke
     expect(completed.status).toBe("SUCCESS");
     expect(completed.execution?.threadId).toBe("routing-thread");
     expect(completed.execution?.usage).toMatchObject({ input_tokens: 40, output_tokens: 8 });
+    expect(completed.execution?.metrics).toMatchObject({ actualTokens: 48, turns: 4, repairs: 1, stoppedAfterValidation: true });
     expect(completed.execution?.verification).toBe("tests_passed");
     expect(completed.execution?.events.filter(event => event.title === "Codex model changed").map(event => event.detail)).toEqual([
       "verification: gpt-5.6-luna · low reasoning",
       "repair: gpt-5.6-terra · high reasoning",
       "verification: gpt-5.6-luna · low reasoning"
     ]);
+  }, 3000);
+
+  it("stops after an explicit successful verification instead of routing a repair", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-validation-stop-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    const counter = join(root, "counter");
+    mkdirSync(project); mkdirSync(bin);
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh
+cat >/dev/null
+count=$(cat '${counter}' 2>/dev/null || echo 0)
+count=$((count + 1))
+printf '%s' "$count" > '${counter}'
+printf 'run\n' >> '${calls}'
+printf '%s\n' '{"type":"thread.started","thread_id":"validation-thread"}'
+if [ "$count" = 2 ]; then
+  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":1}}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":0}}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Checks passed. JEV_VERIFICATION_PASSED"}}'
+fi
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
+`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Validate a focused change" }]);
+    const analysis: JevAnalysis = { complexity: "low", task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.execution?.metrics).toMatchObject({ estimatedTokens: expect.any(Number), actualTokens: 24, turns: 2, repairs: 0, stoppedAfterValidation: true });
+    expect(completed.execution?.metrics?.routes.map(route => route.stage)).toEqual(["implementation", "verification"]);
+    expect(completed.execution?.events.some(event => event.title === "Verification satisfied")).toBe(true);
+  }, 3000);
+
+  it("keeps a completed ticket successful when only verification dependencies are missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-env-verification-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    const commandEvent = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: ".venv/bin/python -m pytest -q; .venv/bin/python -m build --no-isolation; .venv/bin/python -c import PySide6", aggregated_output: "2 passed in 0.08s\nNo broken requirements found.\n.venv/bin/python: No module named build\nModuleNotFoundError: No module named PySide6\nSTATUS pytest=0 build=1 pyside=1", exit_code: 0 } });
+    writeFileSync(join(bin, "codex"), `#!/bin/sh
+cat >/dev/null
+printf 'run\n' >> '${calls}'
+printf '%s\n' '{"type":"thread.started","thread_id":"env-thread"}'
+if [ "$(wc -l < '${calls}')" = 2 ]; then
+  printf '%s\n' '${commandEvent}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Verification failed. JEV_VERIFICATION_FAILED"}}'
+fi
+printf '%s\n' '{"type":"turn.completed"}'
+`);
+    chmodSync(join(bin, "codex"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Add GitHub profile lookup" }]);
+    const analysis: JevAnalysis = { complexity: "medium", task_types: ["feature"], model: "terra", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.execution?.verification).toBe("environment_blocked");
+    expect(completed.execution?.metrics).toMatchObject({ turns: 2, repairs: 0 });
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(completed.execution?.events.some(event => event.title === "Verification partially blocked" && event.detail?.includes("PySide6"))).toBe(true);
+  }, 3000);
+
+  it("escalates a persistent code failure to Sol with high reasoning", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-sol-repair-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(bin, "codex"), `#!/bin/sh
+cat >/dev/null
+for arg in "$@"; do
+  case "$arg" in gpt-5.6-*|model_reasoning_effort=*) printf '%s ' "$arg" >> '${calls}' ;; esac
+done
+printf '\n' >> '${calls}'
+printf '%s\n' '{"type":"thread.started","thread_id":"sol-thread"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","aggregated_output":"2 failed, 1 passed","exit_code":1}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"JEV_VERIFICATION_FAILED"}}'
+printf '%s\n' '{"type":"turn.completed"}'
+`);
+    chmodSync(join(bin, "codex"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Fix failing test" }]);
+    const analysis: JevAnalysis = { complexity: "medium", task_types: ["bugfix"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+
+    expect(completed.status).toBe("FAILED");
+    expect(completed.execution?.metrics).toMatchObject({ turns: 6, repairs: 2 });
+    expect(completed.execution?.metrics?.routes.map(route => route.stage)).toEqual(["implementation", "verification", "repair", "verification", "repair", "verification"]);
+    const invocations = readFileSync(calls, "utf8").trim().split("\n");
+    expect(invocations[4]).toContain("gpt-5.6-sol");
+    expect(invocations[4]).toContain('model_reasoning_effort="high"');
+    expect(invocations[5]).toContain("gpt-5.6-terra");
   }, 3000);
 
   it("honors a bounded implementation route requested by Codex", async () => {

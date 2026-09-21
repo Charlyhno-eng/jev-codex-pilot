@@ -5,4 +5,4 @@ export function formatUsd(value: number) { return new Intl.NumberFormat(undefine
 /** Formats a Codex reasoning level for display. */
 export function reasoningLabel(value: string) { return value === "xhigh" ? "Extra high" : value; }
 /** Formats the detected verification level. */
-export function verificationLabel(value: string) { return value === "functional_verified" ? "Functionally verified" : value === "tests_passed" ? "Automated tests passed" : value === "build_only" ? "Build only · behavior unverified" : "No verification detected"; }
+export function verificationLabel(value: string) { return value === "environment_blocked" ? "Partial verification · environment dependencies missing" : value === "functional_verified" ? "Functionally verified" : value === "tests_passed" ? "Automated tests passed" : value === "build_only" ? "Build only · behavior unverified" : "No verification detected"; }

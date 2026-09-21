@@ -14,6 +14,7 @@
 - The web interface can create and edit a project `AGENTS.md` through a modal.
 - JEV evaluates each ticket, reports precision and task breakdown, and recommends a model tier and reasoning effort.
 - Codex can route successive turns dynamically: verification favors low effort, while failed checks can use a stronger repair route. Each route is logged in red by JEV.
+- Each ticket records a planning token estimate, Codex-reported token total, executed turns, repair count, and model routes. A successful validation stops further repair turns.
 - Compatible pending tickets may share one execution when their model and reasoning settings are close enough.
 - Live JSONL events, commands, verification, model routing, and token usage are streamed to the UI.
 - Successful work triggers automatic thread compaction after every third successful task. Compaction failure does not fail the task.
@@ -25,5 +26,10 @@
 This project now includes modular web components and styles, dedicated tests, English backend docstrings, red JEV logs, distinct Codex command and routing colors, Git status detection, modal first-time `AGENTS.md` creation, read-only Git review, Telegram progress and completion notices, dynamic model and effort routing, and consistent ticket precision between analysis and execution.
 
 - Rewrote the English README with honest token-saving estimates, provider extensibility guidance, and a shorter Telegram section.
+- Added early validation stops and per-ticket execution economy metrics.
+- Distinguished missing verification dependencies from code failures and escalated persistent repairs to Sol.
+- Set persistent repair escalation to Sol High and adopted the refreshed application logo.
+- Updated the dark web theme with blue, cyan, and violet colors taken from the refreshed logo.
+- Added browser-tab favicon indicators for running, completed, and failed tickets.
 
 Keep future delivery notes concise and append one English bullet here for each completed feature or change.

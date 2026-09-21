@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import "./styles/index.css";
-import logoUrl from "../../assets/jev-codex-pilot-logo.png";
+import logoUrl from "../../assets/jev-codex-pilot-logo2.png";
 
 const favicon = document.createElement("link");
+favicon.id = "app-favicon";
 favicon.rel = "icon";
 favicon.type = "image/png";
 favicon.href = logoUrl;
@@ -19,9 +20,11 @@ import { Plan } from "./components/Plan.js";
 import { ExecutionPanel } from "./components/ExecutionPanel.js";
 import { useTaskCompletionPing } from "./hooks/use-task-completion-ping.js";
 import { useBilling, useJevUsage } from "./hooks/use-jev-data.js";
+import { useBrowserTabIndicator } from "./hooks/use-browser-tab-indicator.js";
 
 function Shell({ children, project }: { children: React.ReactNode; project?: ProjectRecord }) {
   const { billing, error } = useBilling(); const usage = useJevUsage(); const [settingsOpen, setSettingsOpen] = useState(false);
+  useBrowserTabIndicator();
   return <div className="app"><header className="topbar"><Link className="brand" to="/"><img className="brand-logo" src={logoUrl} alt=""/><span>JEV Codex Pilot</span></Link><nav><Link to="/">Projects</Link>{project && <><span className="nav-project"><i/> {project.name}</span></>}</nav><div className="jev-session-usage" title="JEV consumption since this API session started"><small>JEV SESSION</small><b>{formatNumber(usage.inputTokens)} tokens · {formatUsd(usage.estimatedCostUsd)}</b></div><a className="credit-pill" href={billing?.dashboardUrl ?? "https://vercel.com/ai-gateway"} target="_blank" rel="noreferrer" title={error || "Live balance retrieved from Vercel AI Gateway."}><span><small>VERCEL AI GATEWAY CREDITS</small><b>{billing ? `$${billing.balance.toFixed(4)}` : error ? "Unavailable" : "—"}</b></span><i>{billing ? "live" : "unavailable"}</i></a><button className="settings-button" type="button" onClick={() => setSettingsOpen(true)} aria-label="Open settings" title="Settings">⚙</button></header>{children}{settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)}/>}</div>;
 }
 
