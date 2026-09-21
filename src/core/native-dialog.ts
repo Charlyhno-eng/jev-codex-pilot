@@ -14,6 +14,7 @@ function execute(command: string, args: string[]): Promise<string> {
   });
 }
 
+/** Performs this backend operation. */
 export async function selectDirectory(): Promise<string> {
   let selected = "";
   if (platform() === "linux") {

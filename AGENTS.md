@@ -12,8 +12,8 @@
 
 - Projects are selected or created locally and retain separate queues, task histories, and Codex threads.
 - A project context is stored in its `AGENTS.md`. The UI can create it when absent and display or edit it in a large modal.
-- JEV evaluates every task independently and recommends a Codex model, reasoning level, complexity score, context files, and likely files to modify.
-- Codex models are limited to GPT-5.6 Luna, Terra, and Sol. Reasoning is limited to Low, Medium, High, and Extra High.
+- JEV evaluates every task independently and recommends a Codex model, reasoning level, advisory task breakdown score, context files, and likely files to modify.
+- Codex recommendations use the stable Luna, Terra, and Sol tiers with active IDs resolved from Codex or local overrides. Reasoning is limited to Low, Medium, High, and Extra High.
 - Consecutive compatible tasks may share one Codex execution only when they use the same model and their reasoning levels differ by at most one step. Their JEV analyses and task histories remain independent.
 - Codex execution streams live JSONL events, command activity, verification status, model and reasoning evidence, and token usage to the UI.
 - Task token totals come from Codex `turn.completed` events. Account-wide Codex usage is captured as a best-effort app-server snapshot and must be labelled as account-wide.
@@ -51,3 +51,12 @@ This section is maintained by Codex. Append one concise English bullet for each 
 - Added Telegram-controlled Codex launch for explicitly selected projects that have pending tickets.
 - Reworked Telegram as a button-guided dashboard after `/start`, including a reliable inline ticket-cancellation action.
 - Rebuilt Telegram as a versioned single-screen flow with startup chat cleanup and confirmed deletion of newly created pending tickets.
+- Fixed home-page AGENTS.md creation for projects already registered in local JEV persistence.
+- Recalibrated advisory JEV ticket-precision scores and added dark-blue completed-ticket terminal logs.
+- Reused full draft analyses when creating tickets so pre-creation and recommendation precision scores remain identical.
+- Changed successful ticket completion logs to use English wording.
+- Split the web interface, styles, and tests into dedicated modules, documented backend exports, and made JEV terminal activity red.
+- Improved initial AGENTS.md guidance, added early Git repository detection, and removed JEV’s numeric task-complexity score.
+- Restored the four-part recommendation with an advisory task breakdown score, centralized configurable Codex model IDs, and added Telegram development-completion notices.
+- Added red backend-terminal JEV lifecycle logs, including precision, task-breakdown, and model-recommendation results for each evaluated ticket.
+- Added a dedicated Codex console page, GitHub connection notices, modal first-time AGENTS.md creation, and distinct terminal colors for JEV and Codex actions.

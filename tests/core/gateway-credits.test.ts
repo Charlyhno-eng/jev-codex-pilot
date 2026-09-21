@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fetchGatewayCredits } from "./gateway-credits.js";
+import { fetchGatewayCredits } from "../../src/core/gateway-credits.js";
 
 describe("Vercel AI Gateway credits", () => {
   it("returns the balance received from the private credits endpoint", async () => {

@@ -52,6 +52,12 @@ npm run dev
 
 Open `http://localhost:5173`, configure the Vercel AI Gateway key in Settings, and select or create a local project.
 
+### Codex model names
+
+JEV keeps the Luna, Terra, and Sol recommendation tiers stable. The model IDs and reasoning levels are centralized in `src/core/codex-models.ts`. JEV reads Codex's installed model catalog and automatically uses a renamed ID when its tier remains recognizable. For a deeper rename, set `JEV_CODEX_MODEL_LUNA`, `JEV_CODEX_MODEL_TERRA`, or `JEV_CODEX_MODEL_SOL` before starting the API. Saved tickets keep their tier and pick up the active ID when launched. The four reasoning levels remain Low, Medium, High, and Extra High.
+
+JEV also shows a non-blocking task breakdown score. Higher scores mean the ticket is one focused unit of work; lower scores suggest splitting independent outcomes into separate tickets.
+
 ## Optional Telegram bot
 
 Telegram can provide a private mobile view of project progress and a guided way to add tickets. It is disabled by default and works only while the local JEV API server is running.
@@ -59,5 +65,7 @@ Telegram can provide a private mobile view of project progress and a guided way 
 In **Settings**, paste the BotFather token and save it. The first private chat to send `/start` is paired automatically, its numeric ID is stored in `config/config.toml`, and the integration is enabled. The token can be revealed from the local settings dialog and is never sent to a project or Codex. Once paired, every other Telegram chat is ignored, preventing other users from reading project data or creating work.
 
 `/start` is the only command needed. It opens a single button-driven dashboard for project progress, ticket creation, and explicit Codex launches. The bot edits that dashboard in place, accepts only actions valid for the current step, removes typed ticket descriptions from the chat, and offers a confirmed delete action immediately after ticket creation.
+
+When a Codex development run finishes, the paired private chat receives one summary with the number of completed and failed tickets. Delivery is best effort and does not change the task result.
 
 When the bot service or a new `/start` session begins, it clears the private chat before presenting a fresh dashboard. Telegram only permits bots to delete messages sent within the previous 48 hours, so older messages may remain when Telegram enforces that platform limit.

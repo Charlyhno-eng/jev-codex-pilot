@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildCodexGroupPrompt, buildCodexPrompt } from "./prompt.js";
-import type { JevAnalysis } from "./types.js";
+import { buildCodexGroupPrompt, buildCodexPrompt } from "../../src/core/prompt.js";
+import type { JevAnalysis } from "../../src/core/types.js";
 
 const analysis: JevAnalysis = {
   complexity: "low",

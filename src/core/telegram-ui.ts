@@ -43,6 +43,7 @@ export const allowedActions: Record<TelegramView, readonly TelegramAction[]> = {
 const escape = (value: string) => value.replace(/[&<>]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char]!);
 const activeJobs = (jobs: Job[]) => jobs.filter(job => !job.archivedAt && job.status !== "SKIPPED");
 
+/** Performs this backend operation. */
 export function homeScreen(projects: ProjectRecord[], jobsFor: (projectId: string) => Job[], notice?: string): TelegramScreen {
   const jobs = projects.flatMap(project => activeJobs(jobsFor(project.id)));
   const pending = jobs.filter(job => job.status === "PENDING").length;
@@ -63,6 +64,7 @@ function projectRows(projects: ProjectRecord[], action: "project" | "ticket" | "
   return projects.map(project => [{ text: `${action === "run" ? "▶️" : action === "ticket" ? "➕" : "🗂"}  ${project.name}${suffix?.(project) ?? ""}`.slice(0, 60), action, argument: project.id }]);
 }
 
+/** Performs this backend operation. */
 export function projectsScreen(projects: ProjectRecord[]): TelegramScreen {
   return {
     view: "projects",
@@ -71,6 +73,7 @@ export function projectsScreen(projects: ProjectRecord[]): TelegramScreen {
   };
 }
 
+/** Performs this backend operation. */
 export function newTicketProjectScreen(projects: ProjectRecord[]): TelegramScreen {
   return {
     view: "new-project",
@@ -79,6 +82,7 @@ export function newTicketProjectScreen(projects: ProjectRecord[]): TelegramScree
   };
 }
 
+/** Performs this backend operation. */
 export function runProjectScreen(projects: ProjectRecord[], pendingFor: (projectId: string) => Job[]): TelegramScreen {
   const runnable = projects.filter(project => pendingFor(project.id).length > 0);
   return {
@@ -88,6 +92,7 @@ export function runProjectScreen(projects: ProjectRecord[], pendingFor: (project
   };
 }
 
+/** Performs this backend operation. */
 export function projectScreen(project: ProjectRecord, jobs: Job[]): TelegramScreen {
   const visible = activeJobs(jobs);
   const count = (status: Job["status"]) => visible.filter(job => job.status === status).length;
@@ -109,6 +114,7 @@ export function projectScreen(project: ProjectRecord, jobs: Job[]): TelegramScre
   };
 }
 
+/** Performs this backend operation. */
 export function composeTicketScreen(project: ProjectRecord, warning?: string): TelegramScreen {
   return {
     view: "compose",
@@ -117,6 +123,7 @@ export function composeTicketScreen(project: ProjectRecord, warning?: string): T
   };
 }
 
+/** Performs this backend operation. */
 export function createdTicketScreen(project: ProjectRecord, job: Job): TelegramScreen {
   return {
     view: "created",
@@ -125,6 +132,7 @@ export function createdTicketScreen(project: ProjectRecord, job: Job): TelegramS
   };
 }
 
+/** Performs this backend operation. */
 export function deleteConfirmationScreen(project: ProjectRecord, job: Job): TelegramScreen {
   return {
     view: "delete-confirm",
@@ -133,6 +141,7 @@ export function deleteConfirmationScreen(project: ProjectRecord, job: Job): Tele
   };
 }
 
+/** Performs this backend operation. */
 export function noticeScreen(title: string, detail: string): TelegramScreen {
   return { view: "notice", text: `${title}\n\n${detail}`, buttons: [[{ text: "⌂  Dashboard", action: "home" }]] };
 }

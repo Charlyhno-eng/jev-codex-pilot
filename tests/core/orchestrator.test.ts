@@ -2,19 +2,36 @@ import { afterEach, describe, expect, it } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { JobQueue } from "./queue.js";
-import { isCompactionComplete, Orchestrator } from "./orchestrator.js";
-import { analyze } from "./analyzer.js";
-import type { Complexity, TaskType } from "./types.js";
+import { JobQueue } from "../../src/core/queue.js";
+import { isCompactionComplete, Orchestrator } from "../../src/core/orchestrator.js";
+import { analyze } from "../../src/core/analyzer.js";
+import type { Complexity, JevAnalysis, TaskType } from "../../src/core/types.js";
 
 const originalPath = process.env.PATH;
 afterEach(() => { process.env.PATH = originalPath; });
 
 const analyzerFor = (taskType: TaskType, complexity: Complexity = "low") =>
-  (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity, complexityScore: 5 }));
+  (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity }));
 const accountUsage = async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", todayTokens: 42, lifetimeTokens: 420 });
 
 describe("Codex orchestration", () => {
+  it("reuses an analysis already attached to a newly created ticket", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-prepared-ticket-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Keep this recommendation" }]);
+    const analysis: JevAnalysis = { complexity: "low", precision_score: 75, decomposition_score: 100, task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+    let evaluations = 0;
+    const orchestrator = new Orchestrator(queue, async () => { evaluations += 1; return analysis; }, async () => undefined, accountUsage);
+
+    const prepared = await orchestrator.prepare(queue.get(job.id)!);
+
+    expect(prepared.analysis).toBe(analysis);
+    expect(evaluations).toBe(0);
+  });
+
   it("recognizes the current app-server context-compaction completion notification", () => {
     expect(isCompactionComplete({ method: "item/completed", params: { item: { type: "contextCompaction" } } })).toBe(true);
     expect(isCompactionComplete({ method: "item.started", params: { item: { type: "contextCompaction" } } })).toBe(false);
@@ -77,7 +94,7 @@ describe("Codex orchestration", () => {
     let decision = 0;
     const orchestrator = new Orchestrator(
       queue,
-      (projectPath, tasks) => analyze(projectPath, tasks, async () => ({ taskType: decisions[decision++], complexity: "low", complexityScore: 2 })),
+      (projectPath, tasks) => analyze(projectPath, tasks, async () => ({ taskType: decisions[decision++], complexity: "low" })),
       async () => undefined,
       accountUsage
     );
@@ -139,8 +156,7 @@ describe("Codex orchestration", () => {
     ] as const;
     let index = 0;
     await new Orchestrator(queue, async () => ({
-      complexity: "low", task_types: ["feature"], complexity_score: 4,
-      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+      complexity: "low", task_types: ["feature"],       ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
     }), async () => undefined, accountUsage).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
@@ -170,8 +186,7 @@ describe("Codex orchestration", () => {
     ] as const;
     let index = 0;
     await new Orchestrator(queue, async () => ({
-      complexity: "low", task_types: ["feature"], complexity_score: 4,
-      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+      complexity: "low", task_types: ["feature"],       ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
     }), async () => undefined, accountUsage).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
@@ -203,8 +218,7 @@ describe("Codex orchestration", () => {
     ] as const;
     let index = 0;
     await new Orchestrator(queue, async () => ({
-      complexity: "low", task_types: ["feature"], complexity_score: 4,
-      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+      complexity: "low", task_types: ["feature"],       ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
     }), async () => undefined, accountUsage).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
@@ -233,8 +247,7 @@ describe("Codex orchestration", () => {
     ] as const;
     let index = 0;
     await new Orchestrator(queue, async () => ({
-      complexity: "low", task_types: ["feature"], complexity_score: 4,
-      ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
+      complexity: "low", task_types: ["feature"],       ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
     }), async () => undefined, accountUsage).runBatch(firstBatch[0].id);
 
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);

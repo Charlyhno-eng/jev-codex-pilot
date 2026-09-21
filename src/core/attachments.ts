@@ -18,6 +18,7 @@ const EXTENSIONS: Record<string, string> = {
   "image/webp": ".webp"
 };
 
+/** Performs this backend operation. */
 export class AttachmentStore {
   private readonly root: string;
 

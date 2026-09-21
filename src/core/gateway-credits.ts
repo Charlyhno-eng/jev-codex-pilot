@@ -3,6 +3,7 @@ const GATEWAY_CREDITS_URL = "https://ai-gateway.vercel.sh/v1/credits";
 type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 /** Retrieves the current AI Gateway credit balance without exposing the key to the browser. */
+/** Performs this backend operation. */
 export async function fetchGatewayCredits(apiKey: string, fetcher: Fetcher = fetch): Promise<number> {
   const response = await fetcher(GATEWAY_CREDITS_URL, {
     headers: { Authorization: `Bearer ${apiKey}` },

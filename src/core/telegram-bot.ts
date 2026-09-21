@@ -52,6 +52,7 @@ const initialState = (): TelegramState => ({
 });
 
 /** Local long-polling adapter. It never starts unless a Telegram token is configured. */
+/** Performs this backend operation. */
 export class TelegramBot {
   private readonly stateFile: string;
   private state: TelegramState;
@@ -79,6 +80,18 @@ export class TelegramBot {
   start() { if (this.started) return; this.started = true; void this.bootstrap(); }
   stop() { this.started = false; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
   refresh() { void this.configureCommands(); this.schedule(0); }
+
+  /** Sends a best-effort notice when a Codex development run finishes. */
+  async notifyDevelopmentFinished(project: ProjectRecord, jobs: Job[]) {
+    const config = this.dependencies.config();
+    if (!config.telegramBotToken || !config.telegramEnabled || !config.telegramAllowedChatId || !jobs.length) return;
+    const success = jobs.filter(job => job.status === "SUCCESS").length;
+    const failed = jobs.filter(job => job.status === "FAILED").length;
+    const text = `🏁 <b>Development finished · ${this.escape(project.name)}</b>\n${success} completed · ${failed} failed${jobs.length - success - failed ? ` · ${jobs.length - success - failed} skipped` : ""}`;
+    const sent = await this.request<TelegramMessage>(config.telegramBotToken, "sendMessage", { chat_id: config.telegramAllowedChatId, text, parse_mode: "HTML" });
+    this.rememberMessage(config.telegramAllowedChatId, sent?.message_id);
+    if (sent) this.persist();
+  }
 
   private configured(config = this.dependencies.config()) { return Boolean(config.telegramBotToken); }
   private async configureCommands() {

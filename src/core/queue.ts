@@ -2,15 +2,15 @@ import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CodexModel, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
+import { codexModelId, MODEL_LEVELS, REASONING_LEVELS } from "./codex-models.js";
 
-const MODEL_LEVELS: CodexModel[] = ["luna", "terra", "sol"];
-const REASONING_LEVELS: Reasoning[] = ["low", "medium", "high", "xhigh"];
 
 type ProjectThreadState = {
   activeThreadId?: string;
   successfulSinceCompaction: number;
 };
 
+/** Performs this backend operation. */
 export class JobQueue {
   private jobs: Job[] = [];
   private readonly file: string;
@@ -188,7 +188,7 @@ export class JobQueue {
     const next = levels[nextIndex];
     if (next === current) return job;
     const direction = delta < 0 ? "lower" : "higher";
-    const label = dimension === "model" ? `gpt-5.6-${next}` : next === "xhigh" ? "Extra high" : next;
+    const label = dimension === "model" ? codexModelId(next as CodexModel) : next === "xhigh" ? "Extra high" : next;
     return this.update(id, {
       analysis: {
         ...job.analysis,

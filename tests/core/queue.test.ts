@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { JobQueue } from "./queue.js";
+import { JobQueue } from "../../src/core/queue.js";
 
 describe("task archive", () => {
   it("hides a successful task reversibly without changing its execution result", () => {
@@ -70,7 +70,7 @@ describe("pending recommendation tuning", () => {
     mkdirSync(project);
     const queue = new JobQueue(join(root, "data"));
     const job = queue.create("project", project, [{ description: "Move one button" }]);
-    queue.update(job.id, { analysis: { complexity: "low", complexity_score: 2, task_types: ["ui_ux"], model: "luna", reasoning: "low", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
+    queue.update(job.id, { analysis: { complexity: "low", task_types: ["ui_ux"], model: "luna", reasoning: "low", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
 
     const edited = queue.updatePendingTask(job.id, "Move both navigation buttons")!;
     expect(edited.tasks[0].description).toBe("Move both navigation buttons");
@@ -83,7 +83,7 @@ describe("pending recommendation tuning", () => {
     mkdirSync(project);
     const queue = new JobQueue(join(root, "data"));
     const job = queue.create("project", project, [{ description: "Move two buttons" }]);
-    queue.update(job.id, { analysis: { complexity: "low", complexity_score: 2, task_types: ["ui_ux"], model: "luna", reasoning: "low", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
+    queue.update(job.id, { analysis: { complexity: "low", task_types: ["ui_ux"], model: "luna", reasoning: "low", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
 
     expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis?.model).toBe("terra");
     expect(queue.adjustAnalysis(job.id, "reasoning", 1)?.analysis?.reasoning).toBe("medium");

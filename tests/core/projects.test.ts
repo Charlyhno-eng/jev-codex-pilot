@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ProjectStore } from "./projects.js";
+import { ProjectStore } from "../../src/core/projects.js";
 
 describe("project AGENTS.md setup", () => {
   it("requires context and creates the initial Codex-maintained instructions only when absent", () => {
@@ -32,6 +32,23 @@ describe("project AGENTS.md setup", () => {
     expect(readFileSync(agentsPath, "utf8")).toBe("# Existing instructions\n");
     expect(store.hasAgents(project.id)).toBe(true);
     expect(existsSync(agentsPath)).toBe(true);
+  });
+
+  it("creates AGENTS.md from the supplied context when a previously registered project is missing it", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-projects-existing-"));
+    const projectPath = join(root, "existing-project");
+    mkdirSync(projectPath);
+    const store = new ProjectStore(join(root, "data"));
+    const registered = store.create(projectPath, "Existing project", "Original project context.");
+    const agentsPath = join(projectPath, "AGENTS.md");
+
+    unlinkSync(agentsPath);
+
+    expect(() => store.create(projectPath, "Existing project")).toThrow("Describe the application context");
+    const restored = store.create(projectPath, "Existing project", "Context entered in the creation modal.");
+
+    expect(restored.id).toBe(registered.id);
+    expect(readFileSync(agentsPath, "utf8")).toContain("Context entered in the creation modal.");
   });
 
   it("reads and updates the complete saved AGENTS.md", () => {

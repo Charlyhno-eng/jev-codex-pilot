@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readProjectDiff } from "./git-diff.js";
+import { readProjectDiff } from "../../src/core/git-diff.js";
 
 function git(root: string, args: string[]) { execFileSync("git", ["-C", root, ...args], { stdio: "ignore" }); }
 

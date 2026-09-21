@@ -3,6 +3,7 @@ import { listProjectFiles, readProjectFile } from "./project-reader.js";
 import { AppConfigStore } from "./app-config.js";
 import { createConfiguredJevProvider, type JevDecision, type JevTaskPrecision } from "./jev-provider.js";
 import { estimateJevInputCost } from "./jev-pricing.js";
+import { logJev, logJevError } from "./jev-logger.js";
 import type { CodexModel, Complexity, JevAnalysis, Reasoning, TaskSpec, TaskType } from "./types.js";
 
 const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".rb", ".php", ".vue", ".svelte"]);
@@ -26,8 +27,8 @@ function describeError(error: unknown): string {
   return messages.join(" → ") || String(error);
 }
 
-function selectPolicy(taskType: TaskType, complexity: Complexity, complexityScore: number): { model: CodexModel; reasoning: Reasoning; reason: string } {
-  if (complexity === "trivial" || complexityScore <= 3) {
+function selectPolicy(taskType: TaskType, complexity: Complexity): { model: CodexModel; reasoning: Reasoning; reason: string } {
+  if (complexity === "trivial") {
     return { model: "luna", reasoning: "low", reason: "This is a small, obvious change, so it uses the fastest and lowest-cost Codex setting." };
   }
   if (complexity === "low") {
@@ -54,12 +55,14 @@ function selectPolicy(taskType: TaskType, complexity: Complexity, complexityScor
   return { model: "sol", reasoning: "xhigh", reason: "This is an exceptional, high-risk task where deeper exploration and verification are justified." };
 }
 
+/** Performs this backend operation. */
 export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator: TaskEvaluator = createConfiguredJevProvider(new AppConfigStore().read()).evaluate): Promise<JevAnalysis> {
   if (tasks.length !== 1) throw new Error("JEV requires exactly one task per analysis");
   const description = tasks[0].description;
   const files = listProjectFiles(projectPath);
   const names = new Set(files.map(file => file.path));
   const agents = readProjectFile(projectPath, "AGENTS.md");
+  logJev(`Task evaluation started · ${files.length} project file(s) read`);
 
   let decision: JevDecision;
   try {
@@ -72,6 +75,7 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
       }
     }));
   } catch (error) {
+    logJevError(`Task evaluation failed · ${describeError(error)}`);
     throw new Error(`JEV analysis failed: ${describeError(error)}`);
   }
 
@@ -95,19 +99,19 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
   if (installationOnly) {
     filesToModify.push(...files.filter(file => /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|cargo\.toml|go\.mod)$/i.test(file.path)).map(file => file.path));
   }
-  const policy = selectPolicy(decision.taskType, decision.complexity, decision.complexityScore);
+  const policy = selectPolicy(decision.taskType, decision.complexity);
 
-  return {
+  const analysis: JevAnalysis = {
     complexity: decision.complexity,
-    complexity_score: decision.complexityScore,
     precision_score: decision.taskPrecision,
+    decomposition_score: decision.decompositionScore,
     task_types: [decision.taskType],
     model: policy.model,
     reasoning: policy.reasoning,
     context_files: unique(context),
     files_to_modify: unique(filesToModify),
     rationale: [
-      `TypeSafe JEV classified this task as ${decision.taskType} with ${decision.complexity} complexity.`,
+      `TypeSafe JEV classified this task as ${decision.taskType}.`,
       "This recommendation applies to this task only; it will run in its own Codex session.",
       policy.reason,
       `${context.length} relevant file(s) selected out of ${files.length}; AGENTS.md has priority.`,
@@ -122,6 +126,8 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
       estimated_cost_usd: estimateJevInputCost(decision.usage.inputTokens ?? decision.usage.totalTokens ?? 0)
     } : undefined
   };
+  logJev(`Task evaluation complete · precision ${analysis.precision_score ?? "unavailable"}% · task breakdown ${analysis.decomposition_score ?? "unavailable"}% · recommended tier ${analysis.model} with ${analysis.reasoning} reasoning`);
+  return analysis;
 }
 
 /**
@@ -129,18 +135,23 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
  * It deliberately reads only the project's AGENTS.md, never writes to the
  * target project, and remains separate from the per-job execution analysis.
  */
+/** Performs this backend operation. */
 export async function assessTaskPrecision(projectPath: string, description: string, evaluator: TaskPrecisionEvaluator = createConfiguredJevProvider(new AppConfigStore().read()).evaluateTaskPrecision): Promise<JevTaskPrecision> {
   const task = description.trim();
   if (!task) throw new Error("A task description is required for the JEV precision check.");
   const agents = readProjectFile(projectPath, "AGENTS.md");
   if (!agents) throw new Error("AGENTS.md is required before JEV can assess task precision.");
+  logJev("Draft task precision check started");
   try {
-    return await evaluator(JSON.stringify({
+    const result = await evaluator(JSON.stringify({
       task,
       project: { agents: agents.slice(0, 12_000) },
       question: "How precisely does this task describe the intended work in this project's context?"
     }));
+    logJev(`Draft task precision check complete · precision ${result.score}%`);
+    return result;
   } catch (error) {
+    logJevError(`Draft task precision check failed · ${describeError(error)}`);
     throw new Error(`JEV task-precision check failed: ${describeError(error)}`);
   }
 }

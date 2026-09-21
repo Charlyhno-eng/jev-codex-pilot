@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { codexModelId, REASONING_LEVELS } from "./codex-models.js";
+import { activeCodexModelId } from "./codex-catalog.js";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { analyze } from "./analyzer.js";
+import { logJev, logJevError } from "./jev-logger.js";
 import { buildCodexCommand, buildCodexGroupPrompt, buildCodexPrompt } from "./prompt.js";
 import type { JobQueue } from "./queue.js";
 import type { CodexAccountUsage, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
 
 type JsonEvent = Record<string, unknown> & { type?: string; item?: Record<string, unknown> };
 type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified";
-const reasoningRank: Record<Reasoning, number> = { low: 0, medium: 1, high: 2, xhigh: 3 };
+const reasoningRank = Object.fromEntries(REASONING_LEVELS.map((level, index) => [level, index])) as Record<Reasoning, number>;
 
 function text(value: unknown): string | undefined {
   if (typeof value === "string") return value.slice(0, 4000);
@@ -18,6 +21,7 @@ function text(value: unknown): string | undefined {
 }
 function messageOf(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
+/** Performs this backend operation. */
 export function isCompactionComplete(message: Record<string, unknown>) {
   const item = (message.params as { item?: { type?: unknown } } | undefined)?.item;
   return (message.method === "item/completed" || message.method === "item.completed") && item?.type === "contextCompaction";
@@ -100,6 +104,11 @@ function archiveThread(threadId: string): Promise<void> {
   });
 }
 
+/** Writes a completed-ticket terminal message. */
+function logTicketCompleted(tag: string, title: string) {
+  process.stdout.write(`\x1b[34m[codex:${tag}] Ticket ${title} — development completed\x1b[0m\n`);
+}
+
 /** Best effort only: this is Codex-account usage, never an attribution to one job. */
 function readCodexAccountUsage(): Promise<CodexAccountUsage> {
   return new Promise(resolve => {
@@ -130,13 +139,23 @@ function readCodexAccountUsage(): Promise<CodexAccountUsage> {
   });
 }
 
+/** Performs this backend operation. */
 export class Orchestrator {
   private runningBatches = new Set<string>();
   constructor(private queue: JobQueue, private analyzer = analyze, private compactor: (threadId: string) => Promise<void> = compactThread, private accountUsageReader: () => Promise<CodexAccountUsage> = readCodexAccountUsage, private archiver: (threadId: string) => Promise<void> = archiveThread) {}
 
   async prepare(job: Job) {
     if (!existsSync(job.projectPath)) throw new Error(`Project not found: ${job.projectPath}`);
-    return this.queue.update(job.id, { analysis: await this.analyzer(job.projectPath, job.tasks) });
+    if (job.analysis) return job;
+    logJev(`Preparing recommendation for task ${job.id.slice(0, 8)}`);
+    try {
+      const analysis = await this.analyzer(job.projectPath, job.tasks);
+      logJev(`JEV recommends ${codexModelId(analysis.model)} with ${analysis.reasoning} reasoning for task ${job.id.slice(0, 8)} · precision ${analysis.precision_score ?? "unavailable"}% · task breakdown ${analysis.decomposition_score ?? "unavailable"}%`);
+      return this.queue.update(job.id, { analysis });
+    } catch (error) {
+      logJevError(`Recommendation unavailable for task ${job.id.slice(0, 8)} · ${messageOf(error)}`);
+      throw error;
+    }
   }
 
   isBatchRunning(id: string) { const job = this.queue.get(id); return Boolean(job && (job.status === "RUNNING" || this.runningBatches.has(job.batchId ?? job.id))); }
@@ -145,7 +164,7 @@ export class Orchestrator {
     return { threadId: this.queue.activeProjectThread(projectId), successfulSinceCompaction: this.queue.successesSinceCompaction(projectId) };
   }
 
-  async command(job: Job) { const prepared = job.analysis ? job : (await this.prepare(job))!; return buildCodexCommand(prepared.tasks, prepared.analysis!); }
+  async command(job: Job) { const prepared = job.analysis ? job : (await this.prepare(job))!; return buildCodexCommand(prepared.tasks, prepared.analysis!, await activeCodexModelId(prepared.analysis!.model)); }
 
   async runBatch(id: string): Promise<void> {
     const first = this.queue.get(id);
@@ -191,12 +210,12 @@ export class Orchestrator {
     if (this.queue.list(projectId).some(job => job.status === "RUNNING")) throw new Error("Wait for the active Codex execution to finish before compacting this project thread.");
     const threadId = this.queue.activeProjectThread(projectId);
     if (!threadId) throw new Error("This project has no active Codex thread to compact yet.");
-    process.stdout.write(`\x1b[35m[codex:${projectId.slice(0, 8)}] /compact MANUAL START thread ${threadId}\x1b[0m\n`);
+    process.stdout.write(`\x1b[33m[codex:${projectId.slice(0, 8)}] /compact MANUAL START thread ${threadId}\x1b[0m\n`);
     this.queue.appendProjectThreadEvent(projectId, threadId, "Codex /compact started", "Manual compaction requested from JEV Codex Pilot.", "active");
     await this.compactor(threadId);
     this.queue.markProjectCompacted(projectId);
     this.queue.appendProjectThreadEvent(projectId, threadId, "Codex /compact confirmed", "Codex app-server confirmed manual compaction. The automatic counter was reset.");
-    process.stdout.write(`\x1b[35m[codex:${projectId.slice(0, 8)}] /compact MANUAL COMPLETED\x1b[0m\n`);
+    process.stdout.write(`\x1b[33m[codex:${projectId.slice(0, 8)}] /compact MANUAL COMPLETED\x1b[0m\n`);
     return { threadId, successfulSinceCompaction: this.queue.successesSinceCompaction(projectId) };
   }
 
@@ -204,10 +223,10 @@ export class Orchestrator {
     if (this.queue.list(projectId).some(job => job.status === "RUNNING")) throw new Error("Wait for the active Codex execution to finish before clearing this project thread.");
     const threadId = this.queue.activeProjectThread(projectId);
     if (!threadId) throw new Error("This project has no active Codex thread to clear yet.");
-    process.stdout.write(`\x1b[36m[codex:${projectId.slice(0, 8)}] /clear START thread ${threadId}\x1b[0m\n`);
+    process.stdout.write(`\x1b[33m[codex:${projectId.slice(0, 8)}] /clear START thread ${threadId}\x1b[0m\n`);
     await this.archiver(threadId);
     this.queue.clearProjectThread(projectId, threadId);
-    process.stdout.write(`\x1b[36m[codex:${projectId.slice(0, 8)}] /clear COMPLETED — next task starts a new thread\x1b[0m\n`);
+    process.stdout.write(`\x1b[33m[codex:${projectId.slice(0, 8)}] /clear COMPLETED — next task starts a new thread\x1b[0m\n`);
     return { threadId, successfulSinceCompaction: this.queue.successesSinceCompaction(projectId) };
   }
 
@@ -267,6 +286,7 @@ export class Orchestrator {
     }));
     const first = prepared[0];
     const model = first.analysis!.model;
+    const modelId = await activeCodexModelId(model);
     if (prepared.some(job => job.projectId !== first.projectId || job.projectPath !== first.projectPath || job.analysis!.model !== model)) throw new Error("Only tasks from the same project with the same model can share a Codex prompt.");
     const ranks = prepared.map(job => reasoningRank[job.analysis!.reasoning]);
     if (Math.max(...ranks) - Math.min(...ranks) > 1) throw new Error("Grouped tasks may differ by at most one reasoning level.");
@@ -275,12 +295,12 @@ export class Orchestrator {
     const prompt = prepared.length === 1 ? buildCodexPrompt(first.tasks, first.analysis!, first.attachments) : buildCodexGroupPrompt(prepared);
     const startedAt = new Date().toISOString();
     for (const [index, job] of prepared.entries()) {
-      this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, execution: { phase: "STARTING", model: `gpt-5.6-${model}`, reasoning, startedAt, lastActivityAt: startedAt, verification: "not_run", group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: gpt-5.6-${model} · ${reasoning}.`, status: "success" as const }] : [])] } });
+      this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, execution: { phase: "STARTING", model: modelId, reasoning, startedAt, lastActivityAt: startedAt, verification: "not_run", group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: ${modelId} · ${reasoning}.`, status: "success" as const }] : [])] } });
     }
     return new Promise(resolve => {
       const excluded = new Set(prepared.map(job => job.id));
       const previous = this.queue.list(first.projectId).filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-      const common = ["--json", "--skip-git-repo-check", "--model", `gpt-5.6-${model}`, "-c", `model_reasoning_effort=\"${reasoning}\"`];
+      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`];
       const imageArgs = prepared.flatMap(job => (job.attachments ?? []).flatMap(attachment => ["--image", attachment.path]));
       const args = previous?.execution?.threadId ? ["exec", "resume", ...common, ...imageArgs, previous.execution.threadId, prompt] : ["exec", ...common, "--color", "never", "--approve-for-me", ...imageArgs, prompt];
       const child = spawn("codex", args, { cwd: first.projectPath, shell: false });
@@ -289,10 +309,10 @@ export class Orchestrator {
       const tag = prepared.length > 1 ? `${first.id.slice(0, 8)}+${prepared.length - 1}` : first.id.slice(0, 8);
       const imagePaths = new Set(prepared.flatMap(job => (job.attachments ?? []).map(attachment => attachment.path)));
       const commandSummary = `codex ${args.map(arg => arg === prompt ? "<task prompt>" : imagePaths.has(arg) ? "<attached image>" : arg).join(" ")}`;
-      process.stdout.write(`\x1b[36m[codex:${tag}] JEV SELECTED model=gpt-5.6-${model} reasoning=${reasoning}${groupId ? ` group=${prepared.length}` : ""}\x1b[0m\n`);
-      process.stdout.write(`\x1b[36m[codex:${tag}] EXEC ${commandSummary}\x1b[0m\n`);
+      process.stdout.write(`\x1b[33m[codex:${tag}] JEV SELECTED model=${modelId} reasoning=${reasoning}${groupId ? ` group=${prepared.length}` : ""}\x1b[0m\n`);
+      process.stdout.write(`[codex:${tag}] EXEC ${commandSummary}\n`);
       const attachmentCount = prepared.reduce((total, job) => total + (job.attachments?.length ?? 0), 0);
-      this.updateGroup(prepared, execution => ({ ...execution, pid: child.pid, lastActivityAt: launchedAt, events: [...execution.events, { id: randomUUID(), timestamp: launchedAt, kind: "system", title: "JEV selection applied", detail: `Model used: gpt-5.6-${model} · reasoning used: ${reasoning}`, status: "success" }, ...(attachmentCount ? [{ id: randomUUID(), timestamp: launchedAt, kind: "system" as const, title: "Visual references attached", detail: `${attachmentCount} image${attachmentCount === 1 ? "" : "s"} sent to Codex with --image.`, status: "success" as const }] : []), { id: randomUUID(), timestamp: launchedAt, kind: "command", title: "Codex command launched", detail: commandSummary, status: "success" }] }));
+      this.updateGroup(prepared, execution => ({ ...execution, pid: child.pid, lastActivityAt: launchedAt, events: [...execution.events, { id: randomUUID(), timestamp: launchedAt, kind: "system", title: "JEV selection applied", detail: `Model used: ${modelId} · reasoning used: ${reasoning}`, status: "success" }, ...(attachmentCount ? [{ id: randomUUID(), timestamp: launchedAt, kind: "system" as const, title: "Visual references attached", detail: `${attachmentCount} image${attachmentCount === 1 ? "" : "s"} sent to Codex with --image.`, status: "success" as const }] : []), { id: randomUUID(), timestamp: launchedAt, kind: "command", title: "Codex command launched", detail: commandSummary, status: "success" }] }));
       let rawOutput = ""; let stdoutBuffer = ""; let settled = false; let reportedFailure = false; let usage: CodexUsage | undefined; let verification: Verification = "not_run";
       const record = (line: string) => {
         if (!line.trim()) return;
@@ -329,20 +349,22 @@ export class Orchestrator {
         if (success && representative.execution?.threadId) {
           const successesSinceCompaction = this.queue.recordSuccessfulTasks(first.projectId, prepared.length);
           if (successesSinceCompaction >= 3) {
-            process.stdout.write(`\x1b[35m[codex:${tag}] /compact START thread ${representative.execution.threadId}\x1b[0m\n`);
+            process.stdout.write(`\x1b[33m[codex:${tag}] /compact START thread ${representative.execution.threadId}\x1b[0m\n`);
             this.updateGroup(prepared, execution => ({ ...execution, lastActivityAt: now, events: [...execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact started", detail: `Thread ${representative.execution!.threadId} — automatic compaction after three successful tasks.`, status: "active" }] }));
             try { await this.compactor(representative.execution.threadId); compactedAfterTask = true; this.queue.markProjectCompacted(first.projectId); } catch (error) { compactionError = messageOf(error); }
           }
         }
         const accountUsage = await this.accountUsageReader().catch(error => ({ capturedAt: new Date().toISOString(), unavailableReason: messageOf(error) }));
-        if (compactedAfterTask) process.stdout.write(`\x1b[35m[codex:${tag}] /compact COMPLETED\x1b[0m\n`);
-        if (compactionError) process.stderr.write(`\x1b[35m[codex:${tag}] /compact FAILED: ${compactionError}\x1b[0m\n`);
-        resolve(prepared.map(job => {
+        if (compactedAfterTask) process.stdout.write(`\x1b[33m[codex:${tag}] /compact COMPLETED\x1b[0m\n`);
+        if (compactionError) process.stderr.write(`\x1b[33m[codex:${tag}] /compact FAILED: ${compactionError}\x1b[0m\n`);
+        const completed = prepared.map(job => {
           const latest = this.queue.get(job.id)!;
           const checkpoint: ExecutionEvent = { id: randomUUID(), timestamp: now, kind: "system", title: "Codex status checkpoint", detail: JSON.stringify({ model: latest.execution?.model, reasoning: latest.execution?.reasoning, taskUsage: usage, accountUsage, verification, groupedTasks: prepared.length }), status: "success" };
           const compactEvents: ExecutionEvent[] = compactedAfterTask ? [{ id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact confirmed", detail: "Codex app-server confirmed automatic compaction after exactly three successful tasks.", status: "success" }] : compactionError ? [{ id: randomUUID(), timestamp: now, kind: "error", title: "Automatic compaction failed", detail: compactionError, status: "error" }] : [];
           return this.queue.transition(job.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", lastActivityAt: now, completedAt: now, usage, accountUsage, verification, compactedAfterTask, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.") : failureMessage, status: success ? "success" : "error" }] } })!;
-        }));
+        });
+        if (success) for (const job of completed) logTicketCompleted(tag, job.tasks[0]?.description ?? job.id);
+        resolve(completed);
       });
     });
   }

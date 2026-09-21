@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AppConfigStore, maskedApiKey } from "./app-config.js";
+import { AppConfigStore, maskedApiKey } from "../../src/core/app-config.js";
 
 describe("local app configuration", () => {
   it("persists the Gateway key without a configurable JEV input rate", () => {

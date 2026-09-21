@@ -2,10 +2,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppConfig } from "./app-config.js";
-import { TelegramBot } from "./telegram-bot.js";
-import type { TelegramAction } from "./telegram-ui.js";
-import type { Job, ProjectRecord } from "./types.js";
+import type { AppConfig } from "../../src/core/app-config.js";
+import { TelegramBot } from "../../src/core/telegram-bot.js";
+import type { TelegramAction } from "../../src/core/telegram-ui.js";
+import type { Job, ProjectRecord } from "../../src/core/types.js";
 
 const config: AppConfig = { jevProvider: "vercel-ai-gateway", aiGatewayApiKey: "", telegramBotToken: "private-token", telegramAllowedChatId: "42", telegramEnabled: true };
 const project: ProjectRecord = { id: "project-a", name: "Example", path: "/example", createdAt: "2026-01-01", updatedAt: "2026-01-01" };
@@ -38,6 +38,15 @@ async function click(bot: TelegramBot, action: TelegramAction, argument?: string
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Telegram bot", () => {
+  it("sends one private completion summary after development finishes", async () => {
+    const fetchMock = telegramMock();
+    vi.stubGlobal("fetch", fetchMock);
+    const bot = new TelegramBot({ config: () => config, listProjects: () => [project], listJobs: () => [], createTicket: () => { throw new Error("not expected"); } }, mkdtempSync(join(tmpdir(), "jev-telegram-")));
+    await bot.notifyDevelopmentFinished(project, [{ ...pendingJob(), status: "SUCCESS" }, { ...pendingJob(), id: "failed", status: "FAILED" }]);
+    const sent = fetchMock.mock.calls.filter(call => String(call[0]).endsWith("/sendMessage"));
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(String(sent[0][1]?.body))).toMatchObject({ chat_id: "42", text: expect.stringContaining("1 completed · 1 failed") });
+  });
   it("pairs only from /start, clears that chat, and opens the dashboard", async () => {
     const fetchMock = telegramMock();
     vi.stubGlobal("fetch", fetchMock);

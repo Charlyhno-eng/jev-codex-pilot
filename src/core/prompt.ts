@@ -1,7 +1,9 @@
 import type { JevAnalysis, Job, JobAttachment, TaskSpec } from "./types.js";
+import { codexModelId } from "./codex-models.js";
 
 function section(title: string, values: string[]) { return values.length ? `\n${title}:\n${values.map(x => `- ${x}`).join("\n")}` : ""; }
 
+/** Performs this backend operation. */
 export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attachments: JobAttachment[] = []): string {
   return [
     "You are executing one task prepared by JEV. Implement only this task.",
@@ -21,6 +23,7 @@ export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attac
  * JEV decisions remain per job. This only combines the implementation prompts
  * for a small compatible execution group.
  */
+/** Performs this backend operation. */
 export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis" | "attachments">>): string {
   return [
     "You are executing a small compatible group of tasks prepared independently by JEV.",
@@ -44,7 +47,8 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
   ].join("\n");
 }
 
-export function buildCodexCommand(tasks: TaskSpec[], analysis: JevAnalysis): string {
+/** Performs this backend operation. */
+export function buildCodexCommand(tasks: TaskSpec[], analysis: JevAnalysis, modelId = codexModelId(analysis.model)): string {
   const escaped = buildCodexPrompt(tasks, analysis).replace(/'/g, "'\\''");
-  return `codex exec --json --color never --skip-git-repo-check --approve-for-me --model gpt-5.6-${analysis.model} -c 'model_reasoning_effort="${analysis.reasoning}"' '${escaped}'`;
+  return `codex exec --json --color never --skip-git-repo-check --approve-for-me --model ${modelId} -c 'model_reasoning_effort="${analysis.reasoning}"' '${escaped}'`;
 }

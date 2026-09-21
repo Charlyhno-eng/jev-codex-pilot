@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { AttachmentStore } from "./attachments.js";
+import { AttachmentStore } from "../../src/core/attachments.js";
 
 describe("task image attachments", () => {
   it("stores a supported image locally without putting its data in the task record", () => {

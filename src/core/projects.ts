@@ -3,6 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ProjectRecord } from "./types.js";
 
+/** Performs this backend operation. */
 export class ProjectStore {
   private projects: ProjectRecord[] = [];
   private readonly file: string;
@@ -26,8 +27,9 @@ export class ProjectStore {
       if (existing.removedAt) {
         existing.removedAt = undefined;
         existing.updatedAt = new Date().toISOString();
-        this.persist();
       }
+      this.ensureAgents(existing, context);
+      this.persist();
       return existing;
     }
     const agentsFile = join(absolute, "AGENTS.md");
@@ -57,6 +59,15 @@ export class ProjectStore {
     project.updatedAt = new Date().toISOString();
     this.persist();
     return project;
+  }
+
+  private ensureAgents(project: ProjectRecord, context?: string) {
+    const agentsFile = join(project.path, "AGENTS.md");
+    if (existsSync(agentsFile)) return;
+    if (!context?.trim()) throw new Error("Describe the application context before creating a project without AGENTS.md");
+    writeFileSync(agentsFile, initialAgents(project.name, context.trim()), { encoding: "utf8", flag: "wx" });
+    project.agentsCreatedByJev = true;
+    project.updatedAt = new Date().toISOString();
   }
 
   readAgents(id: string): string {
@@ -97,5 +108,5 @@ export class ProjectStore {
 }
 
 function initialAgents(name: string, context: string): string {
-  return `# ${name}\n\n## Application context\n\n${context}\n\n## JEV Codex Pilot delivery log\n\nThis file is automatically maintained by Codex. At the end of each completed feature, append one concise bullet describing what was added or changed.\n`;
+  return `# ${name}\n\n## Product context\n\n${context}\n\n## Working instructions\n\n- Read the existing code and project documentation before making changes.\n- Keep changes focused on the requested ticket.\n- Preserve existing project conventions unless the ticket explicitly changes them.\n- Run the most relevant available verification before completing work.\n\n## JEV Codex Pilot delivery log\n\nThis file is automatically maintained by Codex. At the end of each completed feature, append one concise English bullet describing what was added or changed.\n`;
 }
