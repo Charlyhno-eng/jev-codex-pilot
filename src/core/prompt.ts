@@ -12,6 +12,8 @@ export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attac
     section("Relevant context (read only these files before expanding if necessary)", analysis.context_files),
     section("Known files likely to change", analysis.files_to_modify),
     "Choose the implementation and exact files yourself from the project architecture.",
+    "Focus this turn on implementation. Leave tests and build checks for JEV's separate verification turn in the same Codex session.",
+    "If implementation needs another Codex turn with a different model or reasoning effort, end your final message with JEV_ROUTE=<tier>:<effort> (tiers: luna, terra, sol; efforts: low, medium, high, xhigh). Request this only when useful, and leave the remaining work for that next turn. Otherwise complete the implementation in this turn.",
     "\nFollow AGENTS.md. Briefly explain any scope expansion.",
     "Before finishing, update the target project's root AGENTS.md and README.md in English.",
     "AGENTS.md is mandatory: append exactly one concise English delivery-log bullet for this ticket under 'JEV Codex Pilot delivery log'. Create that section if it is missing.",
@@ -40,6 +42,8 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
       ].filter(Boolean);
     }),
     "Choose the implementation and exact files from the project architecture.",
+    "Focus this turn on implementation. Leave tests and build checks for JEV's separate verification turn in the same Codex session.",
+    "If implementation needs another Codex turn with a different model or reasoning effort, end your final message with JEV_ROUTE=<tier>:<effort> (tiers: luna, terra, sol; efforts: low, medium, high, xhigh). Request this only when useful, and leave the remaining work for that next turn. Otherwise complete the implementation in this turn.",
     "Follow AGENTS.md. Briefly explain any scope expansion.",
     "Before finishing, update the target project's root AGENTS.md and README.md in English.",
     "AGENTS.md is mandatory: append exactly one concise English delivery-log bullet for each numbered ticket under 'JEV Codex Pilot delivery log'. Create that section if it is missing.",

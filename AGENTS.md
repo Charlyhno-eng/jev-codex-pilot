@@ -2,61 +2,28 @@
 
 ## Project boundaries
 
-- The API server lives in `src/api`, the JEV engine in `src/core`, and the web interface in `src/web`.
-- JEV only analyses target projects. It must never change target-project files or run their tests.
-- Running Codex is explicitly opt-in through `POST /api/jobs/:id/run` or the Run button.
-- Local development persistence is stored under `.jev/`; preserve existing projects, jobs, and history.
+- API code lives in `src/api`, JEV in `src/core`, and the web interface in `src/web`.
+- JEV is read-only for target projects and never runs their tests.
+- Codex runs only after an explicit action through the API or the Run button.
+- Preserve project data and history under `.jev/`.
 - Never expose API keys or other secrets in source code, logs, documentation, or UI output.
 
-## Current product behavior
+## Current behavior
 
-- Projects are selected or created locally and retain separate queues, task histories, and Codex threads.
-- A project context is stored in its `AGENTS.md`. The UI can create it when absent and display or edit it in a large modal.
-- JEV evaluates every task independently and recommends a Codex model, reasoning level, advisory task breakdown score, context files, and likely files to modify.
-- Codex recommendations use the stable Luna, Terra, and Sol tiers with active IDs resolved from Codex or local overrides. Reasoning is limited to Low, Medium, High, and Extra High.
-- Consecutive compatible tasks may share one Codex execution only when they use the same model and their reasoning levels differ by at most one step. Their JEV analyses and task histories remain independent.
-- Codex execution streams live JSONL events, command activity, verification status, model and reasoning evidence, and token usage to the UI.
-- Task token totals come from Codex `turn.completed` events. Account-wide Codex usage is captured as a best-effort app-server snapshot and must be labelled as account-wide.
-- Successful work triggers automatic thread compaction after every third successful task. A compaction failure never changes a successful task into a failure.
-- Failed tasks remain visible and can be moved manually. After a later task succeeds in the same batch, an earlier failed task is retried once automatically.
-- Vercel AI Gateway configuration is stored in `config/config.toml`; the billing UI must distinguish an estimate from an explicitly configured balance.
+- Projects have separate context, queues, histories, and Codex threads.
+- The web interface can create and edit a project `AGENTS.md` through a modal.
+- JEV evaluates each ticket, reports precision and task breakdown, and recommends a model tier and reasoning effort.
+- Codex can route successive turns dynamically: verification favors low effort, while failed checks can use a stronger repair route. Each route is logged in red by JEV.
+- Compatible pending tickets may share one execution when their model and reasoning settings are close enough.
+- Live JSONL events, commands, verification, model routing, and token usage are streamed to the UI.
+- Successful work triggers automatic thread compaction after every third successful task. Compaction failure does not fail the task.
+- Telegram is optional, private-chat-only, and sends a completion summary after development runs.
+- Vercel AI Gateway is currently the only supported analysis provider; its configuration stays in `config/config.toml`.
 
-## JEV Codex Pilot delivery log
+## Recent delivery
 
-This section is maintained by Codex. Append one concise English bullet for each completed feature or change.
+This project now includes modular web components and styles, dedicated tests, English backend docstrings, red JEV logs, distinct Codex command and routing colors, Git status detection, modal first-time `AGENTS.md` creation, read-only Git review, Telegram progress and completion notices, dynamic model and effort routing, and consistent ticket precision between analysis and execution.
 
-- Added project workspaces, persistent task history, independent JEV task analysis, and per-project Codex thread reuse.
-- Added project-context creation, viewing, and editing through `AGENTS.md`, plus a delivery-log convention for future Codex work.
-- Added JEV model, reasoning, complexity, token-cost, verification, and live execution evidence in the web interface.
-- Added Vercel AI Gateway settings and live/estimated credit presentation without exposing the API key.
-- Added automatic Codex thread compaction after three successful tasks and visually distinct compaction events.
-- Added task archiving, recovery controls, clearer project navigation, a completion sound, and protected batch launching.
-- Added Codex task-token checkpoints, best-effort account-wide usage snapshots, and transparent unavailable-state handling.
-- Added compatible-task prompt grouping for adjacent jobs that share a model and differ by no more than one reasoning level.
-- Made compatible-task grouping direction-independent and added idle-only, project-scoped Codex `/compact` and reversible `/clear` controls with a persistent compaction counter.
-- Extended grouping to the next compatible project ticket across submission batches, required English AGENTS.md and README.md updates from every Codex ticket, and added reversible project removal from the web workspace.
-- Added reversible Success-to-Pending task recovery, pending-ticket editing with fresh JEV analysis and visual references, plus a read-only Git change-review workspace.
-- Updated the Codex launch label to count exactly the currently pending tasks in the project queue.
-- Made project change review prominent with a dedicated “Review changes” action and strengthened the “Create Workspace” control.
-- Simplified the project header, added a dedicated Git-review card, and enabled previous/next navigation across task recommendations.
-- Centered task-review navigation controls to keep previous and next actions aligned on narrow layouts.
-- Removed the redundant Changes navbar link and grouped the Vercel credits and settings controls more tightly.
-- Improved draft-task composition with mouse-friendly text editing, direct image attachments, auto-growing inputs, contextual JEV precision guidance, and a simplified launch-only execution action.
-- Persisted a visible per-task JEV precision score, added queue scrolling after analysis and save-to-close context editing, and corrected Codex app-server compaction completion handling.
-- Changed draft precision checks to run only when the user explicitly validates a task with the checkmark or Ctrl+Enter.
-- Fixed JEV task-precision scoring to use the supported ten-level scale and added permanent pending-ticket removal from its editor.
-- Added an optional, private-chat-only Telegram bot for per-project progress and guided pending-ticket creation, with local TOML configuration.
-- Restored local credential reveal controls and added Telegram chat-ID pairing before private bot activation.
-- Refined the Telegram bot with an English rich-message interface, masked token display, and chat clearing for bot-managed messages.
-- Added Telegram-controlled Codex launch for explicitly selected projects that have pending tickets.
-- Reworked Telegram as a button-guided dashboard after `/start`, including a reliable inline ticket-cancellation action.
-- Rebuilt Telegram as a versioned single-screen flow with startup chat cleanup and confirmed deletion of newly created pending tickets.
-- Fixed home-page AGENTS.md creation for projects already registered in local JEV persistence.
-- Recalibrated advisory JEV ticket-precision scores and added dark-blue completed-ticket terminal logs.
-- Reused full draft analyses when creating tickets so pre-creation and recommendation precision scores remain identical.
-- Changed successful ticket completion logs to use English wording.
-- Split the web interface, styles, and tests into dedicated modules, documented backend exports, and made JEV terminal activity red.
-- Improved initial AGENTS.md guidance, added early Git repository detection, and removed JEV’s numeric task-complexity score.
-- Restored the four-part recommendation with an advisory task breakdown score, centralized configurable Codex model IDs, and added Telegram development-completion notices.
-- Added red backend-terminal JEV lifecycle logs, including precision, task-breakdown, and model-recommendation results for each evaluated ticket.
-- Added a dedicated Codex console page, GitHub connection notices, modal first-time AGENTS.md creation, and distinct terminal colors for JEV and Codex actions.
+- Rewrote the English README with honest token-saving estimates, provider extensibility guidance, and a shorter Telegram section.
+
+Keep future delivery notes concise and append one English bullet here for each completed feature or change.

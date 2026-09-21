@@ -2,39 +2,19 @@
 
 # JEV Codex Pilot
 
----
+JEV Codex Pilot is a local control center for turning software ideas into focused, traceable Codex work. It analyses each ticket before execution, keeps project context close, chooses an appropriate model and reasoning effort, and shows the complete development run as it happens.
 
-JEV Codex Pilot turns a backlog into a clear, controlled development workflow. Bring your projects, context, and ideas into one focused cockpit. JEV sizes every 
-task and recommends the right Codex model and reasoning level. Launch focused work with the confidence that each ticket has its own plan.
+The workflow is designed to reduce wasted context and unnecessary reasoning. JEV scores ticket precision and task breakdown, groups compatible work when possible, routes simple verification turns to low effort, escalates repair work when needed, and compacts long running threads automatically. These choices can reduce token usage by roughly **20–40% in typical mixed workloads**, with higher savings possible in test heavy queues. They are practical estimates, not guaranteed benchmarks: complex tickets, repeated fixes, and large repositories can reduce or remove the gain.
 
-Watch Codex work live, with progress, verification, visuals, and token usage in view. Keep project memory close through an editable `AGENTS.md` context. Move 
-from idea to implementation without losing the thread. Review completed work, recover tasks, and inspect every local Git change. See JEV usage and estimated cost as your session moves forward.
+You keep control at every stage. Review the project files and Git state, edit `AGENTS.md`, inspect live Codex events, follow verification results, recover tasks, and review local changes from one workspace. Token totals are reported from completed Codex turns, while account usage is clearly labelled when available.
 
-One workspace to turn sharper decisions into better software, faster.
-
----
+JEV currently uses the **Vercel AI Gateway API** for ticket analysis and usage data. The integration is kept in the project code so developers can adapt it to another provider or a self-hosted API when needed.
 
 ## See JEV Codex Pilot in action
 
 ![JEV Codex Pilot example1](assets/1.png)
 
 ![JEV Codex Pilot example2](assets/2.png)
-
----
-
-## Getting your Vercel AI Gateway API key
-
-To use JEV, you need a Vercel account and an AI Gateway API key.
-
-1. Create a Vercel account or sign in at [Vercel](https://vercel.com).
-2. Open the [JEV model page on Vercel AI Gateway](https://vercel.com/ai-gateway/models/jev).
-3. Follow the instructions to enable AI Gateway and create an API key.
-4. Copy your API key and add it to the application configuration.
-5. Start the classification process.
-
-The API key is used to authenticate requests to JEV through Vercel AI Gateway.
-
----
 
 ## Quickstart
 
@@ -50,22 +30,19 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`, configure the Vercel AI Gateway key in Settings, and select or create a local project.
+Open `http://localhost:5173`, configure the available provider in Settings, then select or create a local project.
 
-### Codex model names
+During development, JEV can route successive Codex turns to different model tiers and reasoning efforts. A turn keeps its selected settings until it finishes; the next turn can be routed based on the work still required. Verification normally uses a low effort route, while failed checks can trigger a stronger repair route. Every route is visible in the backend logs and in the execution console.
 
-JEV keeps the Luna, Terra, and Sol recommendation tiers stable. The model IDs and reasoning levels are centralized in `src/core/codex-models.ts`. JEV reads Codex's installed model catalog and automatically uses a renamed ID when its tier remains recognizable. For a deeper rename, set `JEV_CODEX_MODEL_LUNA`, `JEV_CODEX_MODEL_TERRA`, or `JEV_CODEX_MODEL_SOL` before starting the API. Saved tickets keep their tier and pick up the active ID when launched. The four reasoning levels remain Low, Medium, High, and Extra High.
+The task breakdown score is advisory. It indicates whether a ticket looks like one focused unit of work and never blocks execution.
 
-JEV also shows a non-blocking task breakdown score. Higher scores mean the ticket is one focused unit of work; lower scores suggest splitting independent outcomes into separate tickets.
+## Telegram
 
-## Optional Telegram bot
+The optional Telegram bot provides a private progress view, guided ticket creation, and explicit Codex launches. It is disabled by default, pairs one private chat, and sends a completion summary when a development run ends.
 
-Telegram can provide a private mobile view of project progress and a guided way to add tickets. It is disabled by default and works only while the local JEV API server is running.
+## Project principles
 
-In **Settings**, paste the BotFather token and save it. The first private chat to send `/start` is paired automatically, its numeric ID is stored in `config/config.toml`, and the integration is enabled. The token can be revealed from the local settings dialog and is never sent to a project or Codex. Once paired, every other Telegram chat is ignored, preventing other users from reading project data or creating work.
-
-`/start` is the only command needed. It opens a single button-driven dashboard for project progress, ticket creation, and explicit Codex launches. The bot edits that dashboard in place, accepts only actions valid for the current step, removes typed ticket descriptions from the chat, and offers a confirmed delete action immediately after ticket creation.
-
-When a Codex development run finishes, the paired private chat receives one summary with the number of completed and failed tickets. Delivery is best effort and does not change the task result.
-
-When the bot service or a new `/start` session begins, it clears the private chat before presenting a fresh dashboard. Telegram only permits bots to delete messages sent within the previous 48 hours, so older messages may remain when Telegram enforces that platform limit.
+- JEV analyses projects without changing their files or running their tests.
+- Codex runs only after an explicit user action.
+- Project history, context, and execution data remain separated per project.
+- API keys stay local and are never shown in logs or UI output.

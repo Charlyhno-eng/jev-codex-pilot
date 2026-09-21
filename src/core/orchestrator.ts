@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { codexModelId, REASONING_LEVELS } from "./codex-models.js";
+import { codexModelId, MODEL_LEVELS, REASONING_LEVELS } from "./codex-models.js";
 import { activeCodexModelId } from "./codex-catalog.js";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -8,7 +8,7 @@ import { analyze } from "./analyzer.js";
 import { logJev, logJevError } from "./jev-logger.js";
 import { buildCodexCommand, buildCodexGroupPrompt, buildCodexPrompt } from "./prompt.js";
 import type { JobQueue } from "./queue.js";
-import type { CodexAccountUsage, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
+import type { CodexAccountUsage, CodexModel, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
 
 type JsonEvent = Record<string, unknown> & { type?: string; item?: Record<string, unknown> };
 type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified";
@@ -107,6 +107,26 @@ function archiveThread(threadId: string): Promise<void> {
 /** Writes a completed-ticket terminal message. */
 function logTicketCompleted(tag: string, title: string) {
   process.stdout.write(`\x1b[34m[codex:${tag}] Ticket ${title} — development completed\x1b[0m\n`);
+}
+
+/** Resumes one Codex turn in the existing thread. */
+function resumeCodexTurn(projectPath: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (pid?: number) => void): Promise<{ code: number | null; error?: string }> {
+  return new Promise(resolve => {
+    const args = ["exec", "resume", "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, threadId, prompt];
+    const child = spawn("codex", args, { cwd: projectPath, shell: false });
+    onStart(child.pid);
+    let buffer = ""; let settled = false;
+    child.stdin.end();
+    child.stdout.on("data", chunk => {
+      const value = chunk.toString(); process.stdout.write(`[codex:${tag}] ${value}`);
+      buffer += value;
+      const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
+      lines.forEach(record);
+    });
+    child.stderr.on("data", chunk => { const value = chunk.toString(); process.stderr.write(`[codex:${tag}] ${value}`); record(value.trim()); });
+    child.on("error", error => { if (settled) return; settled = true; resolve({ code: null, error: error.message }); });
+    child.on("close", code => { if (settled) return; settled = true; if (buffer) record(buffer); resolve({ code }); });
+  });
 }
 
 /** Best effort only: this is Codex-account usage, never an attribution to one job. */
@@ -314,6 +334,9 @@ export class Orchestrator {
       const attachmentCount = prepared.reduce((total, job) => total + (job.attachments?.length ?? 0), 0);
       this.updateGroup(prepared, execution => ({ ...execution, pid: child.pid, lastActivityAt: launchedAt, events: [...execution.events, { id: randomUUID(), timestamp: launchedAt, kind: "system", title: "JEV selection applied", detail: `Model used: ${modelId} · reasoning used: ${reasoning}`, status: "success" }, ...(attachmentCount ? [{ id: randomUUID(), timestamp: launchedAt, kind: "system" as const, title: "Visual references attached", detail: `${attachmentCount} image${attachmentCount === 1 ? "" : "s"} sent to Codex with --image.`, status: "success" as const }] : []), { id: randomUUID(), timestamp: launchedAt, kind: "command", title: "Codex command launched", detail: commandSummary, status: "success" }] }));
       let rawOutput = ""; let stdoutBuffer = ""; let settled = false; let reportedFailure = false; let usage: CodexUsage | undefined; let verification: Verification = "not_run";
+      let activeStage: "implementation" | "verification" | "repair" = "implementation";
+      let stageTurnFailed = false; let verificationCommandFailed = false; let verificationReportedFailed = false;
+      let requestedRoute: { tier: CodexModel; effort: Reasoning } | undefined;
       const record = (line: string) => {
         if (!line.trim()) return;
         if (/patch rejected|writing is blocked|impossible d['’]implémenter|could not implement|unable to implement/i.test(line)) reportedFailure = true;
@@ -321,8 +344,18 @@ export class Orchestrator {
         if (/^Reading additional input from stdin\.\.\.$/i.test(line.trim())) { this.updateGroupOutput(prepared, rawOutput); return; }
         let parsed: JsonEvent; try { parsed = JSON.parse(line) as JsonEvent; } catch { parsed = { type: "raw", message: line }; }
         const description = describe(parsed);
-        if (parsed.type === "turn.completed" && parsed.usage && typeof parsed.usage === "object") usage = parsed.usage as CodexUsage;
+        if (parsed.type === "turn.failed" || parsed.type === "error") stageTurnFailed = true;
+        if (parsed.type === "turn.completed" && parsed.usage && typeof parsed.usage === "object") {
+          const turnUsage = parsed.usage as CodexUsage;
+          usage = Object.fromEntries(["input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"].map(key => [key, ((usage as Record<string, number> | undefined)?.[key] ?? 0) + ((turnUsage as Record<string, number>)[key] ?? 0)])) as CodexUsage;
+        }
         const item = parsed.item ?? {};
+        if (activeStage === "implementation" && parsed.type === "item.completed" && item.type === "agent_message") {
+          const requested = String(item.text ?? "").match(/(?:^|\n)JEV_ROUTE=(luna|terra|sol):(low|medium|high|xhigh)\s*$/);
+          requestedRoute = requested ? { tier: requested[1] as CodexModel, effort: requested[2] as Reasoning } : undefined;
+        }
+        if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "command_execution" && typeof item.exit_code === "number" && item.exit_code !== 0 && /\b(test|vitest|jest|pytest|cargo test|go test|playwright|cypress|build|tsc)\b/i.test(String(item.command ?? ""))) verificationCommandFailed = true;
+        if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "agent_message" && /JEV_VERIFICATION_FAILED/.test(String(item.text ?? ""))) verificationReportedFailed = true;
         if (parsed.type === "item.completed" && item.type === "command_execution" && item.exit_code === 0) {
           const command = String(item.command ?? "");
           if (/playwright|cypress|webdriver|browser/i.test(command)) verification = "functional_verified";
@@ -343,8 +376,49 @@ export class Orchestrator {
       child.on("close", async code => {
         if (settled) return; settled = true;
         if (stdoutBuffer) record(stdoutBuffer);
-        const now = new Date().toISOString(); const success = code === 0 && !reportedFailure;
-        const failureMessage = reportedFailure ? "Codex reported that it could not implement the task" : `Codex exited with code ${code}`;
+        let success = code === 0 && !reportedFailure && !stageTurnFailed;
+        let failureMessage = reportedFailure ? "Codex reported that it could not implement the task" : `Codex exited with code ${code}`;
+        const runStage = async (stage: "implementation" | "verification" | "repair", tier: CodexModel, effort: Reasoning, instruction: string) => {
+          const threadId = this.queue.get(first.id)?.execution?.threadId;
+          if (!threadId) return { code: null, error: "Codex did not provide a thread ID for continuation" };
+          const nextModelId = await activeCodexModelId(tier);
+          activeStage = stage; stageTurnFailed = false;
+          if (stage === "verification") { verificationCommandFailed = false; verificationReportedFailed = false; }
+          const routedAt = new Date().toISOString();
+          const previousSetting = this.queue.get(first.id)?.execution;
+          logJev(`[codex:${tag}] Model route for ${stage}: ${previousSetting?.model ?? "unknown"}/${previousSetting?.reasoning ?? "unknown"} → ${nextModelId}/${effort}`);
+          this.updateGroup(prepared, execution => ({ ...execution, model: nextModelId, reasoning: effort, lastActivityAt: routedAt, events: [...execution.events, { id: randomUUID(), timestamp: routedAt, kind: "system", title: "Codex model changed", detail: `${stage}: ${nextModelId} · ${effort} reasoning`, status: "active" }] }));
+          return resumeCodexTurn(first.projectPath, threadId, nextModelId, effort, instruction, tag, record, pid => this.updateGroup(prepared, execution => ({ ...execution, pid })));
+        };
+        if (success) {
+          for (let attempt = 0; requestedRoute && success && attempt < 3; attempt++) {
+            const route = requestedRoute;
+            requestedRoute = undefined;
+            const continued = await runStage("implementation", route.tier, route.effort, "Continue and finish the implementation requested in the previous turn. Do not run tests or build checks; JEV will verify in a separate turn. If another model or effort is needed for a further implementation turn, end your final message with JEV_ROUTE=<tier>:<effort>. Otherwise complete the implementation.");
+            success = continued.code === 0 && !continued.error && !stageTurnFailed && !reportedFailure;
+            if (!success) failureMessage = continued.error ?? `Codex implementation turn exited with code ${continued.code}`;
+          }
+          if (requestedRoute && success) { success = false; failureMessage = "Codex requested more than three implementation routing turns"; }
+        }
+        if (success) {
+          const checked = await runStage("verification", "luna", "low", "Verify the work completed in the previous turn. Run the relevant existing tests or build checks for every task in this execution. Do not change project files in this verification turn. If a check fails, report the failure and end your final message with JEV_VERIFICATION_FAILED. If there are no applicable checks, explain that briefly. Do not claim success for checks that did not run.");
+          success = checked.code === 0 && !checked.error && !stageTurnFailed;
+          if (!success) failureMessage = checked.error ?? `Codex verification turn exited with code ${checked.code}`;
+          let failedChecks = verificationCommandFailed || verificationReportedFailed;
+          for (let attempt = 0; success && failedChecks && attempt < 2; attempt++) {
+            const repairTier = MODEL_LEVELS[Math.max(MODEL_LEVELS.indexOf(model), MODEL_LEVELS.indexOf("terra"))];
+            const repairEffort = REASONING_LEVELS[Math.max(reasoningRank[reasoning], reasoningRank.high)];
+            const repaired = await runStage("repair", repairTier, repairEffort, "The previous verification turn found failing checks. Diagnose and fix the cause for the current ticket or ticket group. Preserve the requested scope and update documentation if your fix changes it. Finish with a concise explanation; verification will run separately.");
+            success = repaired.code === 0 && !repaired.error && !stageTurnFailed && !reportedFailure;
+            if (!success) { failureMessage = repaired.error ?? `Codex repair turn exited with code ${repaired.code}`; break; }
+            const rechecked = await runStage("verification", "luna", "low", "Run the relevant tests or build checks again after the repair. Do not change project files. If any check fails, report the failure and end your final message with JEV_VERIFICATION_FAILED. Report skipped checks honestly.");
+            success = rechecked.code === 0 && !rechecked.error && !stageTurnFailed;
+            if (!success) { failureMessage = rechecked.error ?? `Codex verification turn exited with code ${rechecked.code}`; break; }
+            failedChecks = verificationCommandFailed || verificationReportedFailed;
+          }
+          if (success && failedChecks) { success = false; failureMessage = "Verification checks still fail after two repair attempts"; }
+        }
+        const now = new Date().toISOString();
         const representative = this.queue.get(first.id)!; let compactedAfterTask = false; let compactionError: string | undefined;
         if (success && representative.execution?.threadId) {
           const successesSinceCompaction = this.queue.recordSuccessfulTasks(first.projectId, prepared.length);
