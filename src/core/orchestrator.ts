@@ -163,11 +163,11 @@ function logTicketCompleted(tag: string, title: string) {
 }
 
 /** Resumes one Codex turn in the existing thread. */
-function resumeCodexTurn(projectPath: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (pid?: number) => void): Promise<{ code: number | null; error?: string }> {
+function resumeCodexTurn(projectPath: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
   return new Promise(resolve => {
     const args = ["exec", "resume", "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, threadId, prompt];
     const child = spawn("codex", args, { cwd: projectPath, shell: false });
-    onStart(child.pid);
+    onStart(child);
     let buffer = ""; let settled = false;
     child.stdin.end();
     child.stdout.on("data", chunk => {
@@ -247,6 +247,7 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
 /** Performs this backend operation. */
 export class Orchestrator {
   private runningBatches = new Set<string>();
+  private runningProjects = new Set<string>();
   constructor(private queue: JobQueue, private analyzer = analyze, private compactor: (threadId: string) => Promise<void> = compactThread, private accountUsageReader: () => Promise<CodexAccountUsage> = readCodexAccountUsage, private archiver: (threadId: string) => Promise<void> = archiveThread, private rateLimitReader: () => Promise<CodexRateLimit> = readCodexRateLimit, private statusReader: (threadId?: string) => Promise<CodexStatusSnapshot> = readCodexStatusSnapshot, private verificationReviewer: (task: string, changedFiles: string[], candidateTests: string[]) => Promise<boolean> = assessVerification) {}
 
   async prepare(job: Job) {
@@ -259,14 +260,17 @@ export class Orchestrator {
       return this.queue.update(job.id, { analysis });
     } catch (error) {
       logJevError(`Recommendation unavailable for task ${job.id.slice(0, 8)} · ${messageOf(error)}`);
+      this.queue.update(job.id, { error: messageOf(error), errorCategory: "jev" });
       throw error;
     }
   }
 
-  isBatchRunning(id: string) { const job = this.queue.get(id); return Boolean(job && (job.status === "RUNNING" || this.runningBatches.has(job.batchId ?? job.id))); }
+  isProjectRunning(projectId: string) { return this.runningProjects.has(projectId) || this.queue.list(projectId).some(job => job.status === "RUNNING"); }
+  ownsProjectRun(projectId: string) { return this.runningProjects.has(projectId); }
+  isBatchRunning(id: string) { const job = this.queue.get(id); return Boolean(job && (this.isProjectRunning(job.projectId) || this.runningBatches.has(job.batchId ?? job.id))); }
 
   async resumeSessionPausedJobs() {
-    const paused = this.queue.list().filter(job => job.status === "SESSION_PAUSED");
+    const paused = this.queue.list().filter(job => job.status === "SESSION_PAUSED" && !this.isProjectRunning(job.projectId));
     if (!paused.length) return [];
     const limits = await this.rateLimitReader().catch(error => ({ available: false, reached: false, unavailableReason: messageOf(error) }));
     if (!limits.available || limits.reached) return [];
@@ -289,7 +293,9 @@ export class Orchestrator {
     if (!first) throw new Error("Job not found");
     const batchId = first.batchId ?? first.id;
     if (this.runningBatches.has(batchId)) throw new Error("This task sequence is already running");
+    if (this.isProjectRunning(first.projectId)) throw new Error("A Codex execution is already running for this project");
     this.runningBatches.add(batchId);
+    this.runningProjects.add(first.projectId);
     try {
       let snapshot = first.batchId ? this.queue.listBatch(first.batchId) : [first];
       for (const job of snapshot) if (!job.analysis && job.status === "PENDING") await this.prepare(job);
@@ -310,20 +316,23 @@ export class Orchestrator {
           const failures = this.queue.listBatch(batchId).filter(job => job.status === "FAILED" && (job.order ?? Number.MAX_SAFE_INTEGER) < lastOrder && !retried.has(job.id));
           for (const failed of failures) {
             retried.add(failed.id);
-            try { this.queue.scheduleAutomaticRetry(failed.id, completed[0]?.tasks[0]?.description ?? "a later task"); await this.run(failed.id); }
-            catch (error) { const retry = this.queue.get(failed.id); if (retry && retry.status !== "SUCCESS") this.queue.transition(failed.id, "FAILED", { error: messageOf(error) }); }
+            try { this.queue.scheduleAutomaticRetry(failed.id, completed[0]?.tasks[0]?.description ?? "a later task"); await this.runGroup([failed]); }
+            catch (error) { const retry = this.queue.get(failed.id); if (retry && retry.status !== "SUCCESS") this.queue.transition(failed.id, "FAILED", { error: messageOf(error), errorCategory: "codex" }); }
           }
         } catch (error) {
-          for (const job of group) { const latest = this.queue.get(job.id); if (latest && latest.status !== "SUCCESS") this.queue.transition(job.id, "FAILED", { error: messageOf(error) }); }
+          for (const job of group) { const latest = this.queue.get(job.id); if (latest && latest.status !== "SUCCESS") this.queue.transition(job.id, "FAILED", { error: messageOf(error), errorCategory: "codex" }); }
         }
       }
-    } finally { this.runningBatches.delete(batchId); }
+    } finally { this.runningBatches.delete(batchId); this.runningProjects.delete(first.projectId); }
   }
 
   async run(id: string): Promise<Job> {
     const job = this.queue.get(id);
     if (!job) throw new Error("Job not found");
-    return (await this.runGroup([job]))[0];
+    if (this.isProjectRunning(job.projectId)) throw new Error("A Codex execution is already running for this project");
+    this.runningProjects.add(job.projectId);
+    try { return (await this.runGroup([job]))[0]; }
+    finally { this.runningProjects.delete(job.projectId); }
   }
 
   async compactProjectThread(projectId: string) {
@@ -401,7 +410,7 @@ export class Orchestrator {
     const prepared = await Promise.all(input.map(async job => {
       const current = this.queue.get(job.id);
       if (!current) throw new Error("Job not found");
-      if (current.status === "RUNNING") throw new Error("This job is already running");
+      if (current.status !== "PENDING") throw new Error(`Only pending jobs can run (${current.status})`);
       return current.analysis ? current : (await this.prepare(current))!;
     }));
     const first = prepared[0];
@@ -417,7 +426,7 @@ export class Orchestrator {
     const startedAt = new Date().toISOString();
     const estimate = estimateExecutionTokens(prompt, prepared, reasoning, this.queue.list(first.projectId));
     for (const [index, job] of prepared.entries()) {
-      this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, execution: { phase: "STARTING", model: modelId, reasoning, startedAt, lastActivityAt: startedAt, verification: "not_run", metrics: { estimatedTokens: estimate.tokens, estimateBasis: estimate.basis, turns: 1, repairs: 0, routes: [{ stage: "implementation", model: modelId, reasoning }] }, group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: ${modelId} · ${reasoning}.`, status: "success" as const }] : [])] } });
+      this.queue.transition(job.id, "RUNNING", { attempts: job.attempts + 1, output: "", error: undefined, errorCategory: undefined, recoveryNote: undefined, execution: { phase: "STARTING", model: modelId, reasoning, startedAt, lastActivityAt: startedAt, heartbeatAt: startedAt, verification: "not_run", metrics: { estimatedTokens: estimate.tokens, estimateBasis: estimate.basis, turns: 1, repairs: 0, routes: [{ stage: "implementation", model: modelId, reasoning }] }, group: groupId ? { id: groupId, size: prepared.length, position: index + 1 } : undefined, events: [{ id: randomUUID(), timestamp: startedAt, kind: "system", title: "Starting Codex", detail: job.projectPath, status: "active" }, ...(groupId ? [{ id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Compatible tasks grouped", detail: `${prepared.length} independently analysed tasks share this Codex prompt. Effective setting: ${modelId} · ${reasoning}.`, status: "success" as const }] : [])] } });
     }
     return new Promise(resolve => {
       const excluded = new Set(prepared.map(job => job.id));
@@ -427,6 +436,19 @@ export class Orchestrator {
       const args = previous?.execution?.threadId ? ["exec", "resume", ...common, ...imageArgs, previous.execution.threadId, prompt] : ["exec", ...common, "--color", "never", "--approve-for-me", ...imageArgs, prompt];
       const child = spawn("codex", args, { cwd: first.projectPath, shell: false });
       child.stdin.end();
+      let currentChild: ReturnType<typeof spawn> = child;
+      let stalled = false;
+      const heartbeat = setInterval(() => {
+        const at = new Date().toISOString();
+        const lastActivity = this.queue.get(first.id)?.execution?.lastActivityAt;
+        if (!stalled && lastActivity && Date.now() - Date.parse(lastActivity) > 30 * 60_000 && currentChild.exitCode === null) {
+          stalled = true;
+          logJevError(`[codex:${first.id.slice(0, 8)}] No Codex activity for 30 minutes; stopping the stalled process.`);
+          currentChild.kill("SIGTERM");
+        }
+        this.updateGroup(prepared, execution => ({ ...execution, heartbeatAt: at }));
+      }, 10_000);
+      heartbeat.unref();
       const launchedAt = new Date().toISOString();
       const tag = prepared.length > 1 ? `${first.id.slice(0, 8)}+${prepared.length - 1}` : first.id.slice(0, 8);
       const imagePaths = new Set(prepared.flatMap(job => (job.attachments ?? []).map(attachment => attachment.path)));
@@ -491,18 +513,19 @@ export class Orchestrator {
       child.stdout.on("data", chunk => { const value = chunk.toString(); process.stdout.write(`[codex:${tag}] ${value}`); stdoutBuffer += value; const lines = stdoutBuffer.split("\n"); stdoutBuffer = lines.pop() ?? ""; lines.forEach(record); });
       child.stderr.on("data", chunk => { const value = chunk.toString(); process.stderr.write(`[codex:${tag}] ${value}`); record(value.trim()); });
       child.on("error", error => {
-        if (settled) return; settled = true; const now = new Date().toISOString();
-        resolve(prepared.map(job => this.queue.transition(job.id, "FAILED", { output: rawOutput, error: error.message, execution: { ...this.queue.get(job.id)!.execution!, phase: "ERROR", lastActivityAt: now, completedAt: now, events: [...this.queue.get(job.id)!.execution!.events, { id: randomUUID(), timestamp: now, kind: "error", title: "Could not start Codex", detail: error.message, status: "error" }] } })!));
+        if (settled) return; settled = true; clearInterval(heartbeat); const now = new Date().toISOString();
+        resolve(prepared.map(job => this.queue.transition(job.id, "FAILED", { output: rawOutput, error: error.message, errorCategory: "codex", execution: { ...this.queue.get(job.id)!.execution!, phase: "ERROR", lastActivityAt: now, completedAt: now, events: [...this.queue.get(job.id)!.execution!.events, { id: randomUUID(), timestamp: now, kind: "error", title: "Could not start Codex", detail: error.message, status: "error" }] } })!));
       });
       child.on("close", async code => {
         if (settled) return; settled = true;
         if (stdoutBuffer) record(stdoutBuffer);
         let success = code === 0 && !reportedFailure && !stageTurnFailed;
-        let failureMessage = reportedFailure ? "Codex reported that it could not implement the task" : `Codex exited with code ${code}`;
+        let failureMessage = stalled ? "Codex produced no activity for 30 minutes; the stalled process was stopped." : reportedFailure ? "Codex reported that it could not implement the task" : `Codex exited with code ${code}`;
         if (!success && sessionLimitReported(rawOutput)) {
           const limit = await this.rateLimitReader().catch((error): CodexRateLimit => ({ available: false, reached: false, unavailableReason: messageOf(error) }));
           const resumeAt = limit.resetsAt ?? new Date(Date.now() + 5 * 60 * 60 * 1_000).toISOString();
           logJev(`[codex:${tag}] Codex session limit reached; development paused until ${resumeAt}`);
+          clearInterval(heartbeat);
           resolve(prepared.map(job => {
             this.queue.pauseForSessionLimit(job.id, resumeAt);
             return this.queue.update(job.id, { output: rawOutput })!;
@@ -521,7 +544,7 @@ export class Orchestrator {
           logJev(`[codex:${tag}] ${modelChanged ? "Model and reasoning" : "Reasoning"} route for ${stage}: ${previousSetting?.model ?? "unknown"}/${previousSetting?.reasoning ?? "unknown"} → ${nextModelId}/${effort}`);
           activeRouteIndex += 1;
           this.updateGroup(prepared, execution => ({ ...execution, model: nextModelId, reasoning: effort, lastActivityAt: routedAt, metrics: execution.metrics ? { ...execution.metrics, turns: execution.metrics.turns + 1, repairs: execution.metrics.repairs + (stage === "repair" ? 1 : 0), routes: [...execution.metrics.routes, { stage, model: nextModelId, reasoning: effort }] } : execution.metrics, events: [...execution.events, { id: randomUUID(), timestamp: routedAt, kind: "system", title: modelChanged ? "Codex model changed" : "Codex reasoning changed", detail: `${stage}: ${nextModelId} · ${effort} reasoning`, status: "active" }] }));
-          return resumeCodexTurn(first.projectPath, threadId, nextModelId, effort, instruction, tag, record, pid => this.updateGroup(prepared, execution => ({ ...execution, pid })));
+          return resumeCodexTurn(first.projectPath, threadId, nextModelId, effort, instruction, tag, record, resumed => { currentChild = resumed; this.updateGroup(prepared, execution => ({ ...execution, pid: resumed.pid })); });
         };
         if (success) {
           for (let attempt = 0; requestedRoute && success && attempt < 3; attempt++) {
@@ -568,7 +591,8 @@ export class Orchestrator {
             this.updateGroup(prepared, execution => ({ ...execution, metrics: execution.metrics ? { ...execution.metrics, stoppedAfterValidation: true } : execution.metrics, events: [...execution.events, { id: randomUUID(), timestamp: checkedAt, kind: "system", title: "JEV skipped tests", detail: verificationSkipReason, status: "success" }] }));
           } else {
             const checked = await runStage("verification", model, "low", verificationInstruction(command));
-            success = checked.code === 0 && !checked.error && !stageTurnFailed;
+            const firstDecision = verificationDecision(verificationOutcome, verificationCommands);
+            success = (checked.code === 0 && !checked.error && !stageTurnFailed) || (firstDecision.kind === "environment_blocked" && firstDecision.blockers.length > 0 && !checked.error);
             if (!success) failureMessage = checked.error ?? `Codex verification turn exited with code ${checked.code}`;
             if (success && (executedTests.size !== approvedTests.length || verificationOutOfScope)) {
               verification = "not_run";
@@ -600,7 +624,8 @@ export class Orchestrator {
                   break;
                 }
                 const rechecked = await runStage("verification", repairTier, "low", verificationInstruction(nextCommand));
-                success = rechecked.code === 0 && !rechecked.error && !stageTurnFailed;
+                const recheckDecision = verificationDecision(verificationOutcome, verificationCommands);
+                success = (rechecked.code === 0 && !rechecked.error && !stageTurnFailed) || (recheckDecision.kind === "environment_blocked" && recheckDecision.blockers.length > 0 && !rechecked.error);
                 if (!success) { failureMessage = rechecked.error ?? `Codex verification turn exited with code ${rechecked.code}`; break; }
                 if (executedTests.size !== approvedTests.length || verificationOutOfScope) {
                   verification = "not_run";
@@ -638,8 +663,9 @@ export class Orchestrator {
           const verificationNote = success && verification === "environment_blocked" ? `Code completed, but some tests or build checks could not run because required environment dependencies are missing${verificationBlockers.length ? `: ${verificationBlockers.join(", ")}` : ""}.` : success && verification === "not_run" ? verificationSkipReason : undefined;
           const checkpoint: ExecutionEvent = { id: randomUUID(), timestamp: now, kind: "system", title: "Codex status checkpoint", detail: JSON.stringify({ model: latest.execution?.model, reasoning: latest.execution?.reasoning, taskUsage: usage, accountUsage, codexStatus, verification, groupedTasks: prepared.length }), status: "success" };
           const compactEvents: ExecutionEvent[] = compactedAfterTask ? [{ id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact confirmed", detail: "Codex app-server confirmed JEV's automatic compaction.", status: "success" }] : compactionError ? [{ id: randomUUID(), timestamp: now, kind: "error", title: "Automatic compaction failed", detail: compactionError, status: "error" }] : [];
-          return this.queue.transition(job.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", lastActivityAt: now, completedAt: now, usage, accountUsage, codexStatus, verificationNote, metrics: latest.execution!.metrics ? { ...latest.execution!.metrics, actualTokens: totalCodexTokens(usage) } : latest.execution!.metrics, verification, compactedAfterTask, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verificationNote ?? (verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.")) : failureMessage, status: success ? "success" : "error" }] } })!;
+          return this.queue.transition(job.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, errorCategory: success ? (verification === "environment_blocked" ? "dependency" : verificationNote ? "verification" : undefined) : (stalled ? "interruption" : failureMessage.includes("Verification checks") ? "code" : reportedFailure ? "code" : "codex"), execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", lastActivityAt: now, completedAt: now, usage, accountUsage, codexStatus, verificationNote, metrics: latest.execution!.metrics ? { ...latest.execution!.metrics, actualTokens: totalCodexTokens(usage) } : latest.execution!.metrics, verification, compactedAfterTask, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verificationNote ?? (verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.")) : failureMessage, status: success ? "success" : "error" }] } })!;
         });
+        clearInterval(heartbeat);
         if (success) for (const job of completed) logTicketCompleted(tag, job.tasks[0]?.description ?? job.id);
         resolve(completed);
       });

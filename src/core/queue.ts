@@ -1,14 +1,19 @@
-import { mkdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CodexModel, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
 import { codexModelId, MODEL_LEVELS, REASONING_LEVELS } from "./codex-models.js";
+import { readDurableJson, writeDurableJson } from "./durable-json.js";
 
 
 type ProjectThreadState = {
   activeThreadId?: string;
   successfulSinceCompaction: number;
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && value.every(job => isRecord(job) && typeof job.id === "string" && typeof job.projectId === "string" && typeof job.projectPath === "string" && Array.isArray(job.tasks) && job.tasks.every((task: unknown) => isRecord(task) && typeof task.description === "string") && ["PENDING", "RUNNING", "SESSION_PAUSED", "SUCCESS", "FAILED", "SKIPPED"].includes(String(job.status)) && typeof job.createdAt === "string" && Number.isInteger(job.attempts) && (!job.execution || isRecord(job.execution) && Array.isArray(job.execution.events)));
+const validThreads = (value: unknown): value is Record<string, ProjectThreadState> => isRecord(value) && Object.values(value).every(state => isRecord(state) && Number.isInteger(state.successfulSinceCompaction) && (state.activeThreadId === undefined || typeof state.activeThreadId === "string"));
 
 /** Performs this backend operation. */
 export class JobQueue {
@@ -20,20 +25,19 @@ export class JobQueue {
     mkdirSync(dataDirectory, { recursive: true });
     this.file = join(dataDirectory, "jobs.json");
     this.threadStateFile = join(dataDirectory, "thread-state.json");
-    if (existsSync(this.file)) this.jobs = JSON.parse(readFileSync(this.file, "utf8"));
-    if (existsSync(this.threadStateFile)) this.threadStates = JSON.parse(readFileSync(this.threadStateFile, "utf8"));
+    this.jobs = readDurableJson(this.file, validJobs, () => []);
+    this.threadStates = readDurableJson(this.threadStateFile, validThreads, () => ({}));
     this.jobs = this.jobs.map(job => {
-      if (job.status === "RUNNING") return { ...job, status: "PENDING", updatedAt: new Date().toISOString(), error: "Execution interrupted; the job is ready to resume.", execution: job.execution ? { ...job.execution, phase: "ERROR", completedAt: new Date().toISOString() } : undefined } as Job;
       if (job.status === "SUCCESS" && /patch rejected|writing is blocked|impossible d['’]implémenter|could not implement|unable to implement/i.test(job.output ?? "")) {
-        return { ...job, status: "FAILED", updatedAt: new Date().toISOString(), error: "Codex reported that it could not implement the task", execution: job.execution ? { ...job.execution, phase: "ERROR" } : undefined } as Job;
+        return { ...job, status: "FAILED", errorCategory: "code", updatedAt: new Date().toISOString(), error: "Codex reported that it could not implement the task", execution: job.execution ? { ...job.execution, phase: "ERROR" } : undefined } as Job;
       }
       return job;
     });
     this.persist();
   }
   private persist() {
-    writeFileSync(this.file, JSON.stringify(this.jobs, null, 2));
-    writeFileSync(this.threadStateFile, JSON.stringify(this.threadStates, null, 2));
+    writeDurableJson(this.file, this.jobs);
+    writeDurableJson(this.threadStateFile, this.threadStates);
   }
   private threadState(projectId: string): ProjectThreadState {
     const existing = this.threadStates[projectId];
@@ -116,6 +120,21 @@ export class JobQueue {
     this.persist();
   }
   transition(id: string, status: JobStatus, more: Partial<Job> = {}) { return this.update(id, { ...more, status }); }
+  /** Recovers work only when its former Codex process is no longer alive. */
+  recoverInterrupted(isActive: (pid: number) => boolean, owned: (projectId: string) => boolean = () => false): Job[] {
+    const recovered: Job[] = [];
+    for (const job of this.jobs.filter(item => item.status === "RUNNING" && !owned(item.projectId))) {
+      if (job.execution?.pid && isActive(job.execution.pid)) {
+        if (!job.recoveryNote) this.update(job.id, { errorCategory: "interruption", recoveryNote: "Server restarted while the previous Codex process is still active. Waiting for that process to exit before allowing a new launch." });
+        continue;
+      }
+      const now = new Date().toISOString();
+      const note = "Server execution was interrupted. Codex is no longer running; review the project before restarting this ticket.";
+      const updated = this.update(job.id, { status: "PENDING", error: undefined, errorCategory: "interruption", recoveryNote: note, execution: job.execution ? { ...job.execution, phase: "QUEUED", pid: undefined, lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: "Execution interrupted", detail: note, status: "active" }] } : undefined });
+      if (updated) recovered.push(updated);
+    }
+    return recovered;
+  }
   pauseForSessionLimit(id: string, resumeAt?: string) {
     const job = this.get(id);
     if (!job) throw new Error("Job not found");
@@ -131,6 +150,7 @@ export class JobQueue {
     return this.update(id, {
       status: "SESSION_PAUSED",
       error: undefined,
+      errorCategory: "quota",
       sessionResumeAt: resumeAt,
       execution: job.execution ? { ...job.execution, phase: "QUEUED", lastActivityAt: now, completedAt: now, events: [...job.execution.events, event] } : undefined
     });
@@ -143,6 +163,7 @@ export class JobQueue {
     const event = { id: randomUUID(), timestamp: now, kind: "system" as const, title: "Codex session available", detail: "Development automatically resumed after the Codex session limit reset.", status: "active" as const };
     return this.update(id, {
       status: "PENDING",
+      errorCategory: undefined,
       sessionResumeAt: undefined,
       execution: job.execution ? { ...job.execution, phase: "QUEUED", lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, event] } : undefined
     });
@@ -164,6 +185,8 @@ export class JobQueue {
     return this.update(id, {
       status,
       error: undefined,
+      errorCategory: undefined,
+      recoveryNote: undefined,
       archivedAt: undefined,
       execution: job.execution ? {
         ...job.execution,
@@ -179,7 +202,7 @@ export class JobQueue {
     if (job.status !== "PENDING") throw new Error("Only pending tasks can be edited");
     const text = description.trim();
     if (!text) throw new Error("A task description is required");
-    return this.update(id, { tasks: [{ description: text }], analysis: undefined, error: undefined });
+    return this.update(id, { tasks: [{ description: text }], analysis: undefined, error: undefined, errorCategory: undefined, recoveryNote: undefined });
   }
   scheduleAutomaticRetry(id: string, completedTaskDescription: string) {
     const job = this.get(id);
@@ -197,6 +220,7 @@ export class JobQueue {
     return this.update(id, {
       status: "PENDING",
       error: undefined,
+      errorCategory: undefined,
       execution: job.execution ? {
         ...job.execution,
         phase: "QUEUED",

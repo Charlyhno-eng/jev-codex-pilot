@@ -18,7 +18,9 @@ import { TelegramBot } from "../core/telegram-bot.js";
 import { MODEL_LEVELS, REASONING_LEVELS } from "../core/codex-models.js";
 import { availableCodexModels, selectCodexModelId } from "../core/codex-catalog.js";
 import { logJev, logJevError } from "../core/jev-logger.js";
+import { acquireApiInstance } from "../core/single-instance.js";
 
+await acquireApiInstance(resolve(process.cwd(), ".jev"));
 const queue = new JobQueue(resolve(process.cwd(), ".jev"));
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
 const orchestrator = new Orchestrator(queue);
@@ -84,13 +86,49 @@ async function runWithNotification(jobId: string, batch: boolean) {
     else await orchestrator.run(jobId);
   } catch (error) {
     const current = queue.get(jobId);
-    if (current && current.status !== "SUCCESS" && current.status !== "SESSION_PAUSED") queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start" });
+    if (current && (current.status === "PENDING" || current.status === "RUNNING") && !orchestrator.ownsProjectRun(current.projectId)) queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start", errorCategory: current.execution ? "codex" : "jev" });
   } finally {
     const project = projects.get(starting.projectId);
     const finished = queue.list(starting.projectId).filter(job => job.attempts > (before.get(job.id) ?? 0) && (job.status === "SUCCESS" || job.status === "FAILED"));
-    if (project && finished.length) void telegram.notifyDevelopmentFinished(project, finished).catch(() => {
-      logJevError("Telegram completion notice could not be saved");
+    if (project && finished.length) void telegram.notifyDevelopmentFinished(project, finished).catch(error => {
+      const detail = error instanceof Error ? error.message : String(error);
+      for (const job of finished) queue.update(job.id, { notificationError: detail });
+      logJevError(`Telegram completion notice failed: ${detail}`);
     });
+  }
+}
+
+/** Checks whether a previously recorded Codex process is still alive. */
+function processAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    try { if (/\)\s+Z\s/.test(readFileSync(`/proc/${pid}/stat`, "utf8"))) return false; } catch { /* procfs is optional. */ }
+    return true;
+  }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
+/** Stops an orphan only when its PID still belongs to Codex and its heartbeat expired. */
+function stopStaleCodexProcesses() {
+  for (const job of queue.list().filter(item => item.status === "RUNNING" && !orchestrator.ownsProjectRun(item.projectId))) {
+    const pid = job.execution?.pid;
+    const heartbeat = job.execution?.heartbeatAt ?? job.execution?.lastActivityAt;
+    if (!pid || !heartbeat || Date.now() - Date.parse(heartbeat) < 30 * 60_000 || !processAlive(pid)) continue;
+    let command: string;
+    try { command = readFileSync(`/proc/${pid}/cmdline`, "utf8"); } catch { continue; }
+    if (!command.split("\0").some(argument => /(?:^|\/)codex$/.test(argument))) continue;
+    try {
+      process.kill(pid, "SIGTERM");
+      logJevError(`Stopped abandoned Codex process ${pid} for task ${job.id.slice(0, 8)} after 30 minutes without a server heartbeat`);
+    } catch { /* A process that exited here will be recovered on the next check. */ }
+  }
+}
+
+/** Recovers abandoned executions without launching Codex without a new user action. */
+function recoverInterruptedWork() {
+  stopStaleCodexProcesses();
+  for (const job of queue.recoverInterrupted(processAlive, id => orchestrator.ownsProjectRun(id))) {
+    logJev(`Task ${job.id.slice(0, 8)} recovered after server interruption; review before relaunching`);
   }
 }
 
@@ -153,7 +191,7 @@ createServer(async (request, response) => {
     if (request.method === "DELETE" && projectMatch) {
       const project = projects.get(projectMatch[1]);
       if (!project) return json(response, 404, { error: "Project not found" });
-      if (queue.list(project.id).some(job => job.status === "RUNNING")) return json(response, 409, { error: "Wait for the active Codex execution to finish before removing this project." });
+      if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active Codex execution to finish before removing this project." });
       return json(response, 200, projects.unregister(project.id));
     }
     const diffMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/diff$/);
@@ -332,12 +370,12 @@ createServer(async (request, response) => {
       return json(response, 200, adjusted);
     }
     if (request.method === "POST" && action === "run") {
-      if (job.status === "RUNNING" || orchestrator.isBatchRunning(id)) return json(response, 409, { error: "This task sequence is already running." });
+      if (job.status !== "PENDING" || orchestrator.isBatchRunning(id)) return json(response, 409, { error: "This task cannot start while another execution is active or it is not pending." });
       void runWithNotification(id, false);
       return json(response, 202, queue.get(id));
     }
     if (request.method === "POST" && action === "run-batch") {
-      if (orchestrator.isBatchRunning(id)) return json(response, 409, { error: "This task sequence is already running." });
+      if (job.status !== "PENDING" || orchestrator.isBatchRunning(id)) return json(response, 409, { error: "This task sequence cannot start while another execution is active or it is not pending." });
       void runWithNotification(id, true);
       return json(response, 202, queue.get(id));
     }
@@ -349,7 +387,8 @@ createServer(async (request, response) => {
   }
 }).listen(port, "127.0.0.1", () => {
   telegram.start();
+  recoverInterruptedWork();
   void resumeSessionPausedWork();
-  setInterval(() => void resumeSessionPausedWork(), 60_000);
+  setInterval(() => { recoverInterruptedWork(); void resumeSessionPausedWork(); }, 60_000);
   logJev(`API ready at http://localhost:${port}`);
 });

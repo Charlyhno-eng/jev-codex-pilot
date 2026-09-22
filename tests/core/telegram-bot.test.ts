@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -38,6 +38,19 @@ async function click(bot: TelegramBot, action: TelegramAction, argument?: string
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Telegram bot", () => {
+  it("allows one poller per data directory and recovers a stale process lock", () => {
+    const directory = mkdtempSync(join(tmpdir(), "jev-telegram-lock-"));
+    const dependencies = { config: () => config, listProjects: () => [project], listJobs: () => [], createTicket: () => pendingJob() };
+    const first = new TelegramBot(dependencies, directory);
+    const second = new TelegramBot(dependencies, directory);
+    expect((first as any).acquireLock()).toBe(true);
+    expect((second as any).acquireLock()).toBe(false);
+    expect(JSON.parse(readFileSync(join(directory, "telegram-bot.lock"), "utf8")).pid).toBe(process.pid);
+    (first as any).releaseLock();
+    writeFileSync(join(directory, "telegram-bot.lock"), JSON.stringify({ pid: 99999999, token: "old" }));
+    expect((second as any).acquireLock()).toBe(true);
+    (second as any).releaseLock();
+  });
   it("sends one private completion summary after development finishes", async () => {
     const fetchMock = telegramMock();
     vi.stubGlobal("fetch", fetchMock);

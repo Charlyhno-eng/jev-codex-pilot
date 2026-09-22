@@ -107,3 +107,24 @@ describe("automatic retry scheduling", () => {
     expect(() => queue.scheduleAutomaticRetry(job.id, "Update the layout")).toThrow("Only failed tasks");
   });
 });
+
+describe("interrupted execution recovery", () => {
+  it("waits for a live Codex process and preserves the ticket until it exits", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-recover-"));
+    const project = join(root, "project");
+    mkdirSync(project);
+    const data = join(root, "data");
+    const queue = new JobQueue(data);
+    const job = queue.create("project", project, [{ description: "Keep the work" }]);
+    const now = new Date().toISOString();
+    queue.transition(job.id, "RUNNING", { execution: { phase: "WORKING", model: "gpt-5.6-terra", reasoning: "medium", startedAt: now, lastActivityAt: now, pid: 12345, verification: "not_run", events: [] } });
+
+    const restarted = new JobQueue(data);
+    expect(restarted.get(job.id)?.status).toBe("RUNNING");
+    expect(restarted.recoverInterrupted(pid => pid === 12345)).toEqual([]);
+    expect(restarted.get(job.id)?.status).toBe("RUNNING");
+    expect(restarted.recoverInterrupted(() => false)).toHaveLength(1);
+    expect(restarted.get(job.id)).toMatchObject({ status: "PENDING", errorCategory: "interruption", execution: { phase: "QUEUED" } });
+    expect(restarted.get(job.id)?.execution?.events.at(-1)?.title).toBe("Execution interrupted");
+  });
+});

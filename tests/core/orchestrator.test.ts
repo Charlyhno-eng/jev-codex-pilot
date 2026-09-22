@@ -26,6 +26,25 @@ function prepareTargetedProject(project: string) {
 }
 
 describe("Codex orchestration", () => {
+  it("rejects simultaneous launches for different tickets in one project", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-project-lock-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "package.json"), "{}");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, "#!/bin/sh\ncat >/dev/null\nsleep 0.1\nprintf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"locked-thread\"}' '{\"type\":\"turn.completed\"}'\n");
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const first = queue.create("project-1", project, [{ description: "First change" }]);
+    const second = queue.create("project-1", project, [{ description: "Second change" }]);
+    const orchestrator = new Orchestrator(queue, analyzerFor("feature"), async () => undefined, accountUsage);
+    const running = orchestrator.run(first.id);
+    await expect(orchestrator.run(second.id)).rejects.toThrow("already running for this project");
+    expect((await running).status).toBe("SUCCESS");
+    expect(queue.get(second.id)?.status).toBe("PENDING");
+  });
   it("reuses an analysis already attached to a newly created ticket", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-prepared-ticket-"));
     const project = join(root, "project");
@@ -223,7 +242,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_token
     const calls = join(root, "calls.log");
     mkdirSync(project); mkdirSync(bin);
     prepareTargetedProject(project);
-    const commandEvent = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "vitest run tests/feature.test.ts", aggregated_output: "2 passed in 0.08s\nERROR Unmet dependencies (checked against /tmp/project/.venv/bin/python):\n\twheel\n\t\twanted: any\n\t\tfound: not installed\nSTATUS tests=1", exit_code: 0 } });
+    const commandEvent = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "vitest run tests/feature.test.ts", aggregated_output: "2 passed in 0.08s\nERROR Unmet dependencies (checked against /tmp/project/.venv/bin/python):\n\twheel\n\t\twanted: any\n\t\tfound: not installed\nSTATUS tests=1", exit_code: 1 } });
     writeFileSync(join(bin, "codex"), `#!/bin/sh
 cat >/dev/null
 printf 'run\n' >> '${calls}'
@@ -232,6 +251,8 @@ printf '%s\n' '{"type":"thread.started","thread_id":"env-thread"}'
 if [ "$(wc -l < '${calls}')" = 2 ]; then
   printf '%s\n' '${commandEvent}'
   printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Verification is environment-blocked. JEV_VERIFICATION_ENVIRONMENT_BLOCKED"}}'
+  printf '%s\n' '{"type":"turn.completed"}'
+  exit 1
 fi
 printf '%s\n' '{"type":"turn.completed"}'
 `);

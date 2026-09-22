@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readDurableJson, writeDurableJson } from "./durable-json.js";
 import { join } from "node:path";
 import type { AppConfig } from "./app-config.js";
 import {
@@ -51,10 +53,25 @@ const initialState = (): TelegramState => ({
   highestMessageIdByChat: {}
 });
 
+const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const stringMap = (value: unknown) => object(value) && Object.values(value).every(item => typeof item === "string");
+const numberMap = (value: unknown) => object(value) && Object.values(value).every(item => typeof item === "number");
+function validTelegramState(value: unknown): value is Partial<TelegramState> & { botMessageIdsByChat?: Record<string, number[]> } {
+  if (!object(value) || (value.offset !== undefined && !Number.isInteger(value.offset))) return false;
+  if (value.awaitingTicketProjectByChat !== undefined && !stringMap(value.awaitingTicketProjectByChat)) return false;
+  if (value.highestMessageIdByChat !== undefined && !numberMap(value.highestMessageIdByChat)) return false;
+  if (value.activeViewByChat !== undefined && (!object(value.activeViewByChat) || !Object.values(value.activeViewByChat).every(item => object(item) && typeof item.messageId === "number" && typeof item.revision === "number" && typeof item.view === "string"))) return false;
+  if (value.lastCreatedTicketByChat !== undefined && (!object(value.lastCreatedTicketByChat) || !Object.values(value.lastCreatedTicketByChat).every(item => object(item) && typeof item.jobId === "string" && typeof item.projectId === "string"))) return false;
+  if (value.botMessageIdsByChat !== undefined && (!object(value.botMessageIdsByChat) || !Object.values(value.botMessageIdsByChat).every(item => Array.isArray(item) && item.every(id => typeof id === "number")))) return false;
+  return true;
+}
+
 /** Local long-polling adapter. It never starts unless a Telegram token is configured. */
 /** Performs this backend operation. */
 export class TelegramBot {
   private readonly stateFile: string;
+  private readonly lockFile: string;
+  private lockToken?: string;
   private state: TelegramState;
   private polling = false;
   private timer?: NodeJS.Timeout;
@@ -64,9 +81,8 @@ export class TelegramBot {
   constructor(private readonly dependencies: TelegramBotDependencies, dataDirectory = ".jev") {
     mkdirSync(dataDirectory, { recursive: true });
     this.stateFile = join(dataDirectory, "telegram-bot.json");
-    const saved = existsSync(this.stateFile)
-      ? JSON.parse(readFileSync(this.stateFile, "utf8")) as Partial<TelegramState> & { botMessageIdsByChat?: Record<string, number[]> }
-      : {};
+    this.lockFile = join(dataDirectory, "telegram-bot.lock");
+    const saved = readDurableJson<Partial<TelegramState> & { botMessageIdsByChat?: Record<string, number[]> }>(this.stateFile, validTelegramState, () => ({}));
     const legacyHighest = Object.fromEntries(Object.entries(saved.botMessageIdsByChat ?? {}).map(([chatId, ids]) => [chatId, Math.max(0, ...ids)]));
     this.state = {
       offset: saved.offset ?? 0,
@@ -77,9 +93,48 @@ export class TelegramBot {
     };
   }
 
-  start() { if (this.started) return; this.started = true; void this.bootstrap(); }
-  stop() { this.started = false; if (this.timer) clearTimeout(this.timer); this.timer = undefined; }
+  start() { if (this.started || !this.acquireLock()) return; this.started = true; void this.bootstrap(); }
+  stop() { this.started = false; if (this.timer) clearTimeout(this.timer); this.timer = undefined; this.releaseLock(); }
   refresh() { void this.configureCommands(); this.schedule(0); }
+
+  /** Allows one Telegram polling loop per local JEV data directory. */
+  private acquireLock() {
+    const token = randomUUID();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const descriptor = openSync(this.lockFile, "wx", 0o600);
+        try { writeFileSync(descriptor, JSON.stringify({ pid: process.pid, token })); }
+        finally { closeSync(descriptor); }
+        this.lockToken = token;
+        process.once("exit", () => this.releaseLock());
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        let owner: { pid?: number; token?: string };
+        try { owner = JSON.parse(readFileSync(this.lockFile, "utf8")); }
+        catch { return false; }
+        if (!Number.isInteger(owner.pid) || !owner.pid) return false;
+        try { process.kill(owner.pid, 0); return false; }
+        catch (checkError) { if ((checkError as NodeJS.ErrnoException).code !== "ESRCH") return false; }
+        try {
+          const current = JSON.parse(readFileSync(this.lockFile, "utf8")) as { token?: string };
+          if (current.token !== owner.token) return false;
+          unlinkSync(this.lockFile);
+        } catch { return false; }
+      }
+    }
+    return false;
+  }
+
+  /** Releases only the lock owned by this bot instance. */
+  private releaseLock() {
+    if (!this.lockToken) return;
+    try {
+      const owner = JSON.parse(readFileSync(this.lockFile, "utf8")) as { token?: string };
+      if (owner.token === this.lockToken) unlinkSync(this.lockFile);
+    } catch { /* Another process may already have replaced the lock. */ }
+    this.lockToken = undefined;
+  }
 
   /** Sends a best-effort notice when a Codex development run finishes. */
   async notifyDevelopmentFinished(project: ProjectRecord, jobs: Job[]) {
@@ -89,6 +144,7 @@ export class TelegramBot {
     const failed = jobs.filter(job => job.status === "FAILED").length;
     const text = `🏁 <b>Development finished · ${this.escape(project.name)}</b>\n${success} completed · ${failed} failed${jobs.length - success - failed ? ` · ${jobs.length - success - failed} skipped` : ""}`;
     const sent = await this.request<TelegramMessage>(config.telegramBotToken, "sendMessage", { chat_id: config.telegramAllowedChatId, text, parse_mode: "HTML" });
+    if (!sent) throw new Error("Telegram did not confirm the completion notice");
     this.rememberMessage(config.telegramAllowedChatId, sent?.message_id);
     if (sent) this.persist();
   }
@@ -109,7 +165,7 @@ export class TelegramBot {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.poll(), delay);
   }
-  private persist() { writeFileSync(this.stateFile, JSON.stringify(this.state, null, 2)); }
+  private persist() { writeDurableJson(this.stateFile, this.state); }
   private endpoint(token: string, method: string) { return `https://api.telegram.org/bot${token}/${method}`; }
   private async request<T>(token: string, method: string, payload: Record<string, unknown>): Promise<T | undefined> {
     try {

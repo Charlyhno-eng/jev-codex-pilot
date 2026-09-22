@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { basename, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ProjectRecord } from "./types.js";
+import { readDurableJson, writeDurableJson } from "./durable-json.js";
 
 /** Performs this backend operation. */
 export class ProjectStore {
@@ -11,11 +12,11 @@ export class ProjectStore {
   constructor(dataDirectory = ".jev") {
     mkdirSync(dataDirectory, { recursive: true });
     this.file = join(dataDirectory, "projects.json");
-    if (existsSync(this.file)) this.projects = JSON.parse(readFileSync(this.file, "utf8"));
+    this.projects = readDurableJson(this.file, (value): value is ProjectRecord[] => Array.isArray(value) && value.every(project => project && typeof project === "object" && typeof project.id === "string" && typeof project.path === "string" && typeof project.name === "string" && typeof project.updatedAt === "string"), () => []);
     this.persist();
   }
 
-  private persist() { writeFileSync(this.file, JSON.stringify(this.projects, null, 2)); }
+  private persist() { writeDurableJson(this.file, this.projects); }
   list() { return this.projects.filter(project => !project.removedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)); }
   get(id: string) { return this.projects.find(project => project.id === id && !project.removedAt); }
 

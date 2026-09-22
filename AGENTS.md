@@ -39,7 +39,11 @@ This project now includes modular web components and styles, dedicated tests, En
 - Removed unused file-change predictions and navbar session usage, and simplified task precision to lenient 20-point bands.
 - Stopped repair loops on missing build dependencies and added a persistent English verification note to completed tickets.
 - Added JEV-approved tests scoped to actual ticket changes, tighter Codex file guidance, and context-triggered compaction at 90,000 tokens.
+- Reframed the project documentation around workflow optimization, traceability, adaptive execution, and reliable recovery, with token savings presented as a measured secondary benefit.
 - Logged every file selected for Codex context in orange, changed the completed queue label to Done, and made Telegram open only after `/start`.
 - Rebuilt the console around per-ticket JEV activity, model routes, commands, verification, and development completion instead of duplicated execution panels.
+- Added validated atomic snapshots and automatic backups for local JEV state, plus atomic attachment writes.
+- Added a single API instance lock, per-project execution locks, Codex heartbeats, stalled-process recovery, and a single Telegram poller lock.
+- Classified ticket issues by source and kept completed work out of Failed when verification dependencies are missing.
 
 Keep future delivery notes concise and append one English bullet here for each completed feature or change.

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, openSync, closeSync, writeFileSync, fsyncSync, renameSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { extname, join, resolve } from "node:path";
 import type { JobAttachment } from "./types.js";
@@ -54,7 +54,14 @@ export class AttachmentStore {
     const name = suppliedName && suppliedName.length <= 180 ? suppliedName.replace(/[\\/\0]/g, "_") : `reference-${index + 1}${extension}`;
     const safeName = extname(name).toLowerCase() === extension ? name : `${name}${extension}`;
     const path = join(directory, `${id}${extension}`);
-    writeFileSync(path, bytes, { flag: "wx" });
+    const temporary = `${path}.tmp`;
+    try {
+      const descriptor = openSync(temporary, "wx", 0o600);
+      try { writeFileSync(descriptor, bytes); fsyncSync(descriptor); }
+      finally { closeSync(descriptor); }
+      renameSync(temporary, path);
+    }
+    finally { if (existsSync(temporary)) rmSync(temporary); }
     return { id, name: safeName, mimeType: input.mimeType as string, path, size: bytes.length };
   }
 
