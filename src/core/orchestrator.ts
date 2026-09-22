@@ -9,6 +9,7 @@ import { analyze, assessVerification } from "./analyzer.js";
 import { logJev, logJevError } from "./jev-logger.js";
 import { buildCodexCommand, buildCodexGroupPrompt, buildCodexPrompt } from "./prompt.js";
 import { affectedTests, changedProjectFiles, snapshotProject, targetedTestCommand } from "./verification-scope.js";
+import { codexHookArgs } from "./hooks/codex-config.js";
 import type { JobQueue } from "./queue.js";
 import type { CodexAccountUsage, CodexModel, CodexStatusSnapshot, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
 
@@ -112,7 +113,7 @@ function describe(event: JsonEvent): { phase: ExecutionPhase; item?: Omit<Execut
 
 function compactThread(threadId: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("codex", [...codexHookArgs(), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex compaction timed out after 5 minutes")), 300_000);
@@ -165,8 +166,8 @@ function logTicketCompleted(tag: string, title: string) {
 /** Resumes one Codex turn in the existing thread. */
 function resumeCodexTurn(projectPath: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
   return new Promise(resolve => {
-    const args = ["exec", "resume", "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, threadId, prompt];
-    const child = spawn("codex", args, { cwd: projectPath, shell: false });
+    const args = ["exec", "resume", "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs(), threadId, prompt];
+    const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...process.env, JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
     onStart(child);
     let buffer = ""; let settled = false;
     child.stdin.end();
@@ -431,10 +432,10 @@ export class Orchestrator {
     return new Promise(resolve => {
       const excluded = new Set(prepared.map(job => job.id));
       const previous = this.queue.list(first.projectId).filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`];
+      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs()];
       const imageArgs = prepared.flatMap(job => (job.attachments ?? []).flatMap(attachment => ["--image", attachment.path]));
       const args = previous?.execution?.threadId ? ["exec", "resume", ...common, ...imageArgs, previous.execution.threadId, prompt] : ["exec", ...common, "--color", "never", "--approve-for-me", ...imageArgs, prompt];
-      const child = spawn("codex", args, { cwd: first.projectPath, shell: false });
+      const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...process.env, JEV_HOOK_TASK: prepared.map(job => job.tasks.map(task => task.description).join(" ")).join(" ").slice(0, 2_000) } });
       child.stdin.end();
       let currentChild: ReturnType<typeof spawn> = child;
       let stalled = false;
@@ -452,7 +453,8 @@ export class Orchestrator {
       const launchedAt = new Date().toISOString();
       const tag = prepared.length > 1 ? `${first.id.slice(0, 8)}+${prepared.length - 1}` : first.id.slice(0, 8);
       const imagePaths = new Set(prepared.flatMap(job => (job.attachments ?? []).map(attachment => attachment.path)));
-      const commandSummary = `codex ${args.map(arg => arg === prompt ? "<task prompt>" : imagePaths.has(arg) ? "<attached image>" : arg).join(" ")}`;
+      const visibleArgs = args.filter((arg, index) => !(/^(features\.hooks|hooks\.)/.test(arg) || (arg === "-c" && /^(features\.hooks|hooks\.)/.test(args[index + 1] ?? ""))));
+      const commandSummary = `codex ${visibleArgs.map(arg => arg === prompt ? "<task prompt>" : imagePaths.has(arg) ? "<attached image>" : arg).join(" ")}`;
       logJev(`[codex:${tag}] Selected model=${modelId} reasoning=${reasoning}${groupId ? ` group=${prepared.length}` : ""}`);
       process.stdout.write(`[codex:${tag}] EXEC ${commandSummary}\n`);
       const attachmentCount = prepared.reduce((total, job) => total + (job.attachments?.length ?? 0), 0);
