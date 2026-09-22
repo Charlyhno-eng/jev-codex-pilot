@@ -43,15 +43,7 @@ Each completed ticket shows the planning estimate, actual Codex tokens, cached i
 
 ## See JEV Codex Pilot in action
 
-![JEV Codex Pilot page1](assets/p1.png)
-
-![JEV Codex Pilot page2](assets/p2_1.png)
-
-![JEV Codex Pilot page2_2](assets/p2_2.png)
-
-![JEV Codex Pilot page3](assets/p3.png)
-
-![JEV Codex Pilot page3](assets/terminal_view.png)
+![JEV Codex Pilot page1](assets/jev-codex-pilot-demo.gif)
 
 ## Quickstart
 
