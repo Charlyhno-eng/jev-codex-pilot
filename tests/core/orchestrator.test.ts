@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,12 +7,23 @@ import { isCompactionComplete, Orchestrator } from "../../src/core/orchestrator.
 import { analyze } from "../../src/core/analyzer.js";
 import type { Complexity, JevAnalysis, TaskType } from "../../src/core/types.js";
 
+vi.mock("../../src/core/codex-status.js", () => ({ readCodexStatusSnapshot: async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", unavailableReason: "Unavailable in this test." }) }));
+
 const originalPath = process.env.PATH;
 afterEach(() => { process.env.PATH = originalPath; });
 
 const analyzerFor = (taskType: TaskType, complexity: Complexity = "low") =>
   (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity }));
 const accountUsage = async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", todayTokens: 42, lifetimeTokens: 420 });
+function prepareTargetedProject(project: string) {
+  mkdirSync(join(project, "src"));
+  mkdirSync(join(project, "tests"));
+  mkdirSync(join(project, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { vitest: "1.0.0" } }));
+  writeFileSync(join(project, "src", "feature.ts"), "export const feature = true;\n");
+  writeFileSync(join(project, "tests", "feature.test.ts"), "test('feature', () => {});\n");
+  writeFileSync(join(project, "node_modules", ".bin", "vitest"), "#!/bin/sh\nexit 0\n");
+}
 
 describe("Codex orchestration", () => {
   it("reuses an analysis already attached to a newly created ticket", async () => {
@@ -54,13 +65,14 @@ describe("Codex orchestration", () => {
     const image = join(root, "reference.png");
     writeFileSync(image, "visual reference");
     queue.update(job.id, { attachments: [{ id: "reference", name: "reference.png", mimeType: "image/png", size: 16, path: image }] });
-    const orchestrator = new Orchestrator(queue, analyzerFor("installation"), async () => undefined, accountUsage);
+    const orchestrator = new Orchestrator(queue, analyzerFor("installation"), async () => undefined, accountUsage, undefined, undefined, async () => ({ capturedAt: "2026-09-22T00:00:00.000Z", context: { usedTokens: 90_900, windowTokens: 258_000 }, fiveHour: { remainingPercent: 81 }, weekly: { remainingPercent: 29 } }));
     await orchestrator.prepare(job);
     const completed = await orchestrator.run(job.id);
 
     expect(completed.status).toBe("SUCCESS");
     expect(completed.execution?.threadId).toBe("test-thread");
     expect(completed.execution?.phase).toBe("COMPLETED");
+    expect(completed.execution?.codexStatus?.context).toEqual({ usedTokens: 90_900, windowTokens: 258_000 });
     expect(completed.output).toContain("turn.completed");
     expect(completed.execution?.events.some(event => event.title === "Codex command launched")).toBe(true);
     expect(readFileSync(args, "utf8")).toContain("--approve-for-me");
@@ -68,10 +80,39 @@ describe("Codex orchestration", () => {
     expect(readFileSync(args, "utf8")).toContain("--model");
     expect(readFileSync(args, "utf8")).toContain("gpt-5.6-luna");
     expect(readFileSync(args, "utf8")).toContain('model_reasoning_effort="medium"');
-    expect(readFileSync(args, "utf8")).toContain('model_reasoning_effort="low"');
-    expect(completed.execution?.events.some(event => event.title === "Codex model changed" && event.detail?.includes("verification"))).toBe(true);
+    expect(completed.execution?.compactedAfterTask).toBe(true);
+    expect(completed.execution?.events.some(event => event.title === "Codex /compact started" && event.detail?.includes("90000"))).toBe(true);
     expect(readFileSync(args, "utf8")).toContain("--image");
     expect(readFileSync(args, "utf8")).toContain(image);
+  }, 3000);
+
+  it("pauses a ticket when Codex reaches its session limit and resumes it after reset", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-session-limit-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "package.json"), "{}");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{"type":"error","message":"You have reached your 5-hour session limit."}'\nexit 1\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Resume after the quota reset" }]);
+    let reached = true;
+    const rateLimits = async () => ({ available: true, reached, resetsAt: "2026-01-01T00:00:00.000Z" });
+    const orchestrator = new Orchestrator(queue, analyzerFor("feature"), async () => undefined, accountUsage, undefined, rateLimits);
+    await orchestrator.prepare(job);
+
+    const paused = await orchestrator.run(job.id);
+    expect(paused.status).toBe("SESSION_PAUSED");
+    expect(paused.execution?.events.some(event => event.title === "Codex session limit reached")).toBe(true);
+
+    reached = false;
+    const resumed = await orchestrator.resumeSessionPausedJobs();
+    expect(resumed).toHaveLength(1);
+    expect(queue.get(job.id)?.status).toBe("PENDING");
+    expect(queue.get(job.id)?.execution?.events.some(event => event.title === "Codex session available")).toBe(true);
   }, 3000);
 
   it("escalates a failed verification and rechecks in the same thread", async () => {
@@ -81,24 +122,26 @@ describe("Codex orchestration", () => {
     const calls = join(root, "calls.log");
     const counter = join(root, "counter");
     mkdirSync(project); mkdirSync(bin);
+    prepareTargetedProject(project);
     const fakeCodex = join(bin, "codex");
     writeFileSync(fakeCodex, `#!/bin/sh
 cat >/dev/null
 count=$(cat '${counter}' 2>/dev/null || echo 0)
 count=$((count + 1))
 printf '%s' "$count" > '${counter}'
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
 for arg in "$@"; do
   case "$arg" in exec|resume|gpt-5.6-*|model_reasoning_effort=*|routing-thread) printf '%s ' "$arg" >> '${calls}' ;; esac
 done
 printf '\\n' >> '${calls}'
 printf '%s\\n' '{"type":"thread.started","thread_id":"routing-thread"}'
 if [ "$count" = 2 ]; then
-  printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":1}}'
+  printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"vitest run tests/feature.test.ts","exit_code":1}}'
   printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"JEV_VERIFICATION_FAILED"}}'
 else
-  printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":0}}'
+  printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"vitest run tests/feature.test.ts","exit_code":0}}'
 fi
-printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
+printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":5,"output_tokens":2,"reasoning_output_tokens":1}}'
 `);
     chmodSync(fakeCodex, 0o755);
     process.env.PATH = `${bin}:${originalPath}`;
@@ -106,26 +149,31 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_toke
     const job = queue.create("project-1", project, [{ description: "Fix a failing feature" }]);
     const analysis: JevAnalysis = { complexity: "medium", task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    const review = vi.fn(async () => true);
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, review).run(job.id);
 
     const invocations = readFileSync(calls, "utf8").trim().split("\n");
     expect(invocations).toHaveLength(4);
+    expect(review).toHaveBeenCalledWith("Fix a failing feature", ["src/feature.ts"], ["tests/feature.test.ts"]);
     expect(invocations[1]).toContain("exec resume");
     expect(invocations[1]).toContain("gpt-5.6-luna");
     expect(invocations[1]).toContain('model_reasoning_effort="low"');
     expect(invocations[2]).toContain("routing-thread");
-    expect(invocations[2]).toContain("gpt-5.6-terra");
+    expect(invocations[2]).toContain("gpt-5.6-luna");
     expect(invocations[2]).toContain('model_reasoning_effort="high"');
     expect(completed.status).toBe("SUCCESS");
     expect(completed.execution?.threadId).toBe("routing-thread");
     expect(completed.execution?.usage).toMatchObject({ input_tokens: 40, output_tokens: 8 });
     expect(completed.execution?.metrics).toMatchObject({ actualTokens: 48, turns: 4, repairs: 1, stoppedAfterValidation: true });
     expect(completed.execution?.verification).toBe("tests_passed");
-    expect(completed.execution?.events.filter(event => event.title === "Codex model changed").map(event => event.detail)).toEqual([
+    expect(completed.execution?.events.filter(event => event.title === "Codex reasoning changed").map(event => event.detail)).toEqual([
       "verification: gpt-5.6-luna · low reasoning",
-      "repair: gpt-5.6-terra · high reasoning",
+      "repair: gpt-5.6-luna · high reasoning",
       "verification: gpt-5.6-luna · low reasoning"
     ]);
+    expect(completed.execution?.events.some(event => event.title === "JEV approved targeted tests" && event.detail === "tests/feature.test.ts")).toBe(true);
+    expect(completed.execution?.metrics?.routes.map(route => route.usage?.input_tokens)).toEqual([10, 10, 10, 10]);
+    expect(completed.execution?.metrics?.routes.map(route => route.usage?.cached_input_tokens)).toEqual([5, 5, 5, 5]);
   }, 3000);
 
   it("stops after an explicit successful verification instead of routing a repair", async () => {
@@ -135,17 +183,19 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_toke
     const calls = join(root, "calls.log");
     const counter = join(root, "counter");
     mkdirSync(project); mkdirSync(bin);
+    prepareTargetedProject(project);
     const fakeCodex = join(bin, "codex");
     writeFileSync(fakeCodex, `#!/bin/sh
 cat >/dev/null
 count=$(cat '${counter}' 2>/dev/null || echo 0)
 count=$((count + 1))
 printf '%s' "$count" > '${counter}'
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
 printf 'run\n' >> '${calls}'
 printf '%s\n' '{"type":"thread.started","thread_id":"validation-thread"}'
 if [ "$count" = 2 ]; then
-  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":1}}'
-  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":0}}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"vitest run tests/feature.test.ts","exit_code":1}}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"vitest run tests/feature.test.ts","exit_code":0}}'
   printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Checks passed. JEV_VERIFICATION_PASSED"}}'
 fi
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
@@ -157,7 +207,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_token
     const analysis: JevAnalysis = { complexity: "low", task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
 
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => true).run(job.id);
 
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
     expect(completed.status).toBe("SUCCESS");
@@ -172,14 +222,16 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_token
     const bin = join(root, "bin");
     const calls = join(root, "calls.log");
     mkdirSync(project); mkdirSync(bin);
-    const commandEvent = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: ".venv/bin/python -m pytest -q; .venv/bin/python -m build --no-isolation; .venv/bin/python -c import PySide6", aggregated_output: "2 passed in 0.08s\nNo broken requirements found.\n.venv/bin/python: No module named build\nModuleNotFoundError: No module named PySide6\nSTATUS pytest=0 build=1 pyside=1", exit_code: 0 } });
+    prepareTargetedProject(project);
+    const commandEvent = JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "vitest run tests/feature.test.ts", aggregated_output: "2 passed in 0.08s\nERROR Unmet dependencies (checked against /tmp/project/.venv/bin/python):\n\twheel\n\t\twanted: any\n\t\tfound: not installed\nSTATUS tests=1", exit_code: 0 } });
     writeFileSync(join(bin, "codex"), `#!/bin/sh
 cat >/dev/null
 printf 'run\n' >> '${calls}'
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
 printf '%s\n' '{"type":"thread.started","thread_id":"env-thread"}'
 if [ "$(wc -l < '${calls}')" = 2 ]; then
   printf '%s\n' '${commandEvent}'
-  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Verification failed. JEV_VERIFICATION_FAILED"}}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Verification is environment-blocked. JEV_VERIFICATION_ENVIRONMENT_BLOCKED"}}'
 fi
 printf '%s\n' '{"type":"turn.completed"}'
 `);
@@ -190,13 +242,104 @@ printf '%s\n' '{"type":"turn.completed"}'
     const analysis: JevAnalysis = { complexity: "medium", task_types: ["feature"], model: "terra", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
 
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => true).run(job.id);
 
     expect(completed.status).toBe("SUCCESS");
     expect(completed.execution?.verification).toBe("environment_blocked");
     expect(completed.execution?.metrics).toMatchObject({ turns: 2, repairs: 0 });
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
-    expect(completed.execution?.events.some(event => event.title === "Verification partially blocked" && event.detail?.includes("PySide6"))).toBe(true);
+    expect(completed.execution?.events.some(event => event.title === "Verification partially blocked" && event.detail?.includes("wheel"))).toBe(true);
+    expect(completed.execution?.verificationNote).toContain("wheel");
+  }, 3000);
+
+  it("honors JEV's decision to skip tests even when a related test exists", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-skip-verification-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    prepareTargetedProject(project);
+    writeFileSync(join(bin, "codex"), `#!/bin/sh
+cat >/dev/null
+printf 'run\n' >> '${calls}'
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
+printf '%s\n' '{"type":"thread.started","thread_id":"skip-thread"}' '{"type":"turn.completed"}'
+`);
+    chmodSync(join(bin, "codex"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Adjust feature" }]);
+    const analysis: JevAnalysis = { complexity: "low", task_types: ["feature"], model: "luna", reasoning: "low", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+    const review = vi.fn(async () => false);
+
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, review).run(job.id);
+
+    expect(review).toHaveBeenCalledWith("Adjust feature", ["src/feature.ts"], ["tests/feature.test.ts"]);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.execution?.verificationNote).toContain("unnecessary");
+  }, 3000);
+
+  it("does not start a repair loop when approved tests were not run", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-unrun-verification-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    prepareTargetedProject(project);
+    writeFileSync(join(bin, "codex"), `#!/bin/sh
+cat >/dev/null
+printf 'run\n' >> '${calls}'
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
+printf '%s\n' '{"type":"thread.started","thread_id":"unrun-thread"}' '{"type":"turn.completed"}'
+`);
+    chmodSync(join(bin, "codex"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Adjust feature" }]);
+    const analysis: JevAnalysis = { complexity: "low", task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => true).run(job.id);
+
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.execution?.metrics?.repairs).toBe(0);
+    expect(completed.execution?.verificationNote).toContain("did not run");
+  }, 3000);
+
+  it("does not accept a broad test command as targeted verification", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-broad-verification-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.log");
+    mkdirSync(project); mkdirSync(bin);
+    prepareTargetedProject(project);
+    writeFileSync(join(bin, "codex"), `#!/bin/sh
+cat >/dev/null
+printf 'run\n' >> '${calls}'
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
+printf '%s\n' '{"type":"thread.started","thread_id":"broad-thread"}'
+if [ "$(wc -l < '${calls}')" = 2 ]; then
+  printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","exit_code":0}}'
+  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"JEV_VERIFICATION_PASSED"}}'
+fi
+printf '%s\n' '{"type":"turn.completed"}'
+`);
+    chmodSync(join(bin, "codex"), 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project-1", project, [{ description: "Adjust feature" }]);
+    const analysis: JevAnalysis = { complexity: "low", task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+
+    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => true).run(job.id);
+
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.execution?.verification).toBe("not_run");
+    expect(completed.execution?.verificationNote).toContain("outside JEV's approved test scope");
   }, 3000);
 
   it("escalates a persistent code failure to Sol with high reasoning", async () => {
@@ -205,14 +348,16 @@ printf '%s\n' '{"type":"turn.completed"}'
     const bin = join(root, "bin");
     const calls = join(root, "calls.log");
     mkdirSync(project); mkdirSync(bin);
+    prepareTargetedProject(project);
     writeFileSync(join(bin, "codex"), `#!/bin/sh
 cat >/dev/null
+printf 'change\n' >> '${join(project, "src", "feature.ts")}'
 for arg in "$@"; do
   case "$arg" in gpt-5.6-*|model_reasoning_effort=*) printf '%s ' "$arg" >> '${calls}' ;; esac
 done
 printf '\n' >> '${calls}'
 printf '%s\n' '{"type":"thread.started","thread_id":"sol-thread"}'
-printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"npm test","aggregated_output":"2 failed, 1 passed","exit_code":1}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"vitest run tests/feature.test.ts","aggregated_output":"2 failed, 1 passed","exit_code":1}}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"JEV_VERIFICATION_FAILED"}}'
 printf '%s\n' '{"type":"turn.completed"}'
 `);
@@ -223,15 +368,17 @@ printf '%s\n' '{"type":"turn.completed"}'
     const analysis: JevAnalysis = { complexity: "medium", task_types: ["bugfix"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
 
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    const compactor = vi.fn(async () => undefined);
+    const completed = await new Orchestrator(queue, async () => analysis, compactor, accountUsage, undefined, undefined, async () => ({ capturedAt: "2026-09-22T00:00:00.000Z", context: { usedTokens: 95_000, windowTokens: 258_000 } }), async () => true).run(job.id);
 
     expect(completed.status).toBe("FAILED");
+    expect(compactor).toHaveBeenCalledWith("sol-thread");
     expect(completed.execution?.metrics).toMatchObject({ turns: 6, repairs: 2 });
     expect(completed.execution?.metrics?.routes.map(route => route.stage)).toEqual(["implementation", "verification", "repair", "verification", "repair", "verification"]);
     const invocations = readFileSync(calls, "utf8").trim().split("\n");
     expect(invocations[4]).toContain("gpt-5.6-sol");
     expect(invocations[4]).toContain('model_reasoning_effort="high"');
-    expect(invocations[5]).toContain("gpt-5.6-terra");
+    expect(invocations[5]).toContain("gpt-5.6-sol");
   }, 3000);
 
   it("honors a bounded implementation route requested by Codex", async () => {
@@ -266,13 +413,12 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
     const invocations = readFileSync(calls, "utf8").trim().split("\n");
 
-    expect(invocations).toHaveLength(3);
+    expect(invocations).toHaveLength(2);
     expect(invocations[0]).toContain("gpt-5.6-terra");
-    expect(invocations[1]).toContain("gpt-5.6-sol");
+    expect(invocations[1]).toContain("gpt-5.6-terra");
     expect(invocations[1]).toContain('model_reasoning_effort="high"');
-    expect(invocations[2]).toContain("gpt-5.6-luna");
     expect(completed.status).toBe("SUCCESS");
-    expect(completed.execution?.usage?.input_tokens).toBe(9);
+    expect(completed.execution?.usage?.input_tokens).toBe(6);
   }, 3000);
 
   it("groups compatible consecutive tasks into one Codex prompt", async () => {
@@ -304,7 +450,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     await orchestrator.runBatch(jobs[0].id);
 
     expect(queue.listBatch(jobs[0].batchId!).map(job => job.status)).toEqual(["SUCCESS", "SUCCESS", "SUCCESS"]);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
     expect(queue.listBatch(jobs[0].batchId!)[0].analysis?.model).toBe("luna");
     expect(queue.listBatch(jobs[0].batchId!)[1].analysis?.model).toBe("luna");
     expect(queue.listBatch(jobs[0].batchId!)[0].execution?.group?.size).toBe(3);
@@ -366,7 +512,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     expect(result.map(job => job.status)).toEqual(["SUCCESS", "SUCCESS"]);
     expect(result[0].attempts).toBe(2);
     expect(result[1].attempts).toBe(1);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(5);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(3);
   }, 3000);
 
   it("groups Luna Low with Luna Medium, but not a later Luna High task", async () => {
@@ -393,13 +539,13 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     }), async () => undefined, accountUsage).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(4);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
     expect(result.map(job => job.status)).toEqual(["SUCCESS", "SUCCESS", "SUCCESS"]);
     expect(result[0].execution?.group?.size).toBe(2);
     expect(result[1].execution?.group?.position).toBe(2);
     expect(result[2].execution?.group).toBeUndefined();
-    expect(result[0].execution?.reasoning).toBe("low");
-    expect(result[2].execution?.reasoning).toBe("low");
+    expect(result[0].execution?.reasoning).toBe("medium");
+    expect(result[2].execution?.reasoning).toBe("high");
     expect(result[2].execution?.events.some(event => event.title === "JEV selection applied" && event.detail?.includes("high"))).toBe(true);
   }, 3000);
 
@@ -426,9 +572,9 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     }), async () => undefined, accountUsage).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
     expect(result.map(job => job.execution?.group?.size)).toEqual([2, 2]);
-    expect(result.map(job => job.execution?.reasoning)).toEqual(["low", "low"]);
+    expect(result.map(job => job.execution?.reasoning)).toEqual(["medium", "medium"]);
   }, 3000);
 
   it("groups the next compatible project ticket even when it was submitted in a later batch", async () => {
@@ -454,7 +600,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
       complexity: "low", task_types: ["feature"],       ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
     }), async () => undefined, accountUsage).runBatch(firstBatch[0].id);
 
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
     expect(queue.get(firstBatch[0].id)?.execution?.group?.size).toBe(2);
     expect(queue.get(secondBatch[0].id)?.execution?.group?.position).toBe(2);
     expect(queue.get(secondBatch[0].id)?.status).toBe("SUCCESS");

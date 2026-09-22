@@ -1,23 +1,64 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import type { Job } from "../lib/types.js";
+import type { ExecutionEvent, Job } from "../lib/types.js";
 import { formatNumber, reasoningLabel, verificationLabel } from "../lib/format.js";
+import { CodexStatusPanel } from "./CodexStatusPanel.js";
+
+type Activity = { id: string; timestamp?: string; title: string; detail?: string; tone: "jev" | "route" | "command" | "complete" | "error" };
+
+/** Shows the decision trail and raw Codex output for one ticket. */
 export function ExecutionPanel({ job }: { job: Job }) {
   const execution = job.execution;
   const consoleRef = useRef<HTMLPreElement>(null);
   const consoleText = useMemo(() => formatCodexConsole(job.output ?? ""), [job.output]);
+  const activity = useMemo(() => execution ? buildActivity(job, execution.events) : [], [job, execution]);
+  const estimateFromHistory = execution?.metrics?.estimateBasis === "project_history";
+  const latestRoute = execution?.metrics?.routes.at(-1);
+  const cacheRate = execution?.usage?.input_tokens ? Math.round(100 * Math.min(execution.usage.cached_input_tokens ?? 0, execution.usage.input_tokens) / execution.usage.input_tokens) : undefined;
   useEffect(() => { if (job.status === "RUNNING") consoleRef.current?.scrollTo({ top: consoleRef.current.scrollHeight }); }, [consoleText, job.status]);
-  const compactConfirmed = execution?.events.some(event => event.title === "Codex /compact confirmed");
-  const shared = Boolean(execution?.group && execution.group.size > 1);
-  return <div className="execution-panel">
-    <div className="execution-head"><div><span className={job.status === "RUNNING" ? "pulse" : "pulse still"}/><div><p className="panel-label">LIVE EXECUTION</p><h3>{execution?.phase.toLowerCase().replace("_", " ") ?? "Error"}</h3></div></div>{execution && <div className="runtime-meta"><span><small>{job.status === "RUNNING" ? "CURRENT MODEL" : "LAST MODEL"}</small>{execution.model}</span><span><small>{job.status === "RUNNING" ? "CURRENT REASONING" : "LAST REASONING"}</small>{reasoningLabel(execution.reasoning)}</span><span><small>PROCESS</small>{execution.pid ? `PID ${execution.pid}` : "—"}</span><span><small>STARTED</small>{new Date(execution.startedAt).toLocaleTimeString()}</span></div>}</div>
-    {execution && <div className="execution-proof"><b>✓ Codex model routing</b><span>{execution.model}</span><span>reasoning: {reasoningLabel(execution.reasoning)}</span>{shared && <strong>shared prompt · {execution.group!.size} tasks</strong>}{compactConfirmed && <strong>/compact confirmed by Codex app-server</strong>}</div>}
+
+  return <div className="execution-panel execution-dashboard">
+    <section className="execution-overview">
+      <div><p className="panel-label">DEVELOPMENT STATUS</p><h3>{statusTitle(job.status, execution?.verification)}</h3><span>{execution?.completedAt ? `Finished ${new Date(execution.completedAt).toLocaleString()}` : execution ? `Started ${new Date(execution.startedAt).toLocaleString()}` : "Waiting for Codex"}</span></div>
+      {execution && <div className="execution-facts">
+        <span><small>MODEL</small><b>{latestRoute?.model ?? execution.model}</b></span>
+        <span><small>REASONING</small><b>{reasoningLabel(latestRoute?.reasoning ?? execution.reasoning)}</b></span>
+        <span><small>VALIDATION</small><b>{verificationLabel(execution.verification)}</b></span>
+        <span><small>ACTUAL TOKENS</small><b>{formatNumber(execution.metrics?.actualTokens ?? execution.usage?.input_tokens)}</b></span>
+      </div>}
+    </section>
     {job.error && <div className="execution-error"><b>Execution error</b><span>{job.error}</span></div>}
-    {execution && job.status !== "RUNNING" && <><div className="status-report"><div><small>FINAL STATUS</small><b>{verificationLabel(execution.verification)}</b></div><div><small>{shared ? "GROUP INPUT TOKENS" : "TASK INPUT TOKENS"}</small><b>{formatNumber(execution.usage?.input_tokens)}</b></div><div><small>CACHED INPUT</small><b>{formatNumber(execution.usage?.cached_input_tokens)}</b></div><div><small>{shared ? "GROUP OUTPUT TOKENS" : "TASK OUTPUT TOKENS"}</small><b>{formatNumber(execution.usage?.output_tokens)}</b></div><div><small>ACCOUNT TODAY</small><b>{execution.accountUsage?.unavailableReason ? "Unavailable" : formatNumber(execution.accountUsage?.todayTokens)}</b></div><div><small>ACCOUNT LIFETIME</small><b>{execution.accountUsage?.unavailableReason ? "Unavailable" : formatNumber(execution.accountUsage?.lifetimeTokens)}</b></div><div><small>COMPACTION</small><b>{execution.compactedAfterTask ? "Completed" : "Not due"}</b></div></div><p className="codex-usage-note">Task tokens are summed across Codex turns. Account figures are a best-effort, account-wide Codex status snapshot{shared ? "; task token totals are shared by this prompt group." : "."}{execution.accountUsage?.unavailableReason ? ` ${execution.accountUsage.unavailableReason}` : ""}</p></>}
-    {execution?.metrics && job.status !== "RUNNING" && <section className="execution-metrics"><p className="panel-label">EXECUTION ECONOMY</p><div><span><small>JEV TOKEN ESTIMATE</small><b>{formatNumber(execution.metrics.estimatedTokens)}</b></span><span><small>ACTUAL CODEX TOKENS</small><b>{formatNumber(execution.metrics.actualTokens)}</b></span><span><small>TURNS</small><b>{execution.metrics.turns}</b></span><span><small>REPAIRS</small><b>{execution.metrics.repairs}</b></span><span><small>VALIDATION STOP</small><b>{execution.metrics.stoppedAfterValidation ? "Yes" : "No"}</b></span><span className="execution-routes"><small>MODEL ROUTES</small><b>{execution.metrics.routes.map(route => `${route.model} / ${reasoningLabel(route.reasoning)}`).join(" → ")}</b></span></div><p>Estimate is a planning signal based on ticket scope, context, and initial reasoning. Actual tokens are reported by Codex across all turns{shared ? " and shared by this prompt group" : ""}.</p></section>}
-    <div className="live-console"><div className="console-bar"><span><i/><i/><i/></span><b>CODEX LIVE CONSOLE</b><small>{job.status === "RUNNING" ? "STREAMING" : job.status}</small></div><pre ref={consoleRef}>{consoleText || "Waiting for the first Codex event…"}<span className="console-cursor">▋</span></pre></div>
-    <div className="timeline">{execution?.events.map(event => <div className={`event ${event.kind} ${event.title.includes("/compact") ? "event-compact" : ""}`} key={event.id}><span className="event-line"/><span className={`event-icon ${event.status ?? ""}`}>{event.kind === "command" ? ">_" : event.kind === "file" ? "◇" : event.kind === "error" ? "!" : event.kind === "reasoning" ? "✦" : "✓"}</span><div><div className="event-title"><b>{event.title}</b><time>{new Date(event.timestamp).toLocaleTimeString()}</time></div>{event.detail && <pre>{event.detail}</pre>}</div></div>)}</div>
+    {execution?.verificationNote && <div className="verification-note"><b>Verification note</b><span>{execution.verificationNote}</span></div>}
+    {execution && <section className="execution-activity">
+      <header><div><p className="panel-label">JEV ACTIVITY</p><h4>Decisions and development log</h4></div><span>{activity.length} events</span></header>
+      <div className="activity-list">{activity.map(item => <article className={`activity-event ${item.tone}`} key={item.id}><i>{activityIcon(item.tone)}</i><div><div><b>{item.title}</b>{item.timestamp && <time>{new Date(item.timestamp).toLocaleTimeString()}</time>}</div>{item.detail && <p>{item.detail}</p>}</div></article>)}</div>
+    </section>}
+    {execution?.metrics && <section className="execution-summary"><p className="panel-label">EXECUTION SUMMARY</p><div>
+      <span><small>ESTIMATE</small><b>{formatNumber(execution.metrics.estimatedTokens)}</b><em>{estimateFromHistory ? "calibrated from project history" : "ticket scope estimate"}</em></span>
+      <span><small>ACTUAL TOKENS</small><b>{formatNumber(execution.metrics.actualTokens)}</b><em>{cacheRate === undefined ? "cache unavailable" : `${cacheRate}% cached input`}</em></span>
+      <span><small>TURNS</small><b>{execution.metrics.turns}</b><em>{execution.metrics.repairs ? `${execution.metrics.repairs} repair${execution.metrics.repairs === 1 ? "" : "s"}` : "no repair"}</em></span>
+      <span><small>COMPACTION</small><b>{execution.compactedAfterTask ? "Done" : "Not needed"}</b><em>{execution.metrics.stoppedAfterValidation ? "stopped after validation" : "execution completed"}</em></span>
+    </div></section>}
+    {execution?.codexStatus && <details className="execution-details"><summary>Context window and Codex account limits</summary><CodexStatusPanel status={execution.codexStatus}/></details>}
+    <details className="raw-console" open={job.status === "RUNNING"}><summary>Raw Codex console {job.status === "RUNNING" ? "· streaming" : ""}</summary><div className="live-console"><pre ref={consoleRef}>{consoleText || "Waiting for the first Codex event…"}{job.status === "RUNNING" && <span className="console-cursor">▋</span>}</pre></div></details>
     {job.output && <details className="raw-output"><summary>View raw Codex JSONL output</summary><pre>{job.output}</pre></details>}
   </div>;
 }
+
+function buildActivity(job: Job, events: ExecutionEvent[]): Activity[] {
+  const result: Activity[] = [];
+  if (job.analysis) {
+    result.push({ id: "jev-recommendation", title: "JEV recommendation applied", detail: `${job.analysis.model} · ${reasoningLabel(job.analysis.reasoning)} reasoning`, tone: "jev" });
+    if (job.analysis.context_files.length) result.push({ id: "jev-context", title: "Files selected for Codex context", detail: job.analysis.context_files.join(", "), tone: "jev" });
+  }
+  for (const event of events) if (isVisibleActivity(event)) result.push({ id: event.id, timestamp: event.timestamp, title: event.title, detail: compactDetail(event.detail), tone: activityTone(event) });
+  if (job.error && !result.some(item => item.tone === "error")) result.push({ id: "execution-error", title: "Development stopped with an error", detail: job.error, tone: "error" });
+  return result;
+}
+
+function isVisibleActivity(event: ExecutionEvent) { return event.title !== "Starting Codex" && event.title !== "Codex status checkpoint" && (event.kind === "command" || event.kind === "file" || event.kind === "error" || event.kind === "system"); }
+function activityTone(event: ExecutionEvent): Activity["tone"] { if (event.kind === "error" || event.status === "error") return "error"; if (event.kind === "command") return "command"; if (/model changed|reasoning changed|routing|compact/i.test(event.title)) return "route"; if (/completed|execution completed|verification satisfied/i.test(event.title)) return "complete"; return "jev"; }
+function activityIcon(tone: Activity["tone"]) { return tone === "command" ? ">_" : tone === "route" ? "↗" : tone === "complete" ? "✓" : tone === "error" ? "!" : "J"; }
+function compactDetail(detail?: string) { return detail?.length && detail.length > 1400 ? `${detail.slice(0, 1400)}…` : detail; }
+function statusTitle(status: string, verification?: string) { if (status === "RUNNING") return "Development in progress"; if (status === "SESSION_PAUSED") return "Development paused"; if (status === "FAILED") return "Development needs attention"; return verification === "environment_blocked" ? "Development completed · checks partly blocked" : "Development completed"; }
 
 function formatCodexConsole(output: string) { return output.split("\n").filter(Boolean).map(line => { if (/^Reading additional input from stdin/i.test(line)) return ""; try { const event = JSON.parse(line) as any; const item = event.item ?? {}; if (event.type === "thread.started") return `● Session started  ${event.thread_id ?? ""}`; if (event.type === "turn.started") return "✦ Codex is reading the project and planning…"; if (event.type === "turn.completed") return `✓ Turn completed  ${JSON.stringify(event.usage ?? {})}`; if (event.type === "turn.failed" || event.type === "error") return `! ERROR  ${JSON.stringify(event.error ?? event.message ?? event)}`; if (item.type === "command_execution") { const command = String(item.command ?? ""); const result = String(item.aggregated_output ?? "").trim().slice(-4000); return item.status === "in_progress" ? `$ ${command}` : result || `✓ Command finished with exit code ${String(item.exit_code ?? 0)}`; } if (item.type === "agent_message") return String(item.text ?? ""); if (/reason/i.test(item.type ?? "")) return `◆ ${String(item.text ?? "Reasoning…")}`; if (/file|change|patch/i.test(item.type ?? "")) return `◇ Files changed  ${JSON.stringify(item.changes ?? item.path ?? item).slice(0, 4000)}`; return ""; } catch { return line.slice(0, 4000); } }).filter(Boolean).join("\n\n"); }

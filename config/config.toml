@@ -10,6 +10,6 @@ api_key = ""
 
 [telegram]
 # Optional local Telegram integration. The bot only accepts this one private chat.
-enabled = true
+enabled = false
 bot_token = ""
 allowed_chat_id = ""

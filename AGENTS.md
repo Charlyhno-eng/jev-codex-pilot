@@ -14,10 +14,11 @@
 - The web interface can create and edit a project `AGENTS.md` through a modal.
 - JEV evaluates each ticket, reports precision and task breakdown, and recommends a model tier and reasoning effort.
 - Codex can route successive turns dynamically: verification favors low effort, while failed checks can use a stronger repair route. Each route is logged in red by JEV.
+- JEV selects the files Codex should inspect first and reviews the actual changed files before approving targeted tests.
 - Each ticket records a planning token estimate, Codex-reported token total, executed turns, repair count, and model routes. A successful validation stops further repair turns.
 - Compatible pending tickets may share one execution when their model and reasoning settings are close enough.
 - Live JSONL events, commands, verification, model routing, and token usage are streamed to the UI.
-- Successful work triggers automatic thread compaction after every third successful task. Compaction failure does not fail the task.
+- Successful work triggers automatic thread compaction after every third successful task or when the measured context reaches 90,000 tokens. Compaction failure does not fail the task.
 - Telegram is optional, private-chat-only, and sends a completion summary after development runs.
 - Vercel AI Gateway is currently the only supported analysis provider; its configuration stays in `config/config.toml`.
 
@@ -31,5 +32,14 @@ This project now includes modular web components and styles, dedicated tests, En
 - Set persistent repair escalation to Sol High and adopted the refreshed application logo.
 - Updated the dark web theme with blue, cyan, and violet colors taken from the refreshed logo.
 - Added browser-tab favicon indicators for running, completed, and failed tickets.
+- Added persistent session-limit pausing with automatic Codex rate-limit reset detection and resumption.
+- Linked Git availability notices to their status card, softened JEV terminal logs, and calibrated token estimates from project history.
+- Kept the ticket model through verification and first repair, reserved Sol High for a repeated failed check, and recorded accurate per-turn cache and token usage.
+- Added end-of-ticket Codex context-window, five-hour, and weekly-limit snapshots to the execution view.
+- Removed unused file-change predictions and navbar session usage, and simplified task precision to lenient 20-point bands.
+- Stopped repair loops on missing build dependencies and added a persistent English verification note to completed tickets.
+- Added JEV-approved tests scoped to actual ticket changes, tighter Codex file guidance, and context-triggered compaction at 90,000 tokens.
+- Logged every file selected for Codex context in orange, changed the completed queue label to Done, and made Telegram open only after `/start`.
+- Rebuilt the console around per-ticket JEV activity, model routes, commands, verification, and development completion instead of duplicated execution panels.
 
 Keep future delivery notes concise and append one English bullet here for each completed feature or change.

@@ -116,6 +116,37 @@ export class JobQueue {
     this.persist();
   }
   transition(id: string, status: JobStatus, more: Partial<Job> = {}) { return this.update(id, { ...more, status }); }
+  pauseForSessionLimit(id: string, resumeAt?: string) {
+    const job = this.get(id);
+    if (!job) throw new Error("Job not found");
+    const now = new Date().toISOString();
+    const event = {
+      id: randomUUID(),
+      timestamp: now,
+      kind: "system" as const,
+      title: "Codex session limit reached",
+      detail: resumeAt ? `Development paused until Codex can start its next session at ${resumeAt}.` : "Development paused until Codex can start its next session.",
+      status: "active" as const
+    };
+    return this.update(id, {
+      status: "SESSION_PAUSED",
+      error: undefined,
+      sessionResumeAt: resumeAt,
+      execution: job.execution ? { ...job.execution, phase: "QUEUED", lastActivityAt: now, completedAt: now, events: [...job.execution.events, event] } : undefined
+    });
+  }
+  resumeSessionPaused(id: string) {
+    const job = this.get(id);
+    if (!job) throw new Error("Job not found");
+    if (job.status !== "SESSION_PAUSED") throw new Error("Only session-paused tasks can resume");
+    const now = new Date().toISOString();
+    const event = { id: randomUUID(), timestamp: now, kind: "system" as const, title: "Codex session available", detail: "Development automatically resumed after the Codex session limit reset.", status: "active" as const };
+    return this.update(id, {
+      status: "PENDING",
+      sessionResumeAt: undefined,
+      execution: job.execution ? { ...job.execution, phase: "QUEUED", lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, event] } : undefined
+    });
+  }
   moveManually(id: string, status: "PENDING" | "SUCCESS") {
     const job = this.get(id);
     if (!job) throw new Error("Job not found");

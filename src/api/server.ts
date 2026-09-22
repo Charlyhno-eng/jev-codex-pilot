@@ -84,13 +84,22 @@ async function runWithNotification(jobId: string, batch: boolean) {
     else await orchestrator.run(jobId);
   } catch (error) {
     const current = queue.get(jobId);
-    if (current && current.status !== "SUCCESS") queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start" });
+    if (current && current.status !== "SUCCESS" && current.status !== "SESSION_PAUSED") queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start" });
   } finally {
     const project = projects.get(starting.projectId);
     const finished = queue.list(starting.projectId).filter(job => job.attempts > (before.get(job.id) ?? 0) && (job.status === "SUCCESS" || job.status === "FAILED"));
     if (project && finished.length) void telegram.notifyDevelopmentFinished(project, finished).catch(() => {
       logJevError("Telegram completion notice could not be saved");
     });
+  }
+}
+
+/** Restarts eligible tickets after Codex reports that its session limit has reset. */
+async function resumeSessionPausedWork() {
+  const resumed = await orchestrator.resumeSessionPausedJobs();
+  for (const job of resumed) {
+    logJev(`Codex session reset; automatically resuming task ${job.id.slice(0, 8)}`);
+    void runWithNotification(job.id, true);
   }
 }
 
@@ -340,5 +349,7 @@ createServer(async (request, response) => {
   }
 }).listen(port, "127.0.0.1", () => {
   telegram.start();
+  void resumeSessionPausedWork();
+  setInterval(() => void resumeSessionPausedWork(), 60_000);
   logJev(`API ready at http://localhost:${port}`);
 });

@@ -22,6 +22,8 @@ body{background:radial-gradient(circle at 82% -10%,rgba(76,124,255,.2),transpare
 .status-success{color:#b7efff;border-color:#28657a;background:#0d2530}.status-success i{background:var(--lime)}
 .pulse{border-color:#1d5769;background:var(--lime);box-shadow:0 0 0 7px rgba(112,220,255,.08),0 0 20px rgba(112,220,255,.32)}
 .queue-card:hover,.queue-card.active,.queue-column.drop-target{border-color:#4f92df;background:#13233b}.queue-column.drop-target{box-shadow:inset 0 0 0 1px rgba(92,169,245,.16)}
+.queue-columns{grid-template-columns:repeat(5,minmax(0,1fr))}
+.status-session_paused{color:#d4c4ff;border-color:#624d9d;background:#211b3a}.status-session_paused i{border-radius:50%;background:#a98cff;color:#171027}
 .back-link{border-color:#3f76b8;background:#112b4a;color:#c7e6ff}.back-link:hover{border-color:#75b9ff;background:#193b63}
 .open-agents{border-color:#3f70b1;background:linear-gradient(145deg,#132b4b,#101824);color:#d7ecff}.open-agents:hover{border-color:#78baff;background:#18365b}.open-agents>span{background:#1d4777;color:#a8dcff}.open-agents small,.open-agents i{color:#91c8ff}
 .agents-modal,.settings-modal,.task-editor-modal{border-color:#385b8c}.agents-modal header,.settings-modal header,.task-editor-modal header{background:linear-gradient(120deg,#142b4b,#101722)}
@@ -31,7 +33,7 @@ body{background:radial-gradient(circle at 82% -10%,rgba(76,124,255,.2),transpare
 .execution-proof{border-bottom-color:#294c78;background:#102541;color:#cde9ff}.execution-proof span{border-color:#3977bb;background:#122e51;color:#cde9ff}.execution-proof strong{border-color:#505bc5;background:#1b2857;color:#d9dcff}
 .event-icon.active{color:#cce5ff;border-color:#3c78b8;background:#132d4d}.event pre{color:#b9c9dc;background:#0d1420;border-color:#233650}
 .console-bar{background:#101927;border-bottom-color:#22344c}.live-console>pre{color:#a7dfff}.console-bar small,.console-cursor{color:var(--lime)}
-.github-notice{border-color:#365e92;background:#101f35;color:#b8dbff}
+.git-status-card.has-notice .open-diff{border-bottom:0;border-radius:14px 14px 0 0}.git-status-card.has-notice .github-notice{margin:0;border:1px solid #365e92;border-radius:0 0 14px 14px;background:#101f35;color:#b8dbff}
 .project-live.active{color:var(--lime)}.project-live.active i{background:var(--lime);box-shadow:0 0 8px var(--lime)}
 .credit-pill{border-color:#315f88;background:#101f2e;color:#b8d7ed}.credit-pill b{color:#91dcff}.credit-pill:hover{border-color:#578fbd;background:#142a3d}
 .toast{background:linear-gradient(135deg,#71dbff,#6993ff);color:#06111e}

@@ -10,6 +10,7 @@ const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".r
 
 export type TaskEvaluator = (state: string) => Promise<JevDecision>;
 export type TaskPrecisionEvaluator = (state: string) => Promise<JevTaskPrecision>;
+export type VerificationEvaluator = (state: string) => Promise<boolean>;
 
 function unique<T>(items: T[]): T[] { return [...new Set(items)]; }
 function mentions(value: string): string[] {
@@ -62,6 +63,13 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
   const files = listProjectFiles(projectPath);
   const names = new Set(files.map(file => file.path));
   const agents = readProjectFile(projectPath, "AGENTS.md");
+  const explicit = mentions(description);
+  const words = unique(description.toLowerCase().match(/[\p{L}\d_-]{4,}/gu) ?? []);
+  const fileCandidates = files
+    .map(file => ({ path: file.path, score: (explicit.includes(file.path) ? 100 : 0) + words.filter(word => file.path.toLowerCase().includes(word)).length * 10 }))
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, 120)
+    .map(file => file.path);
   logJev(`Task evaluation started · ${files.length} project file(s) read`);
 
   let decision: JevDecision;
@@ -71,6 +79,7 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
       project: {
         fileCount: files.length,
         files: files.slice(0, 300).map(file => file.path),
+        fileCandidates,
         agents: agents?.slice(0, 12_000) ?? null
       }
     }));
@@ -79,8 +88,6 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
     throw new Error(`JEV analysis failed: ${describeError(error)}`);
   }
 
-  const explicit = mentions(description);
-  const words = unique(description.toLowerCase().match(/[\p{L}\d_-]{4,}/gu) ?? []);
   const installationOnly = decision.taskType === "installation";
   const scored = files.map(file => {
     const lower = file.path.toLowerCase();
@@ -90,12 +97,14 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
     if (/^(package(-lock)?\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|cargo\.toml|go\.mod|tsconfig\.json|dockerfile)$/i.test(basename(file.path))) score += installationOnly ? 40 : 5;
     return { ...file, score };
   });
-  let context = scored.filter(file => file.score > 0).sort((a, b) => b.score - a.score || a.size - b.size).slice(0, 12).map(file => file.path);
+  const relevant = scored.filter(file => file.score > 0).sort((a, b) => b.score - a.score || a.size - b.size);
+  const jevFiles = unique(decision.relevantFiles ?? []).filter(path => names.has(path)).slice(0, 2);
+  let context = jevFiles.length ? unique([...jevFiles, ...relevant.filter(file => file.score >= 10).slice(0, 3).map(file => file.path)]) : relevant.slice(0, 8).map(file => file.path);
   const projectGuidance = ["AGENTS.md", "README.md"].filter(file => names.has(file));
   context = unique([...projectGuidance, ...context]);
   if (context.length === 0) context.push(...files.filter(file => CODE_EXTENSIONS.has(extname(file.path))).slice(0, 4).map(file => file.path));
 
-  const filesToModify = explicit.filter(file => names.has(file));
+  const filesToModify = unique([...explicit, ...jevFiles, ...relevant.filter(file => CODE_EXTENSIONS.has(extname(file.path)) && basename(file.path).toLowerCase() !== "agents.md").slice(0, jevFiles.length ? 2 : 5).map(file => file.path)]);
   if (installationOnly) {
     filesToModify.push(...files.filter(file => /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|cargo\.toml|go\.mod)$/i.test(file.path)).map(file => file.path));
   }
@@ -115,6 +124,7 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
       "This recommendation applies to this task only; it will run in its own Codex session.",
       policy.reason,
       `${context.length} relevant file(s) selected out of ${files.length}; AGENTS.md has priority.`,
+      jevFiles.length ? `JEV selected ${jevFiles.join(", ")} as the first implementation files to inspect.` : "No specific implementation file was selected by JEV; local file ranking was used.",
       agents ? "Project instructions from AGENTS.md were detected." : "No AGENTS.md was found in the target project.",
       "Astra is disabled by policy."
     ],
@@ -126,8 +136,19 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
       estimated_cost_usd: estimateJevInputCost(decision.usage.inputTokens ?? decision.usage.totalTokens ?? 0)
     } : undefined
   };
-  logJev(`Task evaluation complete · precision ${analysis.precision_score ?? "unavailable"}% · task breakdown ${analysis.decomposition_score ?? "unavailable"}% · recommended tier ${analysis.model} with ${analysis.reasoning} reasoning`);
+  logJev(analysis.context_files.length
+    ? `Codex context selected · ${analysis.context_files.join(", ")} · ${analysis.context_files.length} file(s) added to Codex context`
+    : "Codex context selected · no project files were available for Codex context");
+  logJev(`Task evaluation complete · precision ${analysis.precision_score ?? "unavailable"}% · task breakdown ${analysis.decomposition_score ?? "unavailable"}% · recommended tier ${analysis.model} with ${analysis.reasoning} reasoning · files ${jevFiles.join(", ") || "ranked locally"}`);
   return analysis;
+}
+
+/** Asks JEV whether the tests mapped to actual ticket changes are worthwhile. */
+export async function assessVerification(task: string, changedFiles: string[], candidateTests: string[], evaluator: VerificationEvaluator = createConfiguredJevProvider(new AppConfigStore().read()).evaluateVerification): Promise<boolean> {
+  logJev(`Targeted verification review started · ${changedFiles.length} changed file(s) · ${candidateTests.length} candidate test(s)`);
+  const decision = await evaluator(JSON.stringify({ task, changedFiles, candidateTests }));
+  logJev(`Targeted verification review complete · ${decision ? "run affected tests" : "skip tests"}`);
+  return decision;
 }
 
 /**

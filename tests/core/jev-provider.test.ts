@@ -8,8 +8,7 @@ describe("JEV task precision scoring", () => {
   });
 
   it("maps supported score levels to a visible percentage", () => {
-    expect(taskPrecisionPercentage(0)).toBe(0);
-    expect(taskPrecisionPercentage(7)).toBe(83);
+    expect(Array.from({ length: 10 }, (_, level) => taskPrecisionPercentage(level))).toEqual([20, 20, 40, 60, 80, 80, 80, 80, 100, 100]);
     expect(taskPrecisionPercentage(9)).toBe(100);
     expect(taskDecompositionPercentage(7)).toBe(75);
   });

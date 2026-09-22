@@ -86,6 +86,20 @@ describe("JEV model policy", () => {
     expect(result.context_files.slice(0, 2)).toEqual(["AGENTS.md", "README.md"]);
   });
 
+  it("prioritizes JEV-selected implementation files in Codex guidance", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-files-"));
+    writeFileSync(join(root, "AGENTS.md"), "Project rules");
+    writeFileSync(join(root, "orchestrator.ts"), "export {};");
+    writeFileSync(join(root, "unrelated.ts"), "export {};");
+    const result = await analyze(root, [{ description: "Fix repeated verification" }], async state => {
+      expect(JSON.parse(state).project.fileCandidates).toContain("orchestrator.ts");
+      return { taskType: "bugfix", complexity: "medium", relevantFiles: ["orchestrator.ts", "outside.ts"] };
+    });
+    expect(result.context_files).toContain("orchestrator.ts");
+    expect(result.files_to_modify).toContain("orchestrator.ts");
+    expect(result.files_to_modify).not.toContain("outside.ts");
+  });
+
   it("assesses draft-task precision against the project's AGENTS.md context", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-precision-"));
     writeFileSync(join(root, "AGENTS.md"), "This project is a browser game. Keep controls keyboard accessible.");

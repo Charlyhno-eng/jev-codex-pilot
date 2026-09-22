@@ -9,6 +9,7 @@ export type JevDecision = {
   complexity: Complexity;
   taskPrecision?: number;
   decompositionScore?: number;
+  relevantFiles?: string[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 };
 
@@ -22,6 +23,7 @@ export type JevProvider = {
   inputUsdPerMillionTokens: number;
   evaluate(state: string): Promise<JevDecision>;
   evaluateTaskPrecision(state: string): Promise<JevTaskPrecision>;
+  evaluateVerification(state: string): Promise<boolean>;
 };
 
 const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
@@ -41,19 +43,19 @@ const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
 };
 
 export const TASK_PRECISION_CRITERIA = [
-  "0% — no actionable outcome, scope, or useful relation to the project context.",
-  "15% — a broad request with little indication of the expected result.",
-  "30% — an outcome is hinted at, but the intended behavior is still unclear.",
-  "45% — a concrete intent is present, with several important ambiguities remaining.",
-  "55% — the main outcome is understandable, but key constraints or acceptance expectations are absent.",
-  "65% — the task is workable and identifies a concrete outcome, though Codex will make some assumptions.",
-  "75% — the requested behavior is specific and scoped enough for normal implementation in the supplied context.",
-  "83% — the task has clear behavior, useful boundaries, and relevant project context.",
-  "92% — the task has clear behavior, boundaries, and useful acceptance expectations.",
-  "100% — the requested outcome, scope, constraints, and success criteria are unambiguous in context."
+  "20% — no actionable outcome or recognizable change is stated.",
+  "20% — the request is too vague to identify the intended result.",
+  "40% — a broad goal is recognizable, but the affected behavior remains unclear.",
+  "60% — an actionable goal is stated, but an important choice about the outcome remains open.",
+  "80% — the requested change and affected area are clear; normal implementation choices can be inferred from project context.",
+  "80% — the intended behavior is clear enough to implement with routine assumptions.",
+  "80% — a concrete, scoped outcome is described; technical steps need not be prescribed.",
+  "80% — the change has clear boundaries and can be implemented without further clarification.",
+  "100% — the outcome, boundaries, and relevant constraints are explicit.",
+  "100% — the requested result and success conditions are exceptionally clear in context."
 ] as const;
 
-const TASK_PRECISION_PERCENTAGES = [0, 15, 30, 45, 55, 65, 75, 83, 92, 100] as const;
+const TASK_PRECISION_PERCENTAGES = [20, 20, 40, 60, 80, 80, 80, 80, 100, 100] as const;
 const TASK_DECOMPOSITION_PERCENTAGES = [0, 10, 20, 35, 45, 55, 65, 75, 90, 100] as const;
 export const TASK_DECOMPOSITION_CRITERIA = [
   "0% — several unrelated outcomes are mixed in one ticket.",
@@ -70,6 +72,8 @@ export const TASK_DECOMPOSITION_CRITERIA = [
 /** Performs this backend operation. */
 export function taskPrecisionPercentage(level: number) { return TASK_PRECISION_PERCENTAGES[Math.max(0, Math.min(TASK_PRECISION_PERCENTAGES.length - 1, Math.round(level)))]!; }
 
+const TASK_PRECISION_INSTRUCTIONS = "Score the clarity of this single task in its AGENTS.md project context. A concrete requested change with an identifiable affected area normally deserves 80%, even when technical steps and acceptance tests are unstated. Use 60% when one important outcome choice remains open, 40% for a broad goal without clear affected behavior, and 20% only when the result cannot be identified. Reserve 100% for exceptionally explicit outcomes and constraints. Do not penalize implementation difficulty, missing file names, or routine assumptions. This score is advisory only.";
+
 /** Converts a task-breakdown score to its visible percentage. */
 export function taskDecompositionPercentage(level: number) { return TASK_DECOMPOSITION_PERCENTAGES[Math.max(0, Math.min(TASK_DECOMPOSITION_PERCENTAGES.length - 1, Math.round(level)))]!; }
 
@@ -81,6 +85,9 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
     id: "vercel-ai-gateway/typesafe-ai/jev",
     inputUsdPerMillionTokens: JEV_INPUT_USD_PER_MILLION_TOKENS,
     async evaluate(state) {
+      const project = JSON.parse(state) as { project?: { fileCandidates?: string[] } };
+      const candidates = (project.project?.fileCandidates ?? []).slice(0, 120);
+      const fileChoices = Object.fromEntries([["none", "No clearly relevant file in the list."], ...candidates.map((path, index) => [`f${index}`, path])]);
       const result = await evaluate({
         model,
         state,
@@ -104,20 +111,34 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           taskPrecision: {
             type: "score",
             criteria: TASK_PRECISION_CRITERIA,
-            instructions: "Score how precisely this single task is stated for Codex in the supplied AGENTS.md project context. Judge clarity of the requested outcome, boundaries, expected behavior, and relevant constraints. Do not lower the score because implementation will be difficult or because the task does not prescribe technical steps. A concrete request that identifies a visible change, affected area, or intended behavior normally merits at least 65%; use 75% when it is sufficiently specific for normal implementation. Reserve scores below 45% for requests whose expected result remains substantially unclear. This is advisory only."
+            instructions: TASK_PRECISION_INSTRUCTIONS
           },
           decomposition: {
             type: "score",
             criteria: TASK_DECOMPOSITION_CRITERIA,
             instructions: "Assess whether this single ticket is sufficiently split for one Codex task. A high score means one coherent deliverable; a low score suggests dividing independent outcomes into separate tickets. Do not penalize technical difficulty, number of files, or necessary implementation steps. Advisory only; never block execution."
+          },
+          primaryFile: {
+            type: "choice",
+            criteria: fileChoices,
+            instructions: "Choose the most likely source, test, style, or configuration file Codex should inspect first for this task. Pick none if no candidate is credible. Prefer a concrete implementation file over general project documentation."
+          },
+          secondaryFile: {
+            type: "choice",
+            criteria: fileChoices,
+            instructions: "Choose a second distinct file only when it is directly relevant to implementing this task. Otherwise choose none. Avoid unrelated files and project-wide reading."
           }
         }
       });
+      const chosen = [result.answers.primaryFile.choice, result.answers.secondaryFile.choice]
+        .map(key => /^f\d+$/.test(key) ? candidates[Number(key.slice(1))] : undefined)
+        .filter((path): path is string => Boolean(path));
       return {
         taskType: result.answers.taskType.choice,
         complexity: result.answers.complexity.choice,
         taskPrecision: taskPrecisionPercentage(result.answers.taskPrecision.score),
         decompositionScore: taskDecompositionPercentage(result.answers.decomposition.score),
+        relevantFiles: [...new Set(chosen)],
         usage: result.usage
       };
     },
@@ -129,7 +150,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           precision: {
             type: "score",
             criteria: TASK_PRECISION_CRITERIA,
-            instructions: "Score how precisely this single task is stated for Codex in the supplied AGENTS.md project context. Judge clarity of the requested outcome, boundaries, expected behavior, and relevant constraints. Do not lower the score because implementation will be difficult or because the task does not prescribe technical steps. A concrete request that identifies a visible change, affected area, or intended behavior normally merits at least 65%; use 75% when it is sufficiently specific for normal implementation. Reserve scores below 45% for requests whose expected result remains substantially unclear. This is advisory only."
+            instructions: TASK_PRECISION_INSTRUCTIONS
           }
         }
       });
@@ -137,6 +158,23 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
         score: taskPrecisionPercentage(result.answers.precision.score),
         usage: result.usage
       };
+    },
+    async evaluateVerification(state) {
+      const result = await evaluate({
+        model,
+        state,
+        questions: {
+          runAffectedTests: {
+            type: "choice",
+            criteria: {
+              yes: "The actual added, changed, or deleted files have relevant existing tests in the provided candidate list. Run only those tests.",
+              no: "The changes are documentation-only, or no listed test can meaningfully check the changed behavior. Do not run tests."
+            },
+            instructions: "Decide whether Codex should run targeted tests for the current ticket. Use only the changed files and candidate tests in the state. Never request a full test suite, a broad build, or dependency installation. Prefer yes for changed code with a directly related test."
+          }
+        }
+      });
+      return result.answers.runAffectedTests.choice === "yes";
     }
   };
 }

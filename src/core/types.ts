@@ -1,7 +1,7 @@
 export type Complexity = "trivial" | "low" | "medium" | "high" | "very_high";
 export type CodexModel = "luna" | "terra" | "sol";
 export type Reasoning = "low" | "medium" | "high" | "xhigh";
-export type JobStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "SKIPPED";
+export type JobStatus = "PENDING" | "RUNNING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
 export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";
 
 export interface TaskSpec {
@@ -42,12 +42,14 @@ export interface ExecutionState {
   usage?: CodexUsage;
   /** A best-effort account-wide usage snapshot captured from Codex app-server. */
   accountUsage?: CodexAccountUsage;
+  codexStatus?: CodexStatusSnapshot;
   /** Planning and reported usage metrics for this Codex execution. */
   metrics?: CodexExecutionMetrics;
   /** Present when compatible, independently analysed jobs shared one Codex prompt. */
   group?: CodexExecutionGroup;
   compactedAfterTask?: boolean;
   verification: "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
+  verificationNote?: string;
   events: ExecutionEvent[];
 }
 
@@ -60,11 +62,12 @@ export interface CodexUsage {
 
 export interface CodexExecutionMetrics {
   estimatedTokens: number;
+  estimateBasis?: "scope" | "project_history";
   actualTokens?: number;
   turns: number;
   repairs: number;
   stoppedAfterValidation?: boolean;
-  routes: Array<{ stage: "implementation" | "verification" | "repair"; model: string; reasoning: Reasoning }>;
+  routes: Array<{ stage: "implementation" | "verification" | "repair"; model: string; reasoning: Reasoning; usage?: CodexUsage }>;
 }
 
 export interface CodexAccountUsage {
@@ -72,6 +75,19 @@ export interface CodexAccountUsage {
   lifetimeTokens?: number;
   peakDailyTokens?: number;
   todayTokens?: number;
+  unavailableReason?: string;
+}
+
+export interface CodexStatusWindow {
+  remainingPercent: number;
+  resetsAt?: string;
+}
+
+export interface CodexStatusSnapshot {
+  capturedAt: string;
+  context?: { usedTokens: number; windowTokens: number };
+  fiveHour?: CodexStatusWindow;
+  weekly?: CodexStatusWindow;
   unavailableReason?: string;
 }
 
@@ -117,6 +133,8 @@ export interface Job {
   updatedAt: string;
   output?: string;
   error?: string;
+  /** Next known Codex quota reset for work paused by a reached session limit. */
+  sessionResumeAt?: string;
   attempts: number;
   /** Archived tasks stay in history but are hidden from the active board. */
   archivedAt?: string;

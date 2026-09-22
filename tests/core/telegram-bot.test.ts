@@ -62,19 +62,17 @@ describe("Telegram bot", () => {
     expect(calls.find(call => call.method === "sendMessage")?.body.text).toContain("Bot enabled");
   });
 
-  it("clears every known message in batches when the service starts", async () => {
+  it("does not open or refresh the chat when the service starts", async () => {
     const fetchMock = telegramMock({ updates: [{ update_id: 8, message: { message_id: 230, chat: { id: 42 }, text: "waiting while offline" } }], firstMessageId: 231 });
     vi.stubGlobal("fetch", fetchMock);
     const bot = new TelegramBot({ config: () => config, listProjects: () => [project], listJobs: () => [], createTicket: () => { throw new Error("not expected"); } }, mkdtempSync(join(tmpdir(), "jev-telegram-")));
 
     await (bot as any).bootstrap();
 
-    const deletionCalls = fetchMock.mock.calls
-      .filter(call => String(call[0]).endsWith("/deleteMessages"))
-      .map(call => JSON.parse(String(call[1]?.body)).message_ids as number[]);
-    expect(deletionCalls.map(ids => ids.length)).toEqual([100, 100, 31]);
-    expect(deletionCalls.flat()).toEqual(Array.from({ length: 231 }, (_, index) => 231 - index));
-    expect(active(bot).view).toBe("home");
+    const methods = fetchMock.mock.calls.map(call => String(call[0]).split("/").at(-1));
+    expect(methods).toEqual(["setMyCommands"]);
+    expect((bot as any).state.activeViewByChat).toEqual({});
+    bot.stop();
   });
 
   it("creates a ticket through the current buttons and deletes the user's description from chat", async () => {

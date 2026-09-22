@@ -101,23 +101,7 @@ export class TelegramBot {
     if (applied) this.commandsConfiguredFor = config.telegramBotToken;
   }
   private async bootstrap() {
-    const config = this.dependencies.config();
     await this.configureCommands();
-    if (this.authorized({ id: Number(config.telegramAllowedChatId) }, config)) {
-      const updates = await this.getUpdates(config, 0);
-      const chatId = config.telegramAllowedChatId;
-      for (const update of updates) {
-        this.state.offset = Math.max(this.state.offset, update.update_id + 1);
-        this.rememberMessage(chatId, update.message?.message_id ?? update.callback_query?.message?.message_id);
-      }
-      // Telegram does not expose chat history to bots. A short-lived probe gives us
-      // the current highest message ID so every earlier ID can still be requested.
-      const probe = await this.request<TelegramMessage>(config.telegramBotToken, "sendMessage", { chat_id: chatId, text: "Refreshing JEV Codex Pilot…" });
-      this.rememberMessage(chatId, probe?.message_id);
-      await this.resetChat(config.telegramBotToken, chatId, probe?.message_id);
-      await this.render(config.telegramBotToken, chatId, this.home());
-      this.persist();
-    }
     this.schedule(0);
   }
   private schedule(delay: number) {
