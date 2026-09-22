@@ -4,6 +4,7 @@ import { AppConfigStore } from "./app-config.js";
 import { createConfiguredJevProvider, type JevDecision, type JevTaskPrecision } from "./jev-provider.js";
 import { estimateJevInputCost } from "./jev-pricing.js";
 import { logJev, logJevError } from "./jev-logger.js";
+import { MODEL_LEVELS, REASONING_LEVELS, reasoningAt } from "./codex-models.js";
 import type { CodexModel, Complexity, JevAnalysis, Reasoning, TaskSpec, TaskType } from "./types.js";
 
 const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs", ".java", ".rb", ".php", ".vue", ".svelte"]);
@@ -29,31 +30,37 @@ function describeError(error: unknown): string {
 }
 
 function selectPolicy(taskType: TaskType, complexity: Complexity): { model: CodexModel; reasoning: Reasoning; reason: string } {
+  const light = MODEL_LEVELS[0] ?? "luna";
+  const strong = MODEL_LEVELS[MODEL_LEVELS.length - 1] ?? light;
+  const middle = MODEL_LEVELS[Math.ceil((MODEL_LEVELS.length - 1) / 2)] ?? light;
+  const low = reasoningAt(0);
+  const medium = reasoningAt(Math.min(1, REASONING_LEVELS.length - 1));
+  const high = reasoningAt(REASONING_LEVELS.length - 1);
   if (complexity === "trivial") {
-    return { model: "luna", reasoning: "low", reason: "This is a small, obvious change, so it uses the fastest and lowest-cost Codex setting." };
+    return { model: light, reasoning: low, reason: "This is a small, obvious change, so it uses the lightest configured Codex setting." };
   }
   if (complexity === "low") {
-    return { model: "luna", reasoning: "medium", reason: "This is clearly defined routine development work, so Luna with medium reasoning is sufficient." };
+    return { model: light, reasoning: medium, reason: "This is clearly defined routine development work, so the lightest configured model with moderate reasoning is sufficient." };
   }
   if (complexity === "medium") {
     if (taskType === "bugfix" || taskType === "performance") {
-      return { model: "terra", reasoning: "high", reason: "This needs investigation across related code, so it raises reasoning before model size." };
+      return { model: middle, reasoning: high, reason: "This needs investigation across related code, so it raises reasoning before model size." };
     }
     if (taskType === "architecture" || taskType === "security") {
-      return { model: "sol", reasoning: "medium", reason: "This involves important technical choices, so it uses Sol while the scope remains defined." };
+      return { model: strong, reasoning: medium, reason: "This involves important technical choices, so it uses the strongest configured model while the scope remains defined." };
     }
-    return { model: "terra", reasoning: "medium", reason: "This is normal multi-file application work, so Terra provides the right capability and cost balance." };
+    return { model: middle, reasoning: medium, reason: "This is normal multi-file application work, so a middle configured model provides the right capability and cost balance." };
   }
   if (complexity === "high") {
     if (taskType === "bugfix" || taskType === "performance") {
-      return { model: "terra", reasoning: "high", reason: "This is a difficult investigation, so it increases reasoning before escalating to the largest model." };
+      return { model: middle, reasoning: high, reason: "This is a difficult investigation, so it increases reasoning before escalating to the strongest model." };
     }
     if (taskType === "architecture" || taskType === "security" || taskType === "refactoring") {
-      return { model: "sol", reasoning: "high", reason: "This is a substantial engineering change with important cross-project decisions." };
+      return { model: strong, reasoning: high, reason: "This is a substantial engineering change with important cross-project decisions." };
     }
-    return { model: "sol", reasoning: "medium", reason: "This is a substantial but well-scoped implementation task." };
+    return { model: strong, reasoning: medium, reason: "This is a substantial but well-scoped implementation task." };
   }
-  return { model: "sol", reasoning: "xhigh", reason: "This is an exceptional, high-risk task where deeper exploration and verification are justified." };
+  return { model: strong, reasoning: high, reason: "This is an exceptional, high-risk task where deeper exploration and verification are justified." };
 }
 
 /** Performs this backend operation. */

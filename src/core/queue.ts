@@ -237,8 +237,8 @@ export class JobQueue {
     if (!job.analysis) throw new Error("Analyze this task before adjusting its recommendation");
     const levels = dimension === "model" ? MODEL_LEVELS : REASONING_LEVELS;
     const current = job.analysis[dimension] as CodexModel | Reasoning;
-    const index = levels.indexOf(current as never);
-    if (index < 0) throw new Error(`Unknown ${dimension} recommendation`);
+    const configuredIndex = levels.indexOf(current as never);
+    const index = configuredIndex < 0 ? (dimension === "reasoning" && current === "xhigh" ? levels.length - 1 : 0) : configuredIndex;
     const nextIndex = Math.max(0, Math.min(levels.length - 1, index + delta));
     const next = levels[nextIndex];
     if (next === current) return job;

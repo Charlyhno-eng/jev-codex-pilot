@@ -12,6 +12,8 @@ You keep control at every stage. Review the project files and Git state, edit `A
 
 JEV currently uses the **Vercel AI Gateway API** for ticket analysis and usage data. The integration is kept in the project code so developers can adapt it to another provider or a self-hosted API when needed.
 
+Codex model choices and reasoning efforts are configured in `config/model.toml`. Model entries are ordered from lighter to stronger, and reasoning levels from lower to higher effort. The same settings drive JEV recommendations, manual queue adjustments, follow-up routing, verification, repair escalation, and the model selector in the interface. Restart the application after editing this file.
+
 ## How JEV reduces unnecessary Codex work
 
 JEV makes small, bounded decisions before asking Codex to reason through a full turn. The table shows where token savings can come from. The ranges describe the affected part of a workflow, so they should not be added together.
@@ -31,7 +33,7 @@ These are practical estimates, not guaranteed results. Repository size, ticket q
 | --- | --- | --- |
 | Relevant-file context | Identifies the files Codex should inspect first and sends the affected files forward for verification. | Avoids loading unrelated code; often the largest saving on established repositories. |
 | Typed decision offload | Handles boolean checks, multiple choices, scores, routing, and validation judgments through compact Noul, Choice, and Score requests. Uncertain answers escalate to Codex. | Removes full Codex turns for decisions that do not need prose or code. |
-| Dynamic model and effort routing | Keeps a route stable when cache reuse matters, lowers effort for verification and routine commands, and escalates repeated repair failures to Sol High. | Reduces reasoning output on routine turns while reserving stronger reasoning for difficult repairs. |
+| Dynamic model and effort routing | Keeps a route stable when cache reuse matters, lowers effort for verification and routine commands, and escalates repeated repair failures to the strongest configured settings. | Reduces reasoning output on routine turns while reserving stronger reasoning for difficult repairs. |
 | Targeted verification | Reviews the actual changed files and approves tests that cover that surface. Environment-blocked checks finish with a note instead of entering a repair loop. | Avoids broad test runs and repeated investigations caused by missing local dependencies. |
 | Early validation stop | Stops repair and analysis turns as soon as the required checks are satisfied. | Saves the extra turns that simple tickets often spend rechecking a completed result. |
 | Context diet and compaction | Reviews tool output after use, protects errors, paths, and test evidence, and marks redundant history before compaction. JEV also compacts when measured context reaches 90,000 tokens. | Keeps long sessions from carrying stale output into later turns; the native pre-compaction review is advisory. |

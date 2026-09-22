@@ -1,6 +1,6 @@
 export type Complexity = "trivial" | "low" | "medium" | "high" | "very_high";
-export type CodexModel = "luna" | "terra" | "sol";
-export type Reasoning = "low" | "medium" | "high" | "xhigh";
+export type CodexModel = string;
+export type Reasoning = string;
 export type JobStatus = "PENDING" | "RUNNING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
 export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "quota" | "interruption" | "telegram" | "jev";
 export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";

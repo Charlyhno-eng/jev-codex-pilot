@@ -1,0 +1,9 @@
+# Codex models available to JEV. The keys are stable routing names shown in the app;
+# the values are the model IDs passed to Codex. Keep models ordered from lighter to stronger.
+[models]
+luna = "gpt-6-luna"
+sol = "gpt-6-sol"
+
+# Reasoning choices are ordered from lowest to highest effort.
+[reasoning]
+levels = ["low", "medium", "high"]

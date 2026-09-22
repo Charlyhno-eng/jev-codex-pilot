@@ -3,9 +3,9 @@ import { api } from "../lib/api.js";
 
 export type CodexCatalog = { models: Record<string, string>; modelLevels: string[]; reasoningLevels: string[] };
 const fallback: CodexCatalog = {
-  models: { luna: "Luna", terra: "Terra", sol: "Sol" },
-  modelLevels: ["luna", "terra", "sol"],
-  reasoningLevels: ["low", "medium", "high", "xhigh"]
+  models: { luna: "gpt-6-luna", sol: "gpt-6-sol" },
+  modelLevels: ["luna", "sol"],
+  reasoningLevels: ["low", "medium", "high"]
 };
 let cached = fallback;
 

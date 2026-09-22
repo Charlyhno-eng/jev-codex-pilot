@@ -49,5 +49,6 @@ This project now includes modular web components and styles, dedicated tests, En
 - Added typed JEV decision offload, native Codex shell gating, and advisory tool-result and pre-compaction context review with fail-open behavior.
 - Expanded the English README with a transparent, workflow-focused account of each token-efficiency mechanism and its measurable limits.
 - Added concise, conservative token-saving ranges to the English README for Codex usage and net LLM usage.
+- Added shared model and reasoning settings in `config/model.toml`, with Luna 6, Sol 6, and configurable effort routing across the app.
 
 Keep future delivery notes concise and append one English bullet here for each completed feature or change.

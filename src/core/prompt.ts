@@ -1,5 +1,5 @@
 import type { JevAnalysis, Job, JobAttachment, TaskSpec } from "./types.js";
-import { codexModelId } from "./codex-models.js";
+import { codexModelId, MODEL_LEVELS, REASONING_LEVELS } from "./codex-models.js";
 
 function section(title: string, values: string[]) { return values.length ? `\n${title}:\n${values.map(x => `- ${x}`).join("\n")}` : ""; }
 
@@ -14,7 +14,7 @@ export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attac
     "Start with AGENTS.md and the selected implementation files. Read README.md when updating it. Read another file only when a direct import, dependency, or concrete task requirement points to it. Avoid repository-wide reads and searches.",
     "Choose the implementation and exact files yourself from the project architecture.",
     "Focus this turn on implementation. Ask JEV to decide on tests by ending the turn; do not run tests or builds during implementation. JEV will supply the exact targeted verification command when needed.",
-    "If implementation needs another Codex turn with a different model or reasoning effort, end your final message with JEV_ROUTE=<tier>:<effort> (tiers: luna, terra, sol; efforts: low, medium, high, xhigh). Request this only when useful, and leave the remaining work for that next turn. Otherwise complete the implementation in this turn.",
+    `If implementation needs another Codex turn with a different model or reasoning effort, end your final message with JEV_ROUTE=<model>:<effort> (models: ${MODEL_LEVELS.join(", ")}; efforts: ${REASONING_LEVELS.join(", ")}). Request this only when useful, and leave the remaining work for that next turn. Otherwise complete the implementation in this turn.`,
     "\nFollow AGENTS.md. Briefly explain any scope expansion.",
     "Before finishing, update the target project's root AGENTS.md and README.md in English.",
     "AGENTS.md is mandatory: append exactly one concise English delivery-log bullet for this ticket under 'JEV Codex Pilot delivery log'. Create that section if it is missing.",
@@ -45,7 +45,7 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
     "Start with AGENTS.md and the selected implementation files. Read README.md when updating it. Read another file only when a direct import, dependency, or concrete task requirement points to it. Avoid repository-wide reads and searches.",
     "Choose the implementation and exact files from the project architecture.",
     "Focus this turn on implementation. Ask JEV to decide on tests by ending the turn; do not run tests or builds during implementation. JEV will supply the exact targeted verification command when needed.",
-    "If implementation needs another Codex turn with a different model or reasoning effort, end your final message with JEV_ROUTE=<tier>:<effort> (tiers: luna, terra, sol; efforts: low, medium, high, xhigh). Request this only when useful, and leave the remaining work for that next turn. Otherwise complete the implementation in this turn.",
+    `If implementation needs another Codex turn with a different model or reasoning effort, end your final message with JEV_ROUTE=<model>:<effort> (models: ${MODEL_LEVELS.join(", ")}; efforts: ${REASONING_LEVELS.join(", ")}). Request this only when useful, and leave the remaining work for that next turn. Otherwise complete the implementation in this turn.`,
     "Follow AGENTS.md. Briefly explain any scope expansion.",
     "Before finishing, update the target project's root AGENTS.md and README.md in English.",
     "AGENTS.md is mandatory: append exactly one concise English delivery-log bullet for each numbered ticket under 'JEV Codex Pilot delivery log'. Create that section if it is missing.",

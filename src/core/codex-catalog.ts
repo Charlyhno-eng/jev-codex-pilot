@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { codexModelId } from "./codex-models.js";
+import { codexModelId, MODEL_LEVELS } from "./codex-models.js";
 import type { CodexModel } from "./types.js";
 
 type ModelEntry = { model?: string; id?: string; displayName?: string; upgrade?: string; supportedReasoningEfforts?: Array<{ reasoningEffort: string }> };
@@ -43,8 +43,9 @@ export function availableCodexModels(): Promise<ModelEntry[]> {
 export function selectCodexModelId(tier: CodexModel, models: ModelEntry[]): string {
   const configured = codexModelId(tier);
   if (process.env[`JEV_CODEX_MODEL_${tier.toUpperCase()}`]?.trim()) return configured;
+  if (!MODEL_LEVELS.includes(tier)) return configured;
   if (!models.length) return configured;
-  const entries = models.filter(entry => (entry.model ?? entry.id) && (entry.displayName?.toLowerCase().includes(tier) || (entry.model ?? entry.id)!.toLowerCase().endsWith(`-${tier}`)));
+  const entries = models.filter(entry => (entry.model ?? entry.id) && (entry.displayName?.toLowerCase().includes(tier.toLowerCase()) || (entry.model ?? entry.id)!.toLowerCase().endsWith(`-${tier.toLowerCase()}`)));
   const exact = entries.find(entry => (entry.model ?? entry.id) === configured);
   if (exact) return exact.model ?? exact.id!;
   entries.sort((a, b) => (b.model ?? b.id ?? "").localeCompare(a.model ?? a.id ?? "", undefined, { numeric: true }));

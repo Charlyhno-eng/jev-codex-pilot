@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { codexModelId, REASONING_LEVELS } from "./codex-models.js";
+import { codexModelId, MODEL_LEVELS, REASONING_LEVELS, reasoningAt, reasoningIndex } from "./codex-models.js";
 import { activeCodexModelId } from "./codex-catalog.js";
 import { readCodexStatusSnapshot } from "./codex-status.js";
 import { existsSync } from "node:fs";
@@ -16,7 +16,7 @@ import type { CodexAccountUsage, CodexModel, CodexStatusSnapshot, CodexUsage, Ex
 type JsonEvent = Record<string, unknown> & { type?: string; item?: Record<string, unknown> };
 type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
 type CodexRateLimit = { available: boolean; reached: boolean; resetsAt?: string; unavailableReason?: string };
-const reasoningRank = Object.fromEntries(REASONING_LEVELS.map((level, index) => [level, index])) as Record<Reasoning, number>;
+const reasoningRank = (level: Reasoning) => reasoningIndex(level);
 
 function totalCodexTokens(usage?: CodexUsage) {
   if (!usage) return undefined;
@@ -33,10 +33,11 @@ function median(values: number[]) {
 function estimateExecutionTokens(prompt: string, jobs: Job[], reasoning: Reasoning, history: Job[]) {
   const promptTokens = Math.ceil(prompt.length / 4);
   const complexityReserve = { trivial: 300, low: 700, medium: 1_400, high: 2_600, very_high: 4_500 };
-  const reasoningReserve = { low: 300, medium: 700, high: 1_400, xhigh: 2_500 };
+  const reasoningReserve: Record<string, number> = { low: 300, medium: 700, high: 1_400, xhigh: 2_500 };
   const scopeReserve = jobs.reduce((total, job) => total + ((job.analysis?.context_files.length ?? 0) + (job.analysis?.files_to_modify.length ?? 0)) * 80, 0);
   const workReserve = jobs.reduce((total, job) => total + complexityReserve[job.analysis!.complexity], 0);
-  const scopeEstimate = Math.max(1_000, Math.ceil((promptTokens + scopeReserve + workReserve + reasoningReserve[reasoning] + 500) / 100) * 100);
+  const effortReserve = reasoningReserve[reasoning] ?? 300 + reasoningIndex(reasoning) * 500;
+  const scopeEstimate = Math.max(1_000, Math.ceil((promptTokens + scopeReserve + workReserve + effortReserve + 500) / 100) * 100);
   const comparable = history
     .map(job => job.execution?.metrics ? { ...job.execution.metrics, actualTokens: totalCodexTokens(job.execution.usage) ?? job.execution.metrics.actualTokens } : undefined)
     .filter((metrics): metrics is NonNullable<typeof metrics> => Boolean(metrics?.actualTokens && metrics.estimatedTokens))
@@ -364,12 +365,12 @@ export class Orchestrator {
     const first = this.queue.get(snapshot[start].id)!;
     const room = Math.max(1, 3 - this.queue.successesSinceCompaction(first.projectId));
     const group = [first];
-    let minimum = reasoningRank[first.analysis!.reasoning];
+    let minimum = reasoningRank(first.analysis!.reasoning);
     let maximum = minimum;
     for (let index = start + 1; index < snapshot.length && group.length < Math.min(3, room); index++) {
       const candidate = this.queue.get(snapshot[index].id);
       if (!candidate || candidate.status !== "PENDING" || !candidate.analysis || candidate.projectId !== first.projectId || candidate.analysis.model !== first.analysis!.model) break;
-      const rank = reasoningRank[candidate.analysis.reasoning];
+      const rank = reasoningRank(candidate.analysis.reasoning);
       // Direction does not matter: Medium → Low is as compatible as Low → Medium.
       if (Math.max(maximum, rank) - Math.min(minimum, rank) > 1) break;
       minimum = Math.min(minimum, rank); maximum = Math.max(maximum, rank); group.push(candidate);
@@ -390,7 +391,7 @@ export class Orchestrator {
     if (tailIndex < 0) return snapshot;
     const room = Math.max(1, 3 - this.queue.successesSinceCompaction(tail.projectId));
     const result = [...snapshot];
-    let minimum = reasoningRank[tail.analysis.reasoning];
+    let minimum = reasoningRank(tail.analysis.reasoning);
     let maximum = minimum;
     for (let index = tailIndex + 1; index < ordered.length && result.length - snapshot.length < Math.max(0, room - 1); index++) {
       const candidate = this.queue.get(ordered[index].id);
@@ -398,7 +399,7 @@ export class Orchestrator {
       if (candidate.status !== "PENDING") break;
       const prepared = candidate.analysis ? candidate : (await this.prepare(candidate))!;
       if (prepared.analysis!.model !== tail.analysis.model) break;
-      const rank = reasoningRank[prepared.analysis!.reasoning];
+      const rank = reasoningRank(prepared.analysis!.reasoning);
       if (Math.max(maximum, rank) - Math.min(minimum, rank) > 1) break;
       minimum = Math.min(minimum, rank);
       maximum = Math.max(maximum, rank);
@@ -418,9 +419,9 @@ export class Orchestrator {
     const model = first.analysis!.model;
     const modelId = await activeCodexModelId(model);
     if (prepared.some(job => job.projectId !== first.projectId || job.projectPath !== first.projectPath || job.analysis!.model !== model)) throw new Error("Only tasks from the same project with the same model can share a Codex prompt.");
-    const ranks = prepared.map(job => reasoningRank[job.analysis!.reasoning]);
+    const ranks = prepared.map(job => reasoningRank(job.analysis!.reasoning));
     if (Math.max(...ranks) - Math.min(...ranks) > 1) throw new Error("Grouped tasks may differ by at most one reasoning level.");
-    const reasoning = prepared.map(job => job.analysis!.reasoning).sort((a, b) => reasoningRank[b] - reasoningRank[a])[0];
+    const reasoning = prepared.map(job => job.analysis!.reasoning).sort((a, b) => reasoningRank(b) - reasoningRank(a))[0];
     const groupId = prepared.length > 1 ? randomUUID() : undefined;
     const prompt = prepared.length === 1 ? buildCodexPrompt(first.tasks, first.analysis!, first.attachments) : buildCodexGroupPrompt(prepared);
     const projectBefore = snapshotProject(first.projectPath);
@@ -485,8 +486,10 @@ export class Orchestrator {
         }
         const item = parsed.item ?? {};
         if (activeStage === "implementation" && parsed.type === "item.completed" && item.type === "agent_message") {
-          const requested = String(item.text ?? "").match(/(?:^|\n)JEV_ROUTE=(luna|terra|sol):(low|medium|high|xhigh)\s*$/);
-          requestedRoute = requested ? { tier: requested[1] as CodexModel, effort: requested[2] as Reasoning } : undefined;
+          const requested = String(item.text ?? "").match(/(?:^|\n)JEV_ROUTE=([\w-]+):([\w-]+)\s*$/);
+          requestedRoute = requested && MODEL_LEVELS.includes(requested[1]) && REASONING_LEVELS.includes(requested[2])
+            ? { tier: requested[1], effort: requested[2] }
+            : undefined;
         }
         if (activeStage === "verification" && parsed.type === "item.completed" && item.type === "command_execution") {
           const command = String(item.command ?? "");
@@ -592,7 +595,7 @@ export class Orchestrator {
             const checkedAt = new Date().toISOString();
             this.updateGroup(prepared, execution => ({ ...execution, metrics: execution.metrics ? { ...execution.metrics, stoppedAfterValidation: true } : execution.metrics, events: [...execution.events, { id: randomUUID(), timestamp: checkedAt, kind: "system", title: "JEV skipped tests", detail: verificationSkipReason, status: "success" }] }));
           } else {
-            const checked = await runStage("verification", model, "low", verificationInstruction(command));
+            const checked = await runStage("verification", model, reasoningAt(0), verificationInstruction(command));
             const firstDecision = verificationDecision(verificationOutcome, verificationCommands);
             success = (checked.code === 0 && !checked.error && !stageTurnFailed) || (firstDecision.kind === "environment_blocked" && firstDecision.blockers.length > 0 && !checked.error);
             if (!success) failureMessage = checked.error ?? `Codex verification turn exited with code ${checked.code}`;
@@ -614,8 +617,10 @@ export class Orchestrator {
               };
               if (success && decision.kind !== "failed") recordValidation(decision);
               for (let attempt = 0; success && decision.kind === "failed" && attempt < 2; attempt++) {
-                const repairTier = attempt === 0 ? model : "sol";
-                const repairEffort = attempt === 0 ? REASONING_LEVELS[Math.max(reasoningRank[reasoning], reasoningRank.high)] : "high";
+                const repairTier = attempt === 0 ? model : (MODEL_LEVELS[MODEL_LEVELS.length - 1] ?? model);
+                const configuredHigh = REASONING_LEVELS.indexOf("high");
+                const strongEffortIndex = configuredHigh >= 0 ? configuredHigh : REASONING_LEVELS.length - 1;
+                const repairEffort = reasoningAt(attempt === 0 ? Math.max(reasoningIndex(reasoning), strongEffortIndex) : strongEffortIndex);
                 const repaired = await runStage("repair", repairTier, repairEffort, `The previous targeted verification found a real failing check. Diagnose the root cause and fix the current ticket${attempt ? ". A previous repair did not resolve it; reconsider the diagnosis and inspect the exact failing output." : "."} Check whether a missing tool or dependency explains a failure before changing application code. Inspect only changed files and direct dependencies. Preserve scope and update documentation if the fix changes it. Do not run tests; JEV will review the changed files again.`);
                 success = repaired.code === 0 && !repaired.error && !stageTurnFailed && !reportedFailure;
                 if (!success) { failureMessage = repaired.error ?? `Codex repair turn exited with code ${repaired.code}`; break; }
