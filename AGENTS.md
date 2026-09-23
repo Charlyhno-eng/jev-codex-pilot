@@ -19,3 +19,4 @@
 - Cached unchanged context file fingerprints per Codex thread and invalidated them on changes or thread resets.
 - Stopped repetitive Codex command and message loops without project progress and prevented automatic loop retries.
 - Replaced standalone delivery with six-level complexity scoring and configurable per-level Codex model and reasoning routes.
+- Clarified TOML model routing, DeepSWE benchmark context, measured token reporting, and per-ticket Telegram status in the README.
