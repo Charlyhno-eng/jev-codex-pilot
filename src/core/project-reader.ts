@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, relative, resolve } from "node:path";
 import type { ProjectFile } from "./types.js";
 
@@ -26,4 +27,17 @@ export function readProjectFile(projectPath: string, file: string): string | und
   const target = resolve(projectPath, file);
   if (!target.startsWith(`${resolve(projectPath)}/`) && target !== resolve(projectPath)) return undefined;
   return existsSync(target) ? readFileSync(target, "utf8") : undefined;
+}
+
+/** Hashes a regular project file without retaining its contents or following symlinks outside the project. */
+export function projectFileFingerprint(projectPath: string, file: string): string | undefined {
+  try {
+    const root = realpathSync(projectPath);
+    const target = resolve(projectPath, file);
+    if (target === resolve(projectPath) || !target.startsWith(`${resolve(projectPath)}/`) || !lstatSync(target).isFile()) return undefined;
+    const actual = realpathSync(target);
+    if (!actual.startsWith(`${root}/`)) return undefined;
+    if (statSync(actual).size > 2 * 1024 * 1024) return undefined;
+    return createHash("sha256").update(readFileSync(actual)).digest("hex");
+  } catch { return undefined; }
 }

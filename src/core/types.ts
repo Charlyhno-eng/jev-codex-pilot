@@ -1,8 +1,8 @@
-export type Complexity = "trivial" | "low" | "medium" | "high" | "very_high";
+export type Complexity = 0 | 1 | 2 | 3 | 4 | 5;
 export type CodexModel = string;
 export type Reasoning = string;
 export type JobStatus = "PENDING" | "RUNNING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
-export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "quota" | "interruption" | "telegram" | "jev";
+export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "loop" | "quota" | "interruption" | "telegram" | "jev";
 export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";
 
 export interface TaskSpec {
@@ -101,10 +101,8 @@ export interface CodexExecutionGroup {
 
 export interface JevAnalysis {
   complexity: Complexity;
-  /** Advisory clarity of the task wording within the project's AGENTS.md context. */
-  precision_score?: number;
-  /** Advisory score for whether the ticket describes one coherent unit of work. */
-  decomposition_score?: number;
+  /** Advisory score for how clearly the ticket describes its expected result. */
+  outcome_clarity_score?: number;
   task_types: string[];
   model: CodexModel;
   reasoning: Reasoning;
@@ -126,6 +124,8 @@ export interface Job {
   projectId: string;
   batchId?: string;
   order?: number;
+  submittedOrder?: number;
+  fixedOrder?: boolean;
   projectPath: string;
   tasks: TaskSpec[];
   attachments?: JobAttachment[];

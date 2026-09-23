@@ -1,20 +1,14 @@
-import { createGateway } from "@ai-sdk/gateway";
 import { experimental_evaluate as evaluate } from "ai";
 import type { AppConfig } from "./app-config.js";
 import { JEV_INPUT_USD_PER_MILLION_TOKENS } from "./jev-pricing.js";
 import type { Complexity, TaskType } from "./types.js";
+import { createVercelJevModel, VERCEL_AI_GATEWAY_EVALUATOR_ID, VERCEL_AI_GATEWAY_PROVIDER_ID } from "./vercel-ai-gateway.js";
 
 export type JevDecision = {
   taskType: TaskType;
   complexity: Complexity;
-  taskPrecision?: number;
-  decompositionScore?: number;
+  outcomeClarityScore?: number;
   relevantFiles?: string[];
-  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
-};
-
-export type JevTaskPrecision = {
-  score: number;
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 };
 
@@ -22,8 +16,8 @@ export type JevProvider = {
   id: string;
   inputUsdPerMillionTokens: number;
   evaluate(state: string): Promise<JevDecision>;
-  evaluateTaskPrecision(state: string): Promise<JevTaskPrecision>;
   evaluateVerification(state: string): Promise<boolean>;
+  evaluateContinuity(state: string): Promise<"related" | "unrelated" | "uncertain">;
 };
 
 const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
@@ -42,47 +36,36 @@ const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
   research: "Investigation, comparison, or reflection where implementation is not the primary requested outcome."
 };
 
-export const TASK_PRECISION_CRITERIA = [
-  "20% — no actionable outcome or recognizable change is stated.",
-  "20% — the request is too vague to identify the intended result.",
-  "40% — a broad goal is recognizable, but the affected behavior remains unclear.",
-  "60% — an actionable goal is stated, but an important choice about the outcome remains open.",
-  "80% — the requested change and affected area are clear; normal implementation choices can be inferred from project context.",
-  "80% — the intended behavior is clear enough to implement with routine assumptions.",
-  "80% — a concrete, scoped outcome is described; technical steps need not be prescribed.",
-  "80% — the change has clear boundaries and can be implemented without further clarification.",
-  "100% — the outcome, boundaries, and relevant constraints are explicit.",
-  "100% — the requested result and success conditions are exceptionally clear in context."
+export const COMPLEXITY_CRITERIA = [
+  "0 — Documentation, running tests, installation commands, or similarly mechanical work.",
+  "1 — Simple or semi-structured work: small refactor, small feature, technical Q&A, short script, or extraction.",
+  "2 — Medium feature, standard debugging, limited multi-file work, or simple business workflow.",
+  "3 — Complex multi-step feature, non-trivial refactor, standard agentic coding, or multi-tool workflow.",
+  "4 — Difficult or long task: architecture, hard debugging, long-horizon coding, or serious computer use.",
+  "5 — Frontier or critical task: major architecture, security, science, very long horizon, or demanding computer use."
 ] as const;
 
-const TASK_PRECISION_PERCENTAGES = [20, 20, 40, 60, 80, 80, 80, 80, 100, 100] as const;
-const TASK_DECOMPOSITION_PERCENTAGES = [0, 10, 20, 35, 45, 55, 65, 75, 90, 100] as const;
-export const TASK_DECOMPOSITION_CRITERIA = [
-  "0% — several unrelated outcomes are mixed in one ticket.",
-  "10% — many independent features or projects are combined.",
-  "20% — multiple substantial deliverables should be separated.",
-  "35% — the ticket spans several distinct behaviors with separate acceptance checks.",
-  "45% — a broad task could be split into clearer, independently useful tickets.",
-  "55% — mostly one goal, with a few separable extras.",
-  "65% — one main outcome with related supporting steps.",
-  "75% — a coherent unit of work with clear boundaries.",
-  "90% — a focused ticket whose steps belong together.",
-  "100% — one independently deliverable outcome with no unrelated work."
+export const OUTCOME_CLARITY_CRITERIA = [
+  "0% — the expected result cannot be identified.",
+  "10% — the ticket names a vague topic without describing a result.",
+  "20% — the intended change is highly ambiguous.",
+  "30% — a broad goal is recognizable, but the expected behavior is unclear.",
+  "40% — the outcome is partly described, with major choices still open.",
+  "50% — the general result is clear, but an important behavior remains ambiguous.",
+  "60% — the expected change is actionable with some assumptions.",
+  "70% — the result is clear; a few routine details can be inferred.",
+  "80% — a concrete expected result and its boundaries are clear.",
+  "100% — the expected result, boundaries, and success conditions are explicit."
 ] as const;
-/** Performs this backend operation. */
-export function taskPrecisionPercentage(level: number) { return TASK_PRECISION_PERCENTAGES[Math.max(0, Math.min(TASK_PRECISION_PERCENTAGES.length - 1, Math.round(level)))]!; }
 
-const TASK_PRECISION_INSTRUCTIONS = "Score the clarity of this single task in its AGENTS.md project context. A concrete requested change with an identifiable affected area normally deserves 80%, even when technical steps and acceptance tests are unstated. Use 60% when one important outcome choice remains open, 40% for a broad goal without clear affected behavior, and 20% only when the result cannot be identified. Reserve 100% for exceptionally explicit outcomes and constraints. Do not penalize implementation difficulty, missing file names, or routine assumptions. This score is advisory only.";
-
-/** Converts a task-breakdown score to its visible percentage. */
-export function taskDecompositionPercentage(level: number) { return TASK_DECOMPOSITION_PERCENTAGES[Math.max(0, Math.min(TASK_DECOMPOSITION_PERCENTAGES.length - 1, Math.round(level)))]!; }
+const SCORE_PERCENTAGES = [0, 10, 20, 30, 40, 50, 60, 70, 80, 100] as const;
+export function scorePercentage(level: number) { return SCORE_PERCENTAGES[Math.max(0, Math.min(SCORE_PERCENTAGES.length - 1, Math.round(level)))]!; }
 
 /** Performs this backend operation. */
 export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
-  if (!config.aiGatewayApiKey) throw new Error("Configure a Vercel AI Gateway API key before analyzing a task.");
-  const model = createGateway({ apiKey: config.aiGatewayApiKey }).evaluationModel("typesafe-ai/jev");
+  const model = createVercelJevModel(config.aiGatewayApiKey);
   return {
-    id: "vercel-ai-gateway/typesafe-ai/jev",
+    id: VERCEL_AI_GATEWAY_EVALUATOR_ID,
     inputUsdPerMillionTokens: JEV_INPUT_USD_PER_MILLION_TOKENS,
     async evaluate(state) {
       const project = JSON.parse(state) as { project?: { fileCandidates?: string[] } };
@@ -98,25 +81,14 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
             instructions: "Choose the single primary software-development task type. Classify the requested outcome, not incidental steps. A request for a polished interface is UI/UX even when it also requires code."
           },
           complexity: {
-            type: "choice",
-            criteria: {
-              trivial: "A tiny deterministic change or lookup with negligible implementation judgment.",
-              low: "A routine, bounded task affecting a small and well-understood area.",
-              medium: "A normal feature or change requiring several coordinated implementation decisions.",
-              high: "A broad or technically difficult task spanning important subsystems or significant uncertainty.",
-              very_high: "An exceptional, project-wide task with substantial ambiguity, risk, or deep cross-system reasoning."
-            },
-            instructions: "Estimate only this one task. Do not inflate complexity because other tasks may exist, the repository is large, the task is UI work, or the code uses Python. Moving, resizing, or repositioning a few buttons or other UI elements is trivial. Use low for clearly defined routine development such as a small endpoint, component, script, CRUD operation, or unit test."
-          },
-          taskPrecision: {
             type: "score",
-            criteria: TASK_PRECISION_CRITERIA,
-            instructions: TASK_PRECISION_INSTRUCTIONS
+            criteria: COMPLEXITY_CRITERIA,
+            instructions: "Score this task alone from 0 to 5. Judge the actual reasoning and implementation difficulty, not repository size, language, or other queued tasks. Use 0 for documentation, running tests, and installation commands; 1 for clearly bounded routine changes."
           },
-          decomposition: {
+          outcomeClarity: {
             type: "score",
-            criteria: TASK_DECOMPOSITION_CRITERIA,
-            instructions: "Assess whether this single ticket is sufficiently split for one Codex task. A high score means one coherent deliverable; a low score suggests dividing independent outcomes into separate tickets. Do not penalize technical difficulty, number of files, or necessary implementation steps. Advisory only; never block execution."
+            criteria: OUTCOME_CLARITY_CRITERIA,
+            instructions: "Score how clearly this ticket describes the expected result, using its project AGENTS.md context. Judge the outcome and observable behavior, not how many implementation details or file names are specified. This is advisory only."
           },
           primaryFile: {
             type: "choice",
@@ -135,27 +107,9 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
         .filter((path): path is string => Boolean(path));
       return {
         taskType: result.answers.taskType.choice,
-        complexity: result.answers.complexity.choice,
-        taskPrecision: taskPrecisionPercentage(result.answers.taskPrecision.score),
-        decompositionScore: taskDecompositionPercentage(result.answers.decomposition.score),
+        complexity: Math.max(0, Math.min(5, Math.round(result.answers.complexity.score))) as Complexity,
+        outcomeClarityScore: scorePercentage(result.answers.outcomeClarity.score),
         relevantFiles: [...new Set(chosen)],
-        usage: result.usage
-      };
-    },
-    async evaluateTaskPrecision(state) {
-      const result = await evaluate({
-        model,
-        state,
-        questions: {
-          precision: {
-            type: "score",
-            criteria: TASK_PRECISION_CRITERIA,
-            instructions: TASK_PRECISION_INSTRUCTIONS
-          }
-        }
-      });
-      return {
-        score: taskPrecisionPercentage(result.answers.precision.score),
         usage: result.usage
       };
     },
@@ -175,12 +129,30 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
         }
       });
       return result.answers.runAffectedTests.choice === "yes";
+    },
+    async evaluateContinuity(state) {
+      const result = await evaluate({
+        model,
+        state,
+        questions: {
+          continuity: {
+            type: "choice",
+            criteria: {
+              related: "The next task continues the completed feature, fixes its outcome, or needs decisions and implementation context from it.",
+              unrelated: "The next task is independent and can start from the project files and instructions without the completed task's conversation.",
+              uncertain: "The task descriptions and likely files do not establish whether the prior conversation will help."
+            },
+            instructions: "Compare only the completed task and the next pending task in this project. Shared repository, common documentation, or a broad category alone does not make tasks related. Choose unrelated only when independence is clear; otherwise choose uncertain."
+          }
+        }
+      });
+      return result.answers.continuity.choice;
     }
   };
 }
 
 /** Performs this backend operation. */
 export function createConfiguredJevProvider(config: AppConfig): JevProvider {
-  if (config.jevProvider === "vercel-ai-gateway") return createVercelGatewayJevProvider(config);
+  if (config.jevProvider === VERCEL_AI_GATEWAY_PROVIDER_ID) return createVercelGatewayJevProvider(config);
   throw new Error(`Unknown JEV provider "${config.jevProvider}". Add its adapter in src/core/jev-provider.ts.`);
 }

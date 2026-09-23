@@ -3,7 +3,7 @@ import { buildCodexGroupPrompt, buildCodexPrompt } from "../../src/core/prompt.j
 import type { JevAnalysis } from "../../src/core/types.js";
 
 const analysis: JevAnalysis = {
-  complexity: "low",
+  complexity: 1,
   task_types: ["feature"],
   model: "luna",
   reasoning: "low",
@@ -14,19 +14,26 @@ const analysis: JevAnalysis = {
 };
 
 describe("Codex completion documentation", () => {
-  it("requires AGENTS.md and README.md updates for every individual ticket", () => {
+  it("keeps AGENTS.md concise for an individual ticket", () => {
     const prompt = buildCodexPrompt([{ description: "Adjust a button" }], analysis);
-    expect(prompt).toContain("root AGENTS.md and README.md in English");
-    expect(prompt).toContain("append exactly one concise English delivery-log bullet");
-    expect(prompt).toContain("If it is missing, create a concise English README.md");
+    expect(prompt).toContain("Edit it only when lasting project instructions change or AGENTS.md explicitly requires a delivery note");
+    expect(prompt).toContain("Update README.md in English when this ticket changes documented behavior or setup");
+    expect(prompt).not.toContain("delivery-log bullet");
   });
 
-  it("requires one English delivery-log line per grouped ticket", () => {
+  it("reuses only verified unchanged context in the same thread", () => {
+    const prompt = buildCodexPrompt([{ description: "Adjust a button" }], { ...analysis, context_files: ["AGENTS.md", "src/button.ts"] }, [], ["AGENTS.md"]);
+    expect(prompt).toContain("Files unchanged since earlier successful work in this Codex thread");
+    expect(prompt).toContain("- AGENTS.md");
+    expect(prompt).toContain("Read selected files absent from the unchanged list");
+  });
+
+  it("keeps AGENTS.md concise for grouped tickets", () => {
     const prompt = buildCodexGroupPrompt([
       { tasks: [{ description: "Adjust a button" }], analysis },
       { tasks: [{ description: "Update the color" }], analysis }
     ]);
-    expect(prompt).toContain("one concise English delivery-log bullet for each numbered ticket");
-    expect(prompt).toContain("root AGENTS.md and README.md in English");
+    expect(prompt).toContain("Edit it only when lasting project instructions change or AGENTS.md explicitly requires a delivery note");
+    expect(prompt).toContain("Update README.md in English when these tickets change documented behavior or setup");
   });
 });

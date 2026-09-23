@@ -55,10 +55,13 @@ describe("Telegram bot", () => {
     const fetchMock = telegramMock();
     vi.stubGlobal("fetch", fetchMock);
     const bot = new TelegramBot({ config: () => config, listProjects: () => [project], listJobs: () => [], createTicket: () => { throw new Error("not expected"); } }, mkdtempSync(join(tmpdir(), "jev-telegram-")));
-    await bot.notifyDevelopmentFinished(project, [{ ...pendingJob(), status: "SUCCESS" }, { ...pendingJob(), id: "failed", status: "FAILED" }]);
+    await bot.notifyDevelopmentFinished(project, [{ ...pendingJob(), status: "SUCCESS", execution: { codexStatus: { capturedAt: "2026-09-23T00:00:00.000Z", context: { usedTokens: 25_000, windowTokens: 100_000 }, fiveHour: { remainingPercent: 62 } } } as any }, { ...pendingJob(), id: "failed", status: "FAILED" }]);
     const sent = fetchMock.mock.calls.filter(call => String(call[0]).endsWith("/sendMessage"));
     expect(sent).toHaveLength(1);
     expect(JSON.parse(String(sent[0][1]?.body))).toMatchObject({ chat_id: "42", text: expect.stringContaining("1 completed · 1 failed") });
+    const notice = JSON.parse(String(sent[0][1]?.body)).text as string;
+    expect(notice).toContain("context 75% left · 5h limit 62% left");
+    expect(notice).toContain("context unavailable · 5h limit unavailable");
   });
   it("pairs only from /start, clears that chat, and opens the dashboard", async () => {
     const fetchMock = telegramMock();

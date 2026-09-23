@@ -3,7 +3,28 @@
 [models]
 luna = "gpt-6-luna"
 sol = "gpt-6-sol"
+astra = "gpt-6-astra"
 
 # Reasoning choices are ordered from lowest to highest effort.
 [reasoning]
-levels = ["low", "medium", "high"]
+levels = ["low", "medium", "high", "xhigh", "max"]
+
+# Each level lists permitted model:effort pairs. The first pair is JEV's default.
+# Edit model IDs above, then these routes when models or recommendations change.
+[complexity.0]
+routes = ["luna:low", "luna:medium"]
+
+[complexity.1]
+routes = ["luna:medium", "luna:high"]
+
+[complexity.2]
+routes = ["luna:high", "luna:max", "sol:low", "sol:medium"]
+
+[complexity.3]
+routes = ["sol:medium", "sol:high"]
+
+[complexity.4]
+routes = ["sol:xhigh", "astra:low", "astra:medium"]
+
+[complexity.5]
+routes = ["astra:high"]

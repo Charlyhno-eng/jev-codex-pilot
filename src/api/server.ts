@@ -5,19 +5,17 @@ import { execFileSync } from "node:child_process";
 import { JobQueue } from "../core/queue.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { ProjectStore } from "../core/projects.js";
-import { fetchGatewayCredits } from "../core/gateway-credits.js";
+import { fetchVercelGatewayCredits, VERCEL_AI_GATEWAY_DASHBOARD_URL } from "../core/vercel-ai-gateway.js";
 import { AppConfigStore, maskedApiKey } from "../core/app-config.js";
 import { listProjectFiles } from "../core/project-reader.js";
 import { readProjectDiff } from "../core/git-diff.js";
 import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
-import type { JevAnalysis, TaskSpec } from "../core/types.js";
-import { analyze } from "../core/analyzer.js";
-import { estimateJevInputCost } from "../core/jev-pricing.js";
+import type { TaskSpec } from "../core/types.js";
 import { TelegramBot } from "../core/telegram-bot.js";
-import { MODEL_LEVELS, REASONING_LEVELS } from "../core/codex-models.js";
+import { COMPLEXITY_ROUTES, MODEL_LEVELS, REASONING_LEVELS } from "../core/codex-models.js";
 import { availableCodexModels, selectCodexModelId } from "../core/codex-catalog.js";
-import { logJev, logJevError } from "../core/jev-logger.js";
+import { logJev, logJevError, logSession } from "../core/jev-logger.js";
 import { acquireApiInstance } from "../core/single-instance.js";
 
 await acquireApiInstance(resolve(process.cwd(), ".jev"));
@@ -48,19 +46,7 @@ const telegram = new TelegramBot({
   pairChat: chatId => { appConfig.write({ telegramAllowedChatId: chatId, telegramEnabled: true }); }
 }, resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
-const sessionJevPrecisionUsage = { checks: 0, inputTokens: 0, estimatedCostUsd: 0 };
-const draftAnalyses = new Map<string, { analysis: JevAnalysis; createdAt: number }>();
 const port = Number(process.env.PORT ?? 3000);
-
-/** Consumes a recent full JEV analysis for a draft task. */
-function consumeDraftAnalysis(projectId: string, description: string) {
-  const now = Date.now();
-  for (const [key, value] of draftAnalyses) if (now - value.createdAt > 10 * 60_000) draftAnalyses.delete(key);
-  const key = `${projectId}:${description.trim()}`;
-  const analysis = draftAnalyses.get(key)?.analysis;
-  if (analysis) draftAnalyses.delete(key);
-  return analysis;
-}
 
 /** Checks whether the folder belongs to a Git worktree. */
 function isGitRepository(path: string) {
@@ -134,12 +120,17 @@ function recoverInterruptedWork() {
 
 /** Restarts eligible tickets after Codex reports that its session limit has reset. */
 async function resumeSessionPausedWork() {
-  const resumed = await orchestrator.resumeSessionPausedJobs();
-  for (const job of resumed) {
-    logJev(`Codex session reset; automatically resuming task ${job.id.slice(0, 8)}`);
-    void runWithNotification(job.id, true);
-  }
+  if (resumingSessionPausedWork) return;
+  resumingSessionPausedWork = true;
+  try {
+    const resumed = await orchestrator.resumeSessionPausedJobs();
+    for (const job of resumed) {
+      logSession(`Codex session reset; automatically resuming task ${job.id.slice(0, 8)}`);
+      void runWithNotification(job.id, true);
+    }
+  } finally { resumingSessionPausedWork = false; }
 }
+let resumingSessionPausedWork = false;
 
 /** Sends a JSON API response. */
 function json(response: ServerResponse, status: number, data: unknown) {
@@ -160,7 +151,7 @@ createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true });
     if (request.method === "GET" && url.pathname === "/api/codex-models") {
       const available = await availableCodexModels();
-      return json(response, 200, { models: Object.fromEntries(MODEL_LEVELS.map(tier => [tier, selectCodexModelId(tier, available)])), modelLevels: MODEL_LEVELS, reasoningLevels: REASONING_LEVELS });
+      return json(response, 200, { models: Object.fromEntries(MODEL_LEVELS.map(tier => [tier, selectCodexModelId(tier, available)])), modelLevels: MODEL_LEVELS, reasoningLevels: REASONING_LEVELS, complexityRoutes: COMPLEXITY_ROUTES });
     }
     if (request.method === "GET" && url.pathname === "/api/jobs") {
       const projectId = url.searchParams.get("projectId") ?? undefined;
@@ -172,9 +163,8 @@ createServer(async (request, response) => {
       const estimatedCostUsd = jobs.reduce((total, job) => total + (job.analysis?.evaluation_usage?.estimated_cost_usd ?? 0), 0);
       return json(response, 200, {
         analyses: jobs.length,
-        precisionChecks: sessionJevPrecisionUsage.checks,
-        inputTokens: inputTokens + sessionJevPrecisionUsage.inputTokens,
-        estimatedCostUsd: estimatedCostUsd + sessionJevPrecisionUsage.estimatedCostUsd
+        inputTokens,
+        estimatedCostUsd
       });
     }
     if (request.method === "GET" && url.pathname === "/api/projects") return json(response, 200, projects.list());
@@ -202,11 +192,11 @@ createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/billing") {
       const apiKey = appConfig.read().aiGatewayApiKey;
       if (!apiKey) return json(response, 503, { error: "Configure a Vercel AI Gateway API key in Settings to retrieve the credit balance." });
-      const balance = await fetchGatewayCredits(apiKey);
+      const balance = await fetchVercelGatewayCredits(apiKey);
       return json(response, 200, {
         balance,
         source: "gateway",
-        dashboardUrl: "https://vercel.com/ai-gateway"
+        dashboardUrl: VERCEL_AI_GATEWAY_DASHBOARD_URL
       });
     }
     if (request.method === "GET" && url.pathname === "/api/settings") {
@@ -267,7 +257,8 @@ createServer(async (request, response) => {
       return json(response, 200, { path: absolute, files, count: files.length, truncated: files.length >= 5000, hasAgents: existsSync(resolve(absolute, "AGENTS.md")), isGitRepository: hasGit, isGithubLinked: hasGit && hasGithubRemote(absolute) });
     }
     if (request.method === "POST" && url.pathname === "/api/jobs") {
-      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[] }> };
+      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[] }>; fixedOrder?: unknown };
+      if (input.fixedOrder !== undefined && typeof input.fixedOrder !== "boolean") return json(response, 400, { error: "Fixed task order must be true or false." });
       const taskInputs = Array.isArray(input.tasks) ? input.tasks.filter(task => task?.description?.trim()) : [];
       for (const task of taskInputs) attachments.validate(task.attachments);
       const tasks = taskInputs.map(task => ({ description: task.description.trim() }));
@@ -275,17 +266,9 @@ createServer(async (request, response) => {
       if (!project || !tasks.length) return json(response, 400, { error: "A saved project and at least one task are required" });
       if (!projects.hasAgents(project.id)) return json(response, 400, { error: "Describe the application and create AGENTS.md before analyzing tasks." });
       projects.touch(project.id);
-      const created = queue.createBatch(project.id, project.path, tasks);
+      const created = queue.createBatch(project.id, project.path, tasks, input.fixedOrder === true);
       for (const job of created) logJev(`Task ${job.id.slice(0, 8)} created and awaiting evaluation`);
-      const withAttachments = created.map((job, index) => {
-        const draftAnalysis = consumeDraftAnalysis(project.id, tasks[index].description);
-        if (draftAnalysis) {
-          const inputTokens = draftAnalysis.evaluation_usage?.input_tokens ?? draftAnalysis.evaluation_usage?.total_tokens ?? 0;
-          sessionJevPrecisionUsage.inputTokens = Math.max(0, sessionJevPrecisionUsage.inputTokens - inputTokens);
-          sessionJevPrecisionUsage.estimatedCostUsd = Math.max(0, sessionJevPrecisionUsage.estimatedCostUsd - estimateJevInputCost(inputTokens));
-        }
-        return queue.update(job.id, { analysis: draftAnalysis, attachments: attachments.saveForJob(job.id, taskInputs[index].attachments) })!;
-      });
+      const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments) })!);
       return json(response, 201, withAttachments);
     }
     const agentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/agents$/);
@@ -297,21 +280,6 @@ createServer(async (request, response) => {
     if (request.method === "PUT" && agentsMatch) {
       const input = await body(request) as { content?: string };
       return json(response, 200, { content: projects.updateAgents(agentsMatch[1], input.content ?? "") });
-    }
-    const taskPrecisionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/task-precision$/);
-    if (request.method === "POST" && taskPrecisionMatch) {
-      const project = projects.get(taskPrecisionMatch[1]);
-      if (!project) return json(response, 404, { error: "Project not found" });
-      if (!projects.hasAgents(project.id)) return json(response, 400, { error: "AGENTS.md is required before JEV can assess task precision." });
-      const input = await body(request) as { description?: unknown };
-      if (typeof input.description !== "string" || !input.description.trim()) return json(response, 400, { error: "A task description is required." });
-      const analysis = await analyze(project.path, [{ description: input.description.trim() }]);
-      draftAnalyses.set(`${project.id}:${input.description.trim()}`, { analysis, createdAt: Date.now() });
-      const inputTokens = analysis.evaluation_usage?.input_tokens ?? analysis.evaluation_usage?.total_tokens ?? 0;
-      sessionJevPrecisionUsage.checks += 1;
-      sessionJevPrecisionUsage.inputTokens += inputTokens;
-      sessionJevPrecisionUsage.estimatedCostUsd += estimateJevInputCost(inputTokens);
-      return json(response, 200, { precision: analysis.precision_score });
     }
     const threadControlMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/thread\/(compact|clear)$/);
     if (threadControlMatch) {
@@ -335,7 +303,7 @@ createServer(async (request, response) => {
     const [, id, action] = match; const job = queue.get(id);
     if (!job) return json(response, 404, { error: "Job not found" });
     if (request.method === "GET" && !action) return json(response, 200, job);
-    if (request.method === "POST" && action === "prepare") { const prepared = await orchestrator.prepare(job); sessionJevJobIds.add(id); return json(response, 200, prepared); }
+    if (request.method === "POST" && action === "prepare") { await orchestrator.prepare(job); sessionJevJobIds.add(id); if (job.batchId && queue.listBatch(job.batchId).every(item => item.analysis || item.status !== "PENDING")) await orchestrator.classifyBatch(job.batchId); return json(response, 200, queue.get(id)); }
     if (request.method === "POST" && action === "command") return json(response, 200, { command: await orchestrator.command(job) });
     if (request.method === "POST" && action === "skip") return json(response, 200, queue.transition(id, "SKIPPED"));
     if (request.method === "POST" && action === "archive") return json(response, 200, queue.archive(id));
@@ -389,6 +357,7 @@ createServer(async (request, response) => {
   telegram.start();
   recoverInterruptedWork();
   void resumeSessionPausedWork();
-  setInterval(() => { recoverInterruptedWork(); void resumeSessionPausedWork(); }, 60_000);
+  setInterval(recoverInterruptedWork, 60_000);
+  setInterval(() => { void resumeSessionPausedWork(); }, 5_000);
   logJev(`API ready at http://localhost:${port}`);
 });

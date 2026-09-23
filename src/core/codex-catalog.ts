@@ -45,9 +45,9 @@ export function selectCodexModelId(tier: CodexModel, models: ModelEntry[]): stri
   if (process.env[`JEV_CODEX_MODEL_${tier.toUpperCase()}`]?.trim()) return configured;
   if (!MODEL_LEVELS.includes(tier)) return configured;
   if (!models.length) return configured;
-  const entries = models.filter(entry => (entry.model ?? entry.id) && (entry.displayName?.toLowerCase().includes(tier.toLowerCase()) || (entry.model ?? entry.id)!.toLowerCase().endsWith(`-${tier.toLowerCase()}`)));
-  const exact = entries.find(entry => (entry.model ?? entry.id) === configured);
+  const exact = models.find(entry => (entry.model ?? entry.id) === configured);
   if (exact) return exact.model ?? exact.id!;
+  const entries = models.filter(entry => (entry.model ?? entry.id) && (entry.displayName?.toLowerCase().includes(tier.toLowerCase()) || (entry.model ?? entry.id)!.toLowerCase().endsWith(`-${tier.toLowerCase()}`)));
   entries.sort((a, b) => (b.model ?? b.id ?? "").localeCompare(a.model ?? a.id ?? "", undefined, { numeric: true }));
   return entries[0]?.model ?? entries[0]?.id ?? configured;
 }

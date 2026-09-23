@@ -109,5 +109,5 @@ export class ProjectStore {
 }
 
 function initialAgents(name: string, context: string): string {
-  return `# ${name}\n\n## Product context\n\n${context}\n\n## Working instructions\n\n- Read the existing code and project documentation before making changes.\n- Keep changes focused on the requested ticket.\n- Preserve existing project conventions unless the ticket explicitly changes them.\n- Run the most relevant available verification before completing work.\n\n## JEV Codex Pilot delivery log\n\nThis file is automatically maintained by Codex. At the end of each completed feature, append one concise English bullet describing what was added or changed.\n`;
+  return `# ${name}\n\n${context}\n\n## Working rules\n\n- Follow existing project conventions and keep changes focused on the ticket.\n- Update these instructions only when lasting project guidance changes.\n`;
 }

@@ -1,6 +1,6 @@
-import { createGateway } from "@ai-sdk/gateway";
 import { experimental_evaluate as evaluate } from "ai";
 import { AppConfigStore } from "../app-config.js";
+import { createVercelJevModel, VERCEL_AI_GATEWAY_PROVIDER_ID } from "../vercel-ai-gateway.js";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PureAnswer, PureQuestion } from "./types.js";
@@ -18,8 +18,8 @@ function probability(value: unknown): number {
 /** Evaluates one typed question with TypeSafe JEV and preserves answer probabilities. */
 export function createJevHookClient(): JevHookClient {
   const config = new AppConfigStore(resolve(dirname(fileURLToPath(import.meta.url)), "../../../config/config.toml")).read();
-  if (config.jevProvider !== "vercel-ai-gateway" || !config.aiGatewayApiKey) throw new Error("JEV is unavailable");
-  const model = createGateway({ apiKey: config.aiGatewayApiKey }).evaluationModel("typesafe-ai/jev");
+  if (config.jevProvider !== VERCEL_AI_GATEWAY_PROVIDER_ID || !config.aiGatewayApiKey) throw new Error("JEV is unavailable");
+  const model = createVercelJevModel(config.aiGatewayApiKey);
   return {
     async evaluate(state, question, signal) {
       if (question.kind === "Noul") {

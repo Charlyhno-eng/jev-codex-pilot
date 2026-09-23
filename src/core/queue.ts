@@ -2,18 +2,20 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CodexModel, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
-import { codexModelId, MODEL_LEVELS, REASONING_LEVELS } from "./codex-models.js";
+import { codexModelId, defaultRoute, MODEL_LEVELS, REASONING_LEVELS, routesForComplexity } from "./codex-models.js";
 import { readDurableJson, writeDurableJson } from "./durable-json.js";
 
 
 type ProjectThreadState = {
   activeThreadId?: string;
   successfulSinceCompaction: number;
+  contextThreadId?: string;
+  contextFiles?: Record<string, string>;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && value.every(job => isRecord(job) && typeof job.id === "string" && typeof job.projectId === "string" && typeof job.projectPath === "string" && Array.isArray(job.tasks) && job.tasks.every((task: unknown) => isRecord(task) && typeof task.description === "string") && ["PENDING", "RUNNING", "SESSION_PAUSED", "SUCCESS", "FAILED", "SKIPPED"].includes(String(job.status)) && typeof job.createdAt === "string" && Number.isInteger(job.attempts) && (!job.execution || isRecord(job.execution) && Array.isArray(job.execution.events)));
-const validThreads = (value: unknown): value is Record<string, ProjectThreadState> => isRecord(value) && Object.values(value).every(state => isRecord(state) && Number.isInteger(state.successfulSinceCompaction) && (state.activeThreadId === undefined || typeof state.activeThreadId === "string"));
+const validThreads = (value: unknown): value is Record<string, ProjectThreadState> => isRecord(value) && Object.values(value).every(state => isRecord(state) && Number.isInteger(state.successfulSinceCompaction) && (state.activeThreadId === undefined || typeof state.activeThreadId === "string") && (state.contextThreadId === undefined || typeof state.contextThreadId === "string") && (state.contextFiles === undefined || isRecord(state.contextFiles) && Object.values(state.contextFiles).every(hash => typeof hash === "string")));
 
 /** Performs this backend operation. */
 export class JobQueue {
@@ -28,6 +30,19 @@ export class JobQueue {
     this.jobs = readDurableJson(this.file, validJobs, () => []);
     this.threadStates = readDurableJson(this.threadStateFile, validThreads, () => ({}));
     this.jobs = this.jobs.map(job => {
+      if (job.analysis && typeof job.analysis.complexity === "string") {
+        const legacy: Record<string, 0 | 1 | 2 | 4 | 5> = { trivial: 0, low: 1, medium: 2, high: 4, very_high: 5 };
+        const old = job.analysis as typeof job.analysis & { independent_delivery_score?: number };
+        const { independent_delivery_score: _removed, ...analysis } = old;
+        job = { ...job, analysis: { ...analysis, complexity: legacy[String(old.complexity)] ?? 2 } };
+      }
+      if (job.status === "PENDING" && job.analysis) {
+        const routes = routesForComplexity(job.analysis.complexity);
+        if (!routes.some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)) {
+          const route = defaultRoute(job.analysis.complexity);
+          job = { ...job, analysis: { ...job.analysis, ...route, rationale: [...job.analysis.rationale, "Pending recommendation refreshed from config/model.toml."] } };
+        }
+      }
       if (job.status === "SUCCESS" && /patch rejected|writing is blocked|impossible d['’]implémenter|could not implement|unable to implement/i.test(job.output ?? "")) {
         return { ...job, status: "FAILED", errorCategory: "code", updatedAt: new Date().toISOString(), error: "Codex reported that it could not implement the task", execution: job.execution ? { ...job.execution, phase: "ERROR" } : undefined } as Job;
       }
@@ -53,7 +68,7 @@ export class JobQueue {
     return this.jobs
       .map((job, index) => ({ job, index }))
       .filter(entry => entry.job.projectId === projectId)
-      .sort((a, b) => a.job.createdAt.localeCompare(b.job.createdAt) || a.index - b.index)
+      .sort((a, b) => a.job.createdAt.localeCompare(b.job.createdAt) || (a.job.batchId === b.job.batchId ? (a.job.order ?? a.index) - (b.job.order ?? b.index) : a.index - b.index))
       .map(entry => entry.job);
   }
   get(id: string) { return this.jobs.find(j => j.id === id); }
@@ -61,10 +76,10 @@ export class JobQueue {
   create(projectId: string, projectPath: string, tasks: TaskSpec[]): Job {
     return this.createBatch(projectId, projectPath, tasks)[0];
   }
-  createBatch(projectId: string, projectPath: string, tasks: TaskSpec[]): Job[] {
+  createBatch(projectId: string, projectPath: string, tasks: TaskSpec[], fixedOrder = false): Job[] {
     const now = new Date().toISOString();
     const batchId = randomUUID();
-    const jobs = tasks.map((task, order): Job => ({ id: randomUUID(), projectId, batchId, order, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
+    const jobs = tasks.map((task, order): Job => ({ id: randomUUID(), projectId, batchId, order, submittedOrder: order, fixedOrder, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
     this.jobs.push(...jobs); this.persist(); return jobs;
   }
   update(id: string, change: Partial<Job>): Job | undefined {
@@ -73,7 +88,28 @@ export class JobQueue {
   }
   recordProjectThread(projectId: string, threadId: string) {
     const state = this.threadState(projectId);
+    if (state.contextThreadId !== threadId) { state.contextThreadId = threadId; state.contextFiles = {}; }
     state.activeThreadId = threadId;
+    this.persist();
+  }
+  reusableProjectContext(projectId: string, threadId: string, fingerprints: Record<string, string>): string[] {
+    const state = this.threadState(projectId);
+    if (state.contextThreadId !== threadId) return [];
+    return Object.keys(fingerprints).filter(path => state.contextFiles?.[path] === fingerprints[path]);
+  }
+  recordProjectContext(projectId: string, threadId: string, before: Record<string, string>, after: Record<string, string>) {
+    const state = this.threadState(projectId);
+    if (state.activeThreadId !== threadId) return;
+    if (state.contextThreadId !== threadId) { state.contextThreadId = threadId; state.contextFiles = {}; }
+    for (const path of Object.keys(before)) {
+      if (after[path] === before[path]) state.contextFiles![path] = after[path];
+      else delete state.contextFiles![path];
+    }
+    this.persist();
+  }
+  invalidateProjectContext(projectId: string) {
+    const state = this.threadState(projectId);
+    state.contextFiles = {};
     this.persist();
   }
   activeProjectThread(projectId: string) {
@@ -94,6 +130,7 @@ export class JobQueue {
   }
   markProjectCompacted(projectId: string) {
     this.threadState(projectId).successfulSinceCompaction = 0;
+    this.threadState(projectId).contextFiles = {};
     this.persist();
   }
   clearProjectThread(projectId: string, threadId: string, detail = "The user cleared this project thread; the next task starts a fresh Codex conversation.") {
@@ -101,6 +138,8 @@ export class JobQueue {
     const state = this.threadState(projectId);
     if (state.activeThreadId === threadId) state.activeThreadId = undefined;
     state.successfulSinceCompaction = 0;
+    state.contextThreadId = undefined;
+    state.contextFiles = {};
     this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId ? job : {
       ...job,
       execution: {
@@ -235,20 +274,27 @@ export class JobQueue {
     if (!job) throw new Error("Job not found");
     if (job.status !== "PENDING") throw new Error("Only pending tasks can be adjusted");
     if (!job.analysis) throw new Error("Analyze this task before adjusting its recommendation");
-    const levels = dimension === "model" ? MODEL_LEVELS : REASONING_LEVELS;
+    const allowedRoutes = routesForComplexity(job.analysis.complexity);
+    const levels = dimension === "model"
+      ? MODEL_LEVELS.filter(model => allowedRoutes.some(route => route.model === model))
+      : REASONING_LEVELS.filter(reasoning => allowedRoutes.some(route => route.model === job.analysis!.model && route.reasoning === reasoning));
     const current = job.analysis[dimension] as CodexModel | Reasoning;
     const configuredIndex = levels.indexOf(current as never);
-    const index = configuredIndex < 0 ? (dimension === "reasoning" && current === "xhigh" ? levels.length - 1 : 0) : configuredIndex;
-    const nextIndex = Math.max(0, Math.min(levels.length - 1, index + delta));
-    const next = levels[nextIndex];
+    const index = configuredIndex < 0 ? (dimension === "reasoning" && current === "max" ? levels.length - 1 : dimension === "reasoning" && current === "xhigh" ? Math.max(0, levels.length - 2) : 0) : configuredIndex;
+    const requestedIndex = Math.max(0, Math.min(levels.length - 1, index + delta));
+    const next = levels[requestedIndex];
     if (next === current) return job;
     const direction = delta < 0 ? "lower" : "higher";
-    const label = dimension === "model" ? codexModelId(next as CodexModel) : next === "xhigh" ? "Extra high" : next;
+    const label = dimension === "model" ? codexModelId(next as CodexModel) : next === "xhigh" ? "Extra high" : next === "max" ? "Max" : next;
+    const pairedReasoning = dimension === "model"
+      ? allowedRoutes.find(route => route.model === next && route.reasoning === job.analysis!.reasoning)?.reasoning ?? allowedRoutes.find(route => route.model === next)?.reasoning ?? job.analysis.reasoning
+      : job.analysis.reasoning;
     return this.update(id, {
       analysis: {
         ...job.analysis,
         [dimension]: next,
-        rationale: [...job.analysis.rationale, `Manual JEV tuning: ${dimension} moved one level ${direction} to ${label}.`]
+        reasoning: dimension === "model" ? pairedReasoning : next as Reasoning,
+        rationale: [...job.analysis.rationale, `Manual JEV tuning: ${dimension} moved one level ${direction} to ${label}.${dimension === "model" && pairedReasoning !== job.analysis.reasoning ? " Reasoning was adjusted to that model's supported policy range." : ""}`]
       }
     });
   }

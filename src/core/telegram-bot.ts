@@ -142,7 +142,13 @@ export class TelegramBot {
     if (!config.telegramBotToken || !config.telegramEnabled || !config.telegramAllowedChatId || !jobs.length) return;
     const success = jobs.filter(job => job.status === "SUCCESS").length;
     const failed = jobs.filter(job => job.status === "FAILED").length;
-    const text = `🏁 <b>Development finished · ${this.escape(project.name)}</b>\n${success} completed · ${failed} failed${jobs.length - success - failed ? ` · ${jobs.length - success - failed} skipped` : ""}`;
+    const statusLines = jobs.map(job => {
+      const context = job.execution?.codexStatus?.context;
+      const contextLeft = context && context.windowTokens > 0 ? Math.max(0, Math.min(100, Math.round(100 * (1 - context.usedTokens / context.windowTokens)))) : undefined;
+      const fiveHourLeft = job.execution?.codexStatus?.fiveHour?.remainingPercent;
+      return `${job.status === "SUCCESS" ? "✅" : "❌"} Task ${this.escape(job.id.slice(0, 8))}: context ${contextLeft === undefined ? "unavailable" : `${contextLeft}% left`} · 5h limit ${fiveHourLeft === undefined ? "unavailable" : `${fiveHourLeft}% left`}`;
+    });
+    const text = `🏁 <b>Development finished · ${this.escape(project.name)}</b>\n${success} completed · ${failed} failed${jobs.length - success - failed ? ` · ${jobs.length - success - failed} skipped` : ""}\n\n${statusLines.join("\n")}`;
     const sent = await this.request<TelegramMessage>(config.telegramBotToken, "sendMessage", { chat_id: config.telegramAllowedChatId, text, parse_mode: "HTML" });
     if (!sent) throw new Error("Telegram did not confirm the completion notice");
     this.rememberMessage(config.telegramAllowedChatId, sent?.message_id);

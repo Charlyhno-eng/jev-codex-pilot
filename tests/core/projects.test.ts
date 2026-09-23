@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ProjectStore } from "../../src/core/projects.js";
 
 describe("project AGENTS.md setup", () => {
-  it("requires context and creates the initial Codex-maintained instructions only when absent", () => {
+  it("requires context and creates concise project instructions only when absent", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-projects-"));
     const projectPath = join(root, "new-project");
     mkdirSync(projectPath);
@@ -16,7 +16,8 @@ describe("project AGENTS.md setup", () => {
     const agents = readFileSync(join(projectPath, "AGENTS.md"), "utf8");
     expect(project.agentsCreatedByJev).toBe(true);
     expect(agents).toContain("A local task manager");
-    expect(agents).toContain("JEV Codex Pilot delivery log");
+    expect(agents).toContain("Follow existing project conventions");
+    expect(agents).not.toContain("delivery log");
   });
 
   it("leaves an existing AGENTS.md unchanged", () => {
