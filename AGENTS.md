@@ -4,6 +4,7 @@
 - JEV does not change target project code or run its tests. Project `AGENTS.md` is created or edited through the user flow. Codex runs only after an explicit API or Run action.
 - Preserve project state and history in `.jev/`. Never expose secrets in code, logs, documentation, or the UI.
 - Keep project instructions short and task focused. Record durable product behavior in README.md.
+- Give every exported function a concise JSDoc comment explaining its purpose; keep it adjacent to the export.
 - Append one concise English bullet here for each delivered change. Earlier notes are archived in `docs/agents-history.md`.
 
 ## Delivery log
@@ -29,3 +30,7 @@
 - Added a user-local jc-pilot command installer for Linux, macOS, and Windows without global npm permissions.
 - Removed the incompatible explicit sandbox flag from Codex execution and resume commands; automatic approval review already enables workspace writes.
 - Clarified CLI setup and target-directory commands, automatic path discovery, and storage of machine-specific launcher paths outside the repository.
+- Removed unused code, documented exported functions, and added regression tests for Telegram and web helpers.
+- Collapsed the JEV activity log by default in the Codex console while keeping it expandable.
+- Sent Telegram completion notices for locally run CLI tickets without changing ticket results on delivery failure.
+- Added GitHub Actions CI for clean installation, build, TypeScript checks, and the full test suite.

@@ -38,11 +38,11 @@ describe("JEV model policy", () => {
     expect(result.reasoning).toBe("medium");
   });
 
-  it("uses Sol Medium for level-two UI work", async () => {
+  it("uses Luna High for level-two UI work", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-medium-ui-"));
     const result = await analyze(root, [{ description: "Redesign the settings panel" }], async () => ({ taskType: "ui_ux", complexity: 2 }));
-    expect(result.model).toBe("sol");
-    expect(result.reasoning).toBe("medium");
+    expect(result.model).toBe("luna");
+    expect(result.reasoning).toBe("high");
   });
 
   it("uses Luna medium for clearly defined routine development", async () => {
@@ -52,11 +52,11 @@ describe("JEV model policy", () => {
     expect(result.reasoning).toBe("medium");
   });
 
-  it("uses Sol Medium for level-two debugging", async () => {
+  it("uses Luna High for level-two debugging", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-debug-"));
     const result = await analyze(root, [{ description: "Investigate an intermittent state bug" }], async () => ({ taskType: "bugfix", complexity: 2 }));
-    expect(result.model).toBe("sol");
-    expect(result.reasoning).toBe("medium");
+    expect(result.model).toBe("luna");
+    expect(result.reasoning).toBe("high");
   });
 
   it("uses GPT-6 Astra High for exceptional high-risk work", async () => {

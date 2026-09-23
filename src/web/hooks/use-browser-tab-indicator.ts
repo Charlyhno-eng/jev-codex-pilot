@@ -38,6 +38,7 @@ function renderFavicon(states: TicketState[]) {
   image.src = logoUrl;
 }
 
+/** Updates the browser favicon to reflect live ticket states. */
 export function useBrowserTabIndicator() {
   useEffect(() => {
     let previous = "";

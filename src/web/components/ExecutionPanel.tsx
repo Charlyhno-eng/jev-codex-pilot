@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ExecutionEvent, Job } from "../lib/types.js";
 import { formatNumber, reasoningLabel, verificationLabel } from "../lib/format.js";
 import { CodexStatusPanel } from "./CodexStatusPanel.js";
@@ -30,10 +30,10 @@ export function ExecutionPanel({ job }: { job: Job }) {
     {job.status === "SESSION_PAUSED" && <div className="verification-note"><b>Codex quota reached</b><span>{job.sessionResumeAt ? `Development will resume after ${new Date(job.sessionResumeAt).toLocaleString()}.` : "Development will resume when the next Codex session is available."}</span></div>}
     {execution?.verificationNote && <div className="verification-note"><b>{job.errorCategory === "dependency" ? "Missing verification dependency" : "Verification note"}</b><span>{execution.verificationNote}</span></div>}
     {job.notificationError && <div className="verification-note"><b>Telegram notification failed</b><span>{job.notificationError}</span></div>}
-    {execution && <section className="execution-activity">
-      <header><div><p className="panel-label">JEV ACTIVITY</p><h4>Decisions and development log</h4></div><span>{activity.length} events</span></header>
+    {execution && <details className="execution-activity">
+      <summary><div><p className="panel-label">JEV ACTIVITY</p><h4>Decisions and development log</h4></div><span>{activity.length} events</span><i aria-hidden="true">⌄</i></summary>
       <div className="activity-list">{activity.map(item => <article className={`activity-event ${item.tone}`} key={item.id}><i>{activityIcon(item.tone)}</i><div><div><b>{item.title}</b>{item.timestamp && <time>{new Date(item.timestamp).toLocaleTimeString()}</time>}</div>{item.detail && <p>{item.detail}</p>}</div></article>)}</div>
-    </section>}
+    </details>}
     <details className="raw-console" open={job.status === "RUNNING"}><summary>Raw Codex console {job.status === "RUNNING" ? "· streaming" : ""}</summary><div className="live-console"><pre ref={consoleRef}>{consoleText || "Waiting for the first Codex event…"}{job.status === "RUNNING" && <span className="console-cursor">▋</span>}</pre></div></details>
     {job.output && <details className="raw-output"><summary>View raw Codex JSONL output</summary><pre>{job.output}</pre></details>}
   </div>;

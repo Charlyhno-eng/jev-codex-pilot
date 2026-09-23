@@ -85,11 +85,15 @@ export const MODEL_LEVELS: readonly CodexModel[] = settings.modelLevels;
 export const REASONING_LEVELS: readonly Reasoning[] = settings.reasoningLevels;
 export const COMPLEXITY_ROUTES = settings.complexityRoutes;
 
+/** Returns configured Codex routes for one complexity level. */
 export function routesForComplexity(complexity: Complexity): readonly ModelRoute[] { return COMPLEXITY_ROUTES[complexity]; }
+/** Returns the preferred Codex route for one complexity level. */
 export function defaultRoute(complexity: Complexity): ModelRoute { return routesForComplexity(complexity)[0]; }
+/** Lists reasoning levels allowed for a model at this complexity. */
 export function allowedEfforts(complexity: Complexity, model: CodexModel): Reasoning[] {
   return REASONING_LEVELS.filter(reasoning => routesForComplexity(complexity).some(route => route.model === model && route.reasoning === reasoning));
 }
+/** Selects the nearest allowed reasoning level for a route. */
 export function clampRouteReasoning(complexity: Complexity, model: CodexModel, requested: Reasoning): Reasoning {
   const allowed = allowedEfforts(complexity, model);
   if (!allowed.length) return clampReasoning(model, requested);
@@ -102,10 +106,12 @@ export function codexModelId(tier: CodexModel): string {
   return override || settings.models[tier] || settings.models[MODEL_LEVELS[0]] || tier;
 }
 
+/** Returns the reasoning level at an index or a fallback. */
 export function reasoningAt(index: number, fallback: Reasoning = "low"): Reasoning {
   return REASONING_LEVELS[Math.max(0, Math.min(REASONING_LEVELS.length - 1, index))] ?? fallback;
 }
 
+/** Returns the configured index of a reasoning level. */
 export function reasoningIndex(value: Reasoning): number {
   const index = REASONING_LEVELS.indexOf(value);
   if (index >= 0) return index;
@@ -120,6 +126,7 @@ export function reasoningBounds(tier: CodexModel, _taskTypes: readonly string[] 
   return { minimum: Math.min(...allowed), maximum: Math.max(...allowed) };
 }
 
+/** Keeps reasoning within the configured model bounds. */
 export function clampReasoning(tier: CodexModel, reasoning: Reasoning, taskTypes: readonly string[] = []): Reasoning {
   const bounds = reasoningBounds(tier, taskTypes);
   return reasoningAt(Math.max(bounds.minimum, Math.min(bounds.maximum, reasoningIndex(reasoning))));

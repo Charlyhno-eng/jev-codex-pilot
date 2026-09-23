@@ -7,7 +7,7 @@ function implementationEfforts(analysis: JevAnalysis): string {
   return allowedEfforts(analysis.complexity, analysis.model).join(", ");
 }
 
-/** Performs this backend operation. */
+/** Builds the context and task prompt for one Codex ticket. */
 export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attachments: JobAttachment[] = [], reusableFiles: string[] = []): string {
   return [
     "You are executing one task prepared by JEV. Implement only this task.",
@@ -32,7 +32,7 @@ export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attac
  * JEV decisions remain per job. This only combines the implementation prompts
  * for a small compatible execution group.
  */
-/** Performs this backend operation. */
+/** Builds a Codex prompt for a related ticket group. */
 export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis" | "attachments">>, reusableFiles: string[] = []): string {
   const first = jobs[0];
   return [
@@ -62,7 +62,7 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
   ].join("\n");
 }
 
-/** Performs this backend operation. */
+/** Builds the displayed Codex command for a ticket. */
 export function buildCodexCommand(tasks: TaskSpec[], analysis: JevAnalysis, modelId = codexModelId(analysis.model)): string {
   const escaped = buildCodexPrompt(tasks, analysis).replace(/'/g, "'\\''");
   return `codex ${codexExecPrefix().join(" ")} --json --skip-git-repo-check --model ${modelId} -c 'model_reasoning_effort="${analysis.reasoning}"' '${escaped}'`;

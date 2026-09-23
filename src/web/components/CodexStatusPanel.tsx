@@ -1,4 +1,3 @@
-import React from "react";
 import type { CodexStatusSnapshot } from "../lib/types.js";
 
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });

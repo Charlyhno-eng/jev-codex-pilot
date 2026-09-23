@@ -1,8 +1,8 @@
-import React from "react";
 import type { Analysis } from "../lib/types.js";
 import { formatUsd, reasoningLabel } from "../lib/format.js";
 import { useCodexModels } from "../hooks/use-codex-models.js";
 
+/** Renders JEV analysis and pending route controls. */
 export function Plan({ analysis, adjustable, onAdjust }: { analysis: Analysis; adjustable: boolean; onAdjust: (dimension: "model" | "reasoning", delta: -1 | 1) => Promise<void> }) {
   const { models, modelLevels, reasoningLevels, complexityRoutes } = useCodexModels();
   const routes = complexityRoutes?.[String(analysis.complexity)];

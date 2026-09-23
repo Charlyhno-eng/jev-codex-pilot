@@ -5,7 +5,7 @@ import type { ProjectFile } from "./types.js";
 
 export const DEFAULT_EXCLUSIONS = new Set(["node_modules", ".git", "dist", "build", ".next", ".nuxt", ".cache", ".turbo", ".venv", "venv", "coverage", ".jev"]);
 
-/** Performs this backend operation. */
+/** Lists project files while excluding generated and private paths. */
 export function listProjectFiles(projectPath: string, excluded = DEFAULT_EXCLUSIONS): ProjectFile[] {
   const root = resolve(projectPath);
   const files: ProjectFile[] = [];
@@ -22,7 +22,7 @@ export function listProjectFiles(projectPath: string, excluded = DEFAULT_EXCLUSI
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** Performs this backend operation. */
+/** Reads a project file when it is safe to include in context. */
 export function readProjectFile(projectPath: string, file: string): string | undefined {
   const target = resolve(projectPath, file);
   if (!target.startsWith(`${resolve(projectPath)}/`) && target !== resolve(projectPath)) return undefined;

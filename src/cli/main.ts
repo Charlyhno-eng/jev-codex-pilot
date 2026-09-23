@@ -7,6 +7,8 @@ import { JobQueue } from "../core/queue.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { ProjectStore } from "../core/projects.js";
 import { acquireApiInstance } from "../core/single-instance.js";
+import { TelegramBot } from "../core/telegram-bot.js";
+import { logJevError } from "../core/jev-logger.js";
 import type { Job, ProjectRecord } from "../core/types.js";
 
 const cliCommand = `node "${realpathSync(process.argv[1] ?? "bin/jc-pilot.mjs")}"`;
@@ -92,7 +94,8 @@ async function runViaApi(base: string, projectDirectory: string, description: st
 }
 
 async function runLocally(dataDirectory: string, projectDirectory: string, description: string, context?: string) {
-  if (!new AppConfigStore().read().aiGatewayApiKey) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
+  const config = new AppConfigStore();
+  if (!config.read().aiGatewayApiKey) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
   const projects = new ProjectStore(dataDirectory);
   const queue = new JobQueue(dataDirectory);
   queue.recoverInterrupted(pid => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } });
@@ -105,6 +108,25 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   const prepared = await orchestrator.prepare(job);
   if (prepared?.analysis) say(`JEV: ${prepared.analysis.context_files.length} context files selected`);
   const result = await orchestrator.run(job.id);
+  if (result.status === "SUCCESS" || result.status === "FAILED") {
+    const telegramSettings = config.read();
+    if (telegramSettings.telegramEnabled && telegramSettings.telegramBotToken && telegramSettings.telegramAllowedChatId) {
+      try {
+        const telegram = new TelegramBot({
+          config: () => telegramSettings,
+          listProjects: () => projects.list(),
+          listJobs: projectId => queue.list(projectId),
+          createTicket: () => { throw new Error("Ticket creation is unavailable in the CLI"); }
+        }, dataDirectory);
+        await telegram.notifyDevelopmentFinished(project, [result]);
+      }
+      catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        queue.update(result.id, { notificationError: detail });
+        logJevError(`Telegram completion notice failed: ${detail}`);
+      }
+    }
+  }
   summary(result);
   process.exitCode = result.status === "SUCCESS" ? 0 : 1;
 }
@@ -128,6 +150,7 @@ function statusLocally(dataDirectory: string, projectDirectory: string, ticketId
   summary(job);
 }
 
+/** Runs the CLI command for the selected project directory. */
 export async function main(args: string[], projectDirectory: string) {
   const [command, ...rest] = args;
   if (!command || command === "help" || command === "--help" || command === "-h") { say(help); return; }

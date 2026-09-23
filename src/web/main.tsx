@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import "./styles/index.css";
@@ -12,7 +12,7 @@ favicon.href = logoUrl;
 document.head.appendChild(favicon);
 
 import { api } from "./lib/api.js";
-import type { Analysis, Billing, DraftAttachment, DraftTask, Job, JevUsage, ProjectDiff, ProjectDiffFile, ProjectIndex, ProjectRecord, Settings, TaskSpec } from "./lib/types.js";
+import type { DraftAttachment, DraftTask, Job, ProjectDiff, ProjectDiffFile, ProjectIndex, ProjectRecord, Settings } from "./lib/types.js";
 import { QueueBoard, Status } from "./components/QueueBoard.js";
 import { ProjectTree } from "./components/ProjectTree.js";
 import { Plan } from "./components/Plan.js";

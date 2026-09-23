@@ -45,14 +45,6 @@ export type TelegramBotDependencies = {
   pairChat?: (chatId: string) => void;
 };
 
-const initialState = (): TelegramState => ({
-  offset: 0,
-  awaitingTicketProjectByChat: {},
-  activeViewByChat: {},
-  lastCreatedTicketByChat: {},
-  highestMessageIdByChat: {}
-});
-
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const stringMap = (value: unknown) => object(value) && Object.values(value).every(item => typeof item === "string");
 const numberMap = (value: unknown) => object(value) && Object.values(value).every(item => typeof item === "number");
@@ -66,8 +58,7 @@ function validTelegramState(value: unknown): value is Partial<TelegramState> & {
   return true;
 }
 
-/** Local long-polling adapter. It never starts unless a Telegram token is configured. */
-/** Performs this backend operation. */
+/** Polls Telegram and handles ticket actions for a paired chat when configured. */
 export class TelegramBot {
   private readonly stateFile: string;
   private readonly lockFile: string;

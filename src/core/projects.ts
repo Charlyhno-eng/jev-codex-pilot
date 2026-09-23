@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { ProjectRecord } from "./types.js";
 import { readDurableJson, writeDurableJson } from "./durable-json.js";
 
-/** Performs this backend operation. */
+/** Persists project records and their instructions. */
 export class ProjectStore {
   private projects: ProjectRecord[] = [];
   private readonly file: string;

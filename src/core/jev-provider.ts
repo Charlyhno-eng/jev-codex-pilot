@@ -59,9 +59,10 @@ export const OUTCOME_CLARITY_CRITERIA = [
 ] as const;
 
 const SCORE_PERCENTAGES = [0, 10, 20, 30, 40, 50, 60, 70, 80, 100] as const;
+/** Converts a scoring level to its displayed percentage. */
 export function scorePercentage(level: number) { return SCORE_PERCENTAGES[Math.max(0, Math.min(SCORE_PERCENTAGES.length - 1, Math.round(level)))]!; }
 
-/** Performs this backend operation. */
+/** Creates a JEV evaluator backed by Vercel AI Gateway. */
 export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
   const model = createVercelJevModel(config.aiGatewayApiKey);
   return {
@@ -151,7 +152,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
   };
 }
 
-/** Performs this backend operation. */
+/** Selects the configured JEV provider. */
 export function createConfiguredJevProvider(config: AppConfig): JevProvider {
   if (config.jevProvider === VERCEL_AI_GATEWAY_PROVIDER_ID) return createVercelGatewayJevProvider(config);
   throw new Error(`Unknown JEV provider "${config.jevProvider}". Add its adapter in src/core/jev-provider.ts.`);

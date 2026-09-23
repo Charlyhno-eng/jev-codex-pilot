@@ -29,7 +29,7 @@ function describeError(error: unknown): string {
   return messages.join(" → ") || String(error);
 }
 
-/** Performs this backend operation. */
+/** Analyzes tasks and selects project context and a Codex route. */
 export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator: TaskEvaluator = createConfiguredJevProvider(new AppConfigStore().read()).evaluate): Promise<JevAnalysis> {
   if (tasks.length !== 1) throw new Error("JEV requires exactly one task per analysis");
   const description = tasks[0].description;

@@ -28,7 +28,7 @@ function boolean(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
-/** Performs this backend operation. */
+/** Reads and writes the application configuration. */
 export class AppConfigStore {
   readonly file: string;
   constructor(file = resolve(process.cwd(), "config/config.toml")) { this.file = file; }
@@ -52,7 +52,7 @@ export class AppConfigStore {
   }
 }
 
-/** Performs this backend operation. */
+/** Masks an API key for display. */
 export function maskedApiKey(apiKey: string): string {
   if (!apiKey) return "";
   return "••••••••";

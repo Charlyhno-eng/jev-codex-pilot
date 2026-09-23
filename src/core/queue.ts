@@ -18,7 +18,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(v
 const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && value.every(job => isRecord(job) && typeof job.id === "string" && typeof job.projectId === "string" && typeof job.projectPath === "string" && Array.isArray(job.tasks) && job.tasks.every((task: unknown) => isRecord(task) && typeof task.description === "string") && ["PENDING", "RUNNING", "SESSION_PAUSED", "SUCCESS", "FAILED", "SKIPPED"].includes(String(job.status)) && typeof job.createdAt === "string" && Number.isInteger(job.attempts) && (!job.execution || isRecord(job.execution) && Array.isArray(job.execution.events)));
 const validThreads = (value: unknown): value is Record<string, ProjectThreadState> => isRecord(value) && Object.values(value).every(state => isRecord(state) && Number.isInteger(state.successfulSinceCompaction) && (state.activeThreadId === undefined || typeof state.activeThreadId === "string") && (state.contextThreadId === undefined || typeof state.contextThreadId === "string") && (state.contextFiles === undefined || isRecord(state.contextFiles) && Object.values(state.contextFiles).every(hash => typeof hash === "string")));
 
-/** Performs this backend operation. */
+/** Persists and updates ticket queue state. */
 export class JobQueue {
   private jobs: Job[] = [];
   private readonly file: string;

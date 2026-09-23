@@ -18,7 +18,7 @@ const EXTENSIONS: Record<string, string> = {
   "image/webp": ".webp"
 };
 
-/** Performs this backend operation. */
+/** Stores and retrieves ticket image attachments. */
 export class AttachmentStore {
   private readonly root: string;
 

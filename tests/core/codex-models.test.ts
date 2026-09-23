@@ -19,7 +19,7 @@ describe("Codex model catalog", () => {
     expect([0, 1, 2, 3, 4, 5].map(level => defaultRoute(level as 0 | 1 | 2 | 3 | 4 | 5))).toEqual([
       { model: "luna", reasoning: "low" },
       { model: "luna", reasoning: "medium" },
-      { model: "sol", reasoning: "medium" },
+      { model: "luna", reasoning: "high" },
       { model: "sol", reasoning: "medium" },
       { model: "sol", reasoning: "xhigh" },
       { model: "astra", reasoning: "high" }

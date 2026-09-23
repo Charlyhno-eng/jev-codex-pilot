@@ -9,6 +9,7 @@ const fallback: CodexCatalog = {
 };
 let cached = fallback;
 
+/** Loads and caches the configured Codex model catalog. */
 export function useCodexModels() {
   const [catalog, setCatalog] = useState(cached);
   useEffect(() => {

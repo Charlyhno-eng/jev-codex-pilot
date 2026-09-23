@@ -86,9 +86,11 @@ npm run dev
 
 Open `http://localhost:5173`, configure the available provider in Settings, then select or create a local project.
 
-During development, JEV keeps the ticket's selected Codex model fixed and changes only reasoning effort within the configured routes for its complexity level. Documentation and mechanical work can use Low, targeted verification always uses Low on the selected model, and failed checks can raise effort for repair without losing the model's cached context. Every route, hook decision, selected context file, command gate, and context-diet action is visible in the backend logs and execution console.
+During development, JEV keeps the ticket's selected Codex model fixed and changes only reasoning effort within the configured routes for its complexity level. Documentation and mechanical work can use Low, targeted verification always uses Low on the selected model, and failed checks can raise effort for repair without losing the model's cached context. Every route, hook decision, selected context file, command gate, and context-diet action is visible in the backend logs and execution console. The JEV activity log in the web console starts collapsed and can be expanded to inspect those decisions.
 
 JEV scores expected-outcome clarity and task complexity when the ticket is added to the Kanban board. Clarity is advisory; the 0–5 complexity score selects the default model and reasoning route. Neither score blocks execution.
+
+GitHub Actions runs `.github/workflows/ci.yml` on pushes and pull requests. It installs dependencies from the lockfile, builds and type-checks the app, checks for unused TypeScript declarations, and runs the test suite. It can also be started manually from the Actions tab.
 
 ## Command line
 
@@ -120,7 +122,7 @@ node "/path/to/jev-codex-pilot/bin/jc-pilot.mjs" status
 
 On Windows PowerShell, use the same `node` command with the actual Windows path, for example `node "C:\Projects\jev-codex-pilot\bin\jc-pilot.mjs" run "Fix bug X"`. The target project can use any language and does not need Node.js or a `package.json`; Node.js is needed on your computer to start the JEV command. This method works without a global npm install, `npm link`, shell profile edits, or administrator rights.
 
-`run` creates one ticket, starts Codex explicitly, waits for JEV's result, and exits with a nonzero status if the ticket fails or pauses. `status [ticket-id]` shows the latest ticket or a specific one. The CLI uses the application's existing `.jev/` history and `config/model.toml`; if the local API is already running, it uses that API so both interfaces share the same queue. Set `PORT` when the API uses a port other than 3000.
+`run` creates one ticket, starts Codex explicitly, waits for JEV's result, and exits with a nonzero status if the ticket fails or pauses. When Telegram is enabled, completed or failed CLI tickets send the same private completion notice as web runs. A notification failure is recorded on the ticket without changing its result. `status [ticket-id]` shows the latest ticket or a specific one. The CLI uses the application's existing `.jev/` history and `config/model.toml`; if the local API is already running, it uses that API so both interfaces share the same queue. Set `PORT` when the API uses a port other than 3000.
 
 The target project needs an `AGENTS.md`. If it is missing, an interactive `run` asks for a short project description before creating the file; for noninteractive runs, create `AGENTS.md` yourself first. The Codex CLI must be installed and authenticated. The CLI reuses the Vercel AI Gateway key configured in JEV Settings; no web server or browser is needed while running a ticket.
 

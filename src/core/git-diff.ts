@@ -41,7 +41,7 @@ function syntheticUntrackedDiff(projectPath: string, path: string): string {
 }
 
 /** Reads Git state only; it never changes the selected project. */
-/** Performs this backend operation. */
+/** Reads the current project diff for review. */
 export function readProjectDiff(projectPath: string): ProjectDiff {
   const root = resolve(projectPath);
   let base = "HEAD";

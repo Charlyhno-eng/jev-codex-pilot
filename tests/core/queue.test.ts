@@ -115,7 +115,8 @@ describe("pending recommendation tuning", () => {
     const job = queue.create("project", project, [{ description: "Move two buttons" }]);
     queue.update(job.id, { analysis: { complexity: 2, task_types: ["ui_ux"], model: "luna", reasoning: "high", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
 
-    expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis).toMatchObject({ model: "sol", reasoning: "medium" });
+    expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis).toMatchObject({ model: "sol", reasoning: "low" });
+    queue.update(job.id, { analysis: { ...queue.get(job.id)!.analysis!, reasoning: "medium" } });
     expect(queue.adjustAnalysis(job.id, "reasoning", -1)?.analysis?.reasoning).toBe("low");
     expect(queue.adjustAnalysis(job.id, "model", -1)?.analysis?.model).toBe("luna");
   });

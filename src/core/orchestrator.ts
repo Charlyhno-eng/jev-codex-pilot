@@ -86,7 +86,7 @@ function verificationDecision(outcome: "passed" | "failed" | "environment_blocke
   return { kind: "passed" as const, blockers: [] };
 }
 
-/** Performs this backend operation. */
+/** Detects whether a Codex compaction event completed. */
 export function isCompactionComplete(message: Record<string, unknown>) {
   const item = (message.params as { item?: { type?: unknown } } | undefined)?.item;
   return (message.method === "item/completed" || message.method === "item.completed") && item?.type === "contextCompaction";
@@ -256,7 +256,7 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
   });
 }
 
-/** Performs this backend operation. */
+/** Prepares, runs, and verifies queued Codex tickets. */
 export class Orchestrator {
   private runningBatches = new Set<string>();
   private runningProjects = new Set<string>();
