@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { spawnSync } from "node:child_process";
 import { codexHookArgs } from "../../src/core/hooks/codex-config.js";
 import { judgeDiet, postToolUse, smartTruncate } from "../../src/core/hooks/context-diet.js";
 import type { JevHookClient } from "../../src/core/hooks/jev-client.js";
@@ -52,10 +51,10 @@ describe("native Codex hooks", () => {
 
   it("passes all three native hook settings to Codex without a target-project file", () => {
     const args = codexHookArgs();
+    expect(args).toContain("features.hooks=true");
     expect(args.join(" ")).toContain("hooks.PreToolUse");
     expect(args.join(" ")).toContain("hooks.PostToolUse");
     expect(args.join(" ")).toContain("hooks.PreCompact");
-    const check = spawnSync("codex", [...args, "features", "list"], { encoding: "utf8" });
-    expect(check.status, check.stderr).toBe(0);
+    expect(args.join(" ")).toContain("src/core/hooks/runner.ts");
   });
 });

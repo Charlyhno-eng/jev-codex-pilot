@@ -34,3 +34,4 @@
 - Collapsed the JEV activity log by default in the Codex console while keeping it expandable.
 - Sent Telegram completion notices for locally run CLI tickets without changing ticket results on delivery failure.
 - Added GitHub Actions CI for clean installation, build, TypeScript checks, and the full test suite.
+- Made the native Codex hook test independent of a Codex CLI installation in CI.
