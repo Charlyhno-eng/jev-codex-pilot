@@ -17,6 +17,8 @@ Repetitions: 1
 - interface: 1 paired pass(es), median change -64.8%.
 - environment: 1 paired pass(es), median change -66.2%.
 - responsive: 1 paired pass(es), median change -76.7%.
+- test: 1 paired pass(es), median change -75.7%.
+
 
 Results are exploratory until the suite includes enough representative tasks and repetitions. A percentage change is reported only for pairs where both independent checks passed and Codex usage is complete.
 
@@ -37,7 +39,7 @@ Consumption is Codex input plus output tokens; performance is elapsed agent time
 <tr><th scope="row">threejs_brain_lab / control_computer_interface</th><td align="right">2,302,991</td><td align="right">810,662</td><td align="right">-64.8%</td><td align="right">189.6 s</td><td align="right">85.3 s</td><td align="right">-55.0%</td></tr>
 <tr><th scope="row">threejs_brain_lab / organic_vegetation_environmental_details</th><td align="right">3,009,822</td><td align="right">1,016,615</td><td align="right">-66.2%</td><td align="right">197.0 s</td><td align="right">173.1 s</td><td align="right">-12.2%</td></tr>
 <tr><th scope="row">threejs_brain_lab / visual_integration_responsive_experience</th><td align="right">5,262,293</td><td align="right">1,223,486</td><td align="right">-76.7%</td><td align="right">317.1 s</td><td align="right">156.2 s</td><td align="right">-50.8%</td></tr>
-<tr><th scope="row">threejs_brain_lab / testing_documentation</th><td align="right">7,495,954</td><td align="right">1,818,887</td><td align="right">75.7</td><td align="right">378.9 s</td><td align="right">180.1 s</td><td align="right">52.4%</td></tr>
+<tr><th scope="row">threejs_brain_lab / testing_documentation</th><td align="right">7,495,954</td><td align="right">1,818,887</td><td align="right">-75.7%</td><td align="right">378.9 s</td><td align="right">180.1 s</td><td align="right">-52.4%</td></tr>
 </tbody>
 <tfoot>
 <tr><th scope="row">TOTAL</th><th align="right">14,722,619</th><th align="right">4,746,589</th><th align="right">-67.8%</th><th align="right">24.3 min</th><th align="right">15.7 min</th><th align="right">-35.4%</th></tr>
