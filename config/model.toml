@@ -12,16 +12,16 @@ levels = ["low", "medium", "high", "xhigh", "max"]
 # Each level lists permitted model:effort pairs. The first pair is JEV's default.
 # Edit model IDs above, then these routes when models or recommendations change.
 [complexity.0]
-routes = ["luna:low", "luna:medium"]
+routes = ["luna:medium"]
 
 [complexity.1]
-routes = ["luna:medium", "luna:high"]
+routes = ["luna:high"]
 
 [complexity.2]
-routes = ["luna:high", "luna:max", "sol:low", "sol:medium"]
+routes = ["luna:xhigh", "luna:max"]
 
 [complexity.3]
-routes = ["sol:medium", "sol:high"]
+routes = ["sol:high", "sol:xhigh"]
 
 [complexity.4]
 routes = ["sol:xhigh", "astra:low", "astra:medium"]

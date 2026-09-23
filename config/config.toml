@@ -1,5 +1,3 @@
-# Local-only JEV Codex Pilot settings. Do not commit this file.
-
 [jev]
 # Provider adapter selected by the application. Add a new adapter in src/core/jev-provider.ts when this changes.
 provider = ""

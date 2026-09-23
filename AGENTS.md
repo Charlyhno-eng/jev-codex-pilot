@@ -35,3 +35,9 @@
 - Sent Telegram completion notices for locally run CLI tickets without changing ticket results on delivery failure.
 - Added GitHub Actions CI for clean installation, build, TypeScript checks, and the full test suite.
 - Made the native Codex hook test independent of a Codex CLI installation in CI.
+- Added an isolated paired Codex-versus-JEV benchmark runner with usage reports and a reproducible launch guide.
+- Fixed benchmark dependency checks and Markdown report tables, with clearer failed-check diagnostics.
+- Cleared prior benchmark runs and grouped report consumption and performance with comparable totals.
+- Limited complexity zero routing to Luna Low in the configuration and fallback policy.
+- Expanded the benchmark demo into an eight step Three.js brain laboratory project sequence.
+- Linked README benchmark results to the growing archive and shortened CLI setup guidance.

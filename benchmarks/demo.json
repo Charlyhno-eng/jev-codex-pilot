@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "repository": "/home/charly/Téléchargements/benchmark-jev-codex",
+  "revision": "96024f21ca0bbd0ba2fa60605a595e18ae1c22d4",
+  "repetitions": 1,
+  "scenarios": [
+    {
+      "id": "threejs_brain_lab",
+      "tasks": [
+        {
+          "id": "project_setup_configuration",
+          "category": "setup",
+          "prompt": "Set up this HTML/CSS/JavaScript project as a modular and scalable Three.js application. Create the project structure, install and configure Three.js, establish the initial application entry points, and integrate the repository's AGENTS.md instructions. Preserve and follow its guidance. Keep the architecture ready for the laboratory, containment tank, and interface tasks that follow.",
+          "checks": [
+            ["npm", "install"],
+            ["npm", "run", "build"],
+            ["node", "-e", "const p=require('./package.json'); if(!p.dependencies?.three) process.exit(1)"]
+          ],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "threejs_laboratory_environment",
+          "category": "scene",
+          "prompt": "Create the main Three.js laboratory scene. Add a suitable camera and renderer, lighting, a dark futuristic atmosphere, technological environment elements, and a clear base composition that leaves room for a central brain containment tank and a control computer. Keep the application runnable and preserve the modular structure.",
+          "checks": [["npm", "run", "build"]],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "brain_containment_tank",
+          "category": "tank",
+          "prompt": "Build the central brain containment tank and integrate it into the Three.js laboratory. Create a recognizable brain with procedural geometry or shapes, a transparent glass tank, suitable materials and lighting effects, and a deliberate position and scale within the scene. Keep the implementation modular and ensure the application builds.",
+          "checks": [["npm", "run", "build"]],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "tank_parameters_state_management",
+          "category": "state",
+          "prompt": "Implement adjustable parameters for the brain containment tank and define a corresponding state model. Connect parameter changes to the 3D scene so the tank visibly responds. Keep state management modular and avoid unnecessary global variables. Preserve the existing scene and make sure the application builds.",
+          "checks": [["npm", "run", "build"]],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "control_computer_interface",
+          "category": "interface",
+          "prompt": "Create a futuristic control computer and its interface in the laboratory. Include buttons labeled CERTIFICATIONS, SKILLS, PERSONAL PROJECTS, and BIOGRAPHY. Keep the buttons intentionally non-functional. Organize the interface in a modular structure, integrate it into the scene, and ensure the application builds.",
+          "checks": [["npm", "run", "build"]],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "organic_vegetation_environmental_details",
+          "category": "environment",
+          "prompt": "Add wild vegetation growing naturally throughout the laboratory. Blend the organic elements with the technological environment, then refine materials, lighting, atmosphere, and environmental details. Keep the brain tank and control computer intact, and ensure the application builds.",
+          "checks": [["npm", "run", "build"]],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "visual_integration_responsive_experience",
+          "category": "responsive",
+          "prompt": "Integrate the 3D laboratory, brain containment tank, control computer, and vegetation into one cohesive immersive experience. Refine camera positioning, lighting, materials, animations, and scene composition. Make the experience adapt correctly to different screen sizes, including renderer resizing and a usable interface on narrow screens. Ensure the application builds.",
+          "checks": [["npm", "run", "build"]],
+          "timeoutSeconds": 1800
+        },
+        {
+          "id": "testing_documentation",
+          "category": "quality",
+          "prompt": "Test the JavaScript functionality and core interactions, fix any issues found, and add concise JSDoc comments to functions. Create an English README covering installation, project structure, architecture, configuration, and usage. Keep the project runnable and document the actual implemented behavior.",
+          "checks": [
+            ["npm", "run", "build"],
+            ["npm", "test"]
+          ],
+          "timeoutSeconds": 1800
+        }
+      ]
+    }
+  ]
+}

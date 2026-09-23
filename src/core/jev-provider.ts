@@ -1,6 +1,7 @@
 import { experimental_evaluate as evaluate } from "ai";
 import type { AppConfig } from "./app-config.js";
 import { JEV_INPUT_USD_PER_MILLION_TOKENS } from "./jev-pricing.js";
+import { recordJevUsage } from "./jev-usage.js";
 import type { Complexity, TaskType } from "./types.js";
 import { createVercelJevModel, VERCEL_AI_GATEWAY_EVALUATOR_ID, VERCEL_AI_GATEWAY_PROVIDER_ID } from "./vercel-ai-gateway.js";
 
@@ -103,6 +104,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           }
         }
       });
+      recordJevUsage(result.usage);
       const chosen = [result.answers.primaryFile.choice, result.answers.secondaryFile.choice]
         .map(key => /^f\d+$/.test(key) ? candidates[Number(key.slice(1))] : undefined)
         .filter((path): path is string => Boolean(path));
@@ -129,6 +131,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           }
         }
       });
+      recordJevUsage(result.usage);
       return result.answers.runAffectedTests.choice === "yes";
     },
     async evaluateContinuity(state) {
@@ -147,6 +150,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           }
         }
       });
+      recordJevUsage(result.usage);
       return result.answers.continuity.choice;
     }
   };

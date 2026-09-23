@@ -14,7 +14,7 @@ export interface CodexSettings {
 const fallbackModels = { luna: "gpt-6-luna", sol: "gpt-6-sol", astra: "gpt-6-astra" };
 const fallbackReasoning = ["low", "medium", "high", "xhigh", "max"];
 const fallbackRoutes: Record<Complexity, string[]> = {
-  0: ["luna:low", "luna:medium"], 1: ["luna:medium", "luna:high"],
+  0: ["luna:low"], 1: ["luna:medium", "luna:high"],
   2: ["sol:medium", "luna:high", "luna:max", "sol:low"], 3: ["sol:medium", "sol:high"],
   4: ["sol:xhigh", "sol:max", "astra:low", "astra:medium"], 5: ["astra:high"]
 };

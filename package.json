@@ -13,6 +13,7 @@
     "dev:web": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "start": "tsx src/api/server.ts",
+    "benchmark": "node --import tsx scripts/benchmark.ts",
     "test": "vitest run"
   },
   "dependencies": {
