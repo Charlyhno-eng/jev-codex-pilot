@@ -1,5 +1,6 @@
 import type { JevAnalysis, Job, JobAttachment, TaskSpec } from "./types.js";
 import { allowedEfforts, codexModelId } from "./codex-models.js";
+import { codexExecPrefix } from "./codex-execution.js";
 
 function section(title: string, values: string[]) { return values.length ? `\n${title}:\n${values.map(x => `- ${x}`).join("\n")}` : ""; }
 function implementationEfforts(analysis: JevAnalysis): string {
@@ -10,6 +11,7 @@ function implementationEfforts(analysis: JevAnalysis): string {
 export function buildCodexPrompt(tasks: TaskSpec[], analysis: JevAnalysis, attachments: JobAttachment[] = [], reusableFiles: string[] = []): string {
   return [
     "You are executing one task prepared by JEV. Implement only this task.",
+    "If implementation is blocked, explain the blocker and end with JEV_IMPLEMENTATION_BLOCKED. Do not report implementation as complete when requested changes were not made.",
     "Task:", ...tasks.map(task => `- ${task.description}`),
     ...(attachments.length ? [`Visual references: ${attachments.map(attachment => attachment.name).join(", ")}. They are attached to this prompt; inspect them and use them only as context for this task.`] : []),
     section("JEV-selected files to inspect first", analysis.context_files),
@@ -36,6 +38,7 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
   return [
     "You are executing a small compatible group of tasks prepared independently by JEV.",
     "Complete every numbered task below. Do not merge their scope or skip a task.",
+    "If any implementation is blocked, explain the blocker and end with JEV_IMPLEMENTATION_BLOCKED. Do not report implementation as complete when requested changes were not made.",
     "The shared prompt is an execution optimisation only; each task retains its own JEV analysis and history.",
     ...jobs.flatMap((job, index) => {
       const analysis = job.analysis!;
@@ -62,5 +65,5 @@ export function buildCodexGroupPrompt(jobs: Array<Pick<Job, "tasks" | "analysis"
 /** Performs this backend operation. */
 export function buildCodexCommand(tasks: TaskSpec[], analysis: JevAnalysis, modelId = codexModelId(analysis.model)): string {
   const escaped = buildCodexPrompt(tasks, analysis).replace(/'/g, "'\\''");
-  return `codex exec --json --color never --skip-git-repo-check --approve-for-me --model ${modelId} -c 'model_reasoning_effort="${analysis.reasoning}"' '${escaped}'`;
+  return `codex ${codexExecPrefix().join(" ")} --json --skip-git-repo-check --model ${modelId} -c 'model_reasoning_effort="${analysis.reasoning}"' '${escaped}'`;
 }

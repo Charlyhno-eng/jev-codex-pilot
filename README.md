@@ -66,16 +66,6 @@ Its concrete implementation thresholds are:
 | Context diet and thread continuity | Reviews tool output and protects errors, paths, and test evidence before compaction. Independent work starts in a cleared thread; related work compacts after three successful tasks or at 90,000 context tokens. | Keeps useful context while limiting stale conversation. The native pre-compaction review is advisory. |
 | Compatible ticket grouping | May execute related queued tickets in one shared run when JEV finds a task dependency and their route settings are close enough. | Reduces repeated project orientation and allows more cache reuse. |
 
-When adding several tasks, JEV classifies their links after model evaluation, keeps related tasks together, and groups independent work by selected model to reduce model switches and preserve cache reuse. Select **Keep the exact order shown above** to execute the submitted sequence instead. The selected order appears in the Kanban task numbers. JEV refreshes automatic classification at launch if model recommendations were adjusted.
-
-JEV keeps a context cache in `.jev/thread-state.json` for each active Codex thread. It stores SHA-256 fingerprints of selected regular project files up to 2 MB, never their contents. After a successful ticket, unchanged files can be reused from the existing conversation instead of being read again for orientation; Codex still reads a file when the current task needs its exact text. A changed file is read again. The cache is cleared when the thread changes, a ticket fails, or `/clear` or `/compact` runs.
-
-JEV also watches each Codex turn for repeated actions. Three identical failed commands, four identical completed actions, or a six-action cycle trigger a progress check. Repeating the same implementation route without file changes stops before another turn; a stalled loop is marked visibly and is not automatically retried.
-
-The shell gate is part of the same control layer: before a shell command, JEV checks its relevance and risk. It is fail-open when JEV is unavailable, and it logs the decision without exposing the raw command. This protects workflow quality without turning a temporary analysis issue into a blocked Codex session.
-
-Each completed ticket shows the planning estimate, actual Codex tokens, cached input, turns, repair count, model routes, validation outcome, and available Codex session limits. These measurements make it possible to compare workflow changes against real usage over time.
-
 ## See JEV Codex Pilot in action
 
 ![JEV Codex Pilot page1](assets/jev-codex-pilot-demo.gif)
@@ -100,6 +90,46 @@ During development, JEV keeps the ticket's selected Codex model fixed and change
 
 JEV scores expected-outcome clarity and task complexity when the ticket is added to the Kanban board. Clarity is advisory; the 0–5 complexity score selects the default model and reasoning route. Neither score blocks execution.
 
+## Command line
+
+The headless CLI uses the same JEV analysis, bounded context selection, model routing, Codex orchestration, and validation as the web application. From the **jev-codex-pilot repository directory**, install dependencies and the short command once:
+
+```bash
+npm install
+npm run setup:cli
+```
+
+Open a new terminal. From the **directory of the project you want to modify**, run:
+
+```bash
+jc-pilot run "Fix bug X"
+jc-pilot status
+```
+
+The target project is automatically selected from the directory where you run `jc-pilot`; you do not need to enter its path in the command or configure it in source code. Setup automatically records the absolute path to JEV’s CLI entry point and your Node executable in a local launcher: `~/.local/bin/jc-pilot` on Linux/macOS, or `%LOCALAPPDATA%\jc-pilot\bin\jc-pilot.cmd` on Windows. These generated launchers live outside the JEV repository, so committing and pushing this repository does not upload them or their recorded paths to GitHub. No machine-specific JEV path is written into the repository source by setup. If you move the JEV repository, run `npm run setup:cli` again from its new location. Otherwise, you do not need to repeat setup for each target project.
+
+`setup:cli` installs a launcher for your user account without `npm link`, a global npm installation, or administrator rights. On Linux and macOS it uses `~/.local/bin` and adds a labelled PATH block to your Bash, Zsh, Fish, or POSIX shell startup file. On Windows it creates `jc-pilot.cmd` under `%LOCALAPPDATA%\jc-pilot\bin` and adds that directory to your user PATH; close and reopen the terminal application after setup. Existing unrelated launcher files are never overwritten. Run setup again if you move the JEV repository or your Node executable. The launcher preserves the current project directory and forwards the task arguments to the same CLI.
+
+You can also launch the CLI directly without installing the shortcut. Replace `/path/to/jev-codex-pilot` with the actual folder where you cloned JEV; it is only a placeholder:
+
+```bash
+cd /path/to/your/project
+node "/path/to/jev-codex-pilot/bin/jc-pilot.mjs" run "Fix bug X"
+node "/path/to/jev-codex-pilot/bin/jc-pilot.mjs" status
+```
+
+On Windows PowerShell, use the same `node` command with the actual Windows path, for example `node "C:\Projects\jev-codex-pilot\bin\jc-pilot.mjs" run "Fix bug X"`. The target project can use any language and does not need Node.js or a `package.json`; Node.js is needed on your computer to start the JEV command. This method works without a global npm install, `npm link`, shell profile edits, or administrator rights.
+
+`run` creates one ticket, starts Codex explicitly, waits for JEV's result, and exits with a nonzero status if the ticket fails or pauses. `status [ticket-id]` shows the latest ticket or a specific one. The CLI uses the application's existing `.jev/` history and `config/model.toml`; if the local API is already running, it uses that API so both interfaces share the same queue. Set `PORT` when the API uses a port other than 3000.
+
+The target project needs an `AGENTS.md`. If it is missing, an interactive `run` asks for a short project description before creating the file; for noninteractive runs, create `AGENTS.md` yourself first. The Codex CLI must be installed and authenticated. The CLI reuses the Vercel AI Gateway key configured in JEV Settings; no web server or browser is needed while running a ticket.
+
+New executions and resumed turns use Codex's `--approve-for-me` option, which enables the `workspace-write` sandbox with automatic approval review, rooted in the selected project directory. This option is passed before the `resume` subcommand and must not be combined with `--sandbox`, because Codex rejects that combination. A reported implementation blocker fails the ticket, and a ticket with expected file changes cannot succeed when no project file changes are detected. Existing history that ended with an implementation blocker is reclassified as failed when loaded; those blocked threads are excluded from future reuse. History is retained. Restart a running API after updating JEV so CLI requests forwarded to it use the updated engine.
+
 ## Telegram
 
 The optional Telegram bot provides a private progress view, guided ticket creation, and explicit Codex launches. It is disabled by default and pairs one private chat. At the end of a run, its completion notice reports the remaining 5-hour Codex session limit and context window for each ticket, when available. The ticket's Codex Summary also shows the weekly limit; older tickets without a snapshot show unavailable values.
+
+## Feedback and bug reports
+
+Improvement ideas and bug reports are welcome via [X](https://x.com/Charlyhno). See [CONTRIBUTING.md](CONTRIBUTING.md) for reporting guidance and contribution scope.

@@ -27,6 +27,97 @@ function prepareTargetedProject(project: string) {
 }
 
 describe("Codex orchestration", () => {
+  it.each([
+    "Implementation complete.",
+    "Je ne peux pas l’implémenter dans ce tour : l’espace de travail est toujours en lecture seule. Aucun fichier n’a été modifié."
+  ])("fails an unchanged HTML implementation even with exit code zero: %s", async message => {
+    const root = mkdtempSync(join(tmpdir(), "jev-empty-implementation-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "index.html"), "<html>cube</html>");
+    const fakeCodex = join(bin, "codex");
+    const events = [
+      { type: "thread.started", thread_id: "blocked-thread" },
+      { type: "item.completed", item: { type: "agent_message", text: message } },
+      { type: "turn.completed" }
+    ];
+    writeFileSync(fakeCodex, `#!/bin/sh\n${events.map(event => `printf '%s\\n' '${JSON.stringify(event).replaceAll("'", "'\\''")}'`).join("\n")}\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const job = queue.create("project", project, [{ description: "Replace the cube with a 3D laboratory" }]);
+    const analysis: JevAnalysis = { complexity: 3, task_types: ["feature"], model: "sol", reasoning: "medium", context_files: ["index.html"], files_to_modify: ["index.html"], rationale: [], evaluator: "typesafe-ai/jev" };
+    queue.update(job.id, { analysis });
+    const compactor = vi.fn(async () => undefined);
+    const completed = await new Orchestrator(queue, async () => analysis, compactor, accountUsage, undefined, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 200_000 } })).run(job.id);
+    expect(completed.status).toBe("FAILED");
+    expect(completed.error).toMatch(/No project file changes|could not implement/);
+    expect(compactor).not.toHaveBeenCalled();
+    expect(readFileSync(join(project, "index.html"), "utf8")).toBe("<html>cube</html>");
+  });
+
+  it("passes write permissions before resume and detects changes in a non-Node project", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-writable-resume-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls.jsonl");
+    mkdirSync(project); mkdirSync(bin);
+    writeFileSync(join(project, "index.html"), "<html>cube</html>");
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+printf '%s\\n' CALL_START "$@" >> '${calls}'
+if [ "$2" != --approve-for-me ]; then exit 2; fi
+for arg in "$@"; do if [ "$arg" = --sandbox ]; then exit 2; fi; done
+printf '<div>lab</div>' >> index.html
+printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"turn.completed"}'
+`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const analysis: JevAnalysis = { complexity: 3, task_types: ["feature"], model: "sol", reasoning: "medium", context_files: ["index.html"], files_to_modify: ["index.html"], rationale: [], evaluator: "typesafe-ai/jev" };
+    const orchestrator = new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage);
+    for (const description of ["Create the laboratory", "Animate the brain"]) {
+      const job = queue.create("project", project, [{ description }]);
+      queue.update(job.id, { analysis });
+      expect((await orchestrator.run(job.id)).status).toBe("SUCCESS");
+    }
+    const invocations = readFileSync(calls, "utf8").split("CALL_START\n").slice(1).map(call => call.split("\n"));
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0]).not.toContain("resume");
+    expect(invocations[1]).toContain("resume");
+    expect(readFileSync(join(project, "index.html"), "utf8")).toBe("<html>cube</html><div>lab</div><div>lab</div>");
+  });
+
+  it("starts a fresh thread when earlier successful history shares a blocked thread", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-blocked-history-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const args = join(root, "args");
+    mkdirSync(project); mkdirSync(bin);
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh\nprintf '%s\\n' "$@" > '${args}'\nprintf '%s\\n' '{"type":"thread.started","thread_id":"fresh-thread"}' '{"type":"turn.completed"}'\n`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const data = join(root, "queue");
+    const queue = new JobQueue(data);
+    const now = new Date().toISOString();
+    for (const output of ["Earlier completed task", JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "Je ne peux pas l’implémenter dans ce tour : l’espace de travail est toujours en lecture seule." } })]) {
+      const old = queue.create("project", project, [{ description: "Previous task" }]);
+      queue.transition(old.id, "SUCCESS", { output, execution: { phase: "COMPLETED", model: "gpt-6-sol", reasoning: "medium", startedAt: now, lastActivityAt: now, verification: "not_run", threadId: "old-thread", events: [] } });
+    }
+    const restored = new JobQueue(data);
+    expect(restored.list("project").filter(job => job.status === "FAILED")).toHaveLength(1);
+    const job = restored.create("project", project, [{ description: "Inspect project" }]);
+    const analysis: JevAnalysis = { complexity: 1, task_types: ["research"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    restored.update(job.id, { analysis });
+    const completed = await new Orchestrator(restored, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    expect(completed.status).toBe("SUCCESS");
+    expect(readFileSync(args, "utf8").split("\n")).not.toContain("resume");
+    expect(restored.list("project")).toHaveLength(3);
+  });
+
   it("stops an active Codex run after repeated identical failed commands", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-loop-run-"));
     const project = join(root, "project");
@@ -203,7 +294,7 @@ describe("Codex orchestration", () => {
     mkdirSync(project); mkdirSync(bin);
     writeFileSync(join(project, "package.json"), "{}");
     const fakeCodex = join(bin, "codex");
-    writeFileSync(fakeCodex, `#!/bin/sh\nprintf '%s\\n' "$@" >> '${args}'\ncat >/dev/null\nprintf '%s\\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"turn.started"}' '{"type":"turn.completed"}'\n`);
+    writeFileSync(fakeCodex, `#!/bin/sh\nprintf '%s\\n' "$@" >> '${args}'\ncat >/dev/null\nprintf '\\n' >> package.json\nprintf '%s\\n' '{"type":"thread.started","thread_id":"test-thread"}' '{"type":"turn.started"}' '{"type":"turn.completed"}'\n`);
     chmodSync(fakeCodex, 0o755);
     process.env.PATH = `${bin}:${originalPath}`;
 
@@ -567,7 +658,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     const completed = await new Orchestrator(queue, async () => analysis, compactor, accountUsage, undefined, undefined, async () => ({ capturedAt: "2026-09-22T00:00:00.000Z", context: { usedTokens: 95_000, windowTokens: 258_000 } }), async () => true).run(job.id);
 
     expect(completed.status).toBe("FAILED");
-    expect(compactor).toHaveBeenCalledWith("sol-thread");
+    expect(compactor).not.toHaveBeenCalled();
     expect(completed.execution?.metrics).toMatchObject({ turns: 6, repairs: 2 });
     expect(completed.execution?.metrics?.routes.map(route => route.stage)).toEqual(["implementation", "verification", "repair", "verification", "repair", "verification"]);
     const invocations = readFileSync(calls, "utf8").trim().split("\n");
@@ -624,7 +715,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     mkdirSync(project); mkdirSync(bin);
     writeFileSync(join(project, "package.json"), "{}");
     const fakeCodex = join(bin, "codex");
-    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf 'run\\n' >> '${calls}'\nprintf '%s\\n' '{"type":"thread.started","thread_id":"batch-thread"}' '{"type":"turn.completed"}'\n`);
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf 'run\\n' >> '${calls}'\nprintf '\\n' >> package.json\nprintf '%s\\n' '{"type":"thread.started","thread_id":"batch-thread"}' '{"type":"turn.completed"}'\n`);
     chmodSync(fakeCodex, 0o755);
     process.env.PATH = `${bin}:${originalPath}`;
 

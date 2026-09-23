@@ -5,6 +5,7 @@ import { activeCodexModelId } from "./codex-catalog.js";
 import { readCodexStatusSnapshot } from "./codex-status.js";
 import { projectFileFingerprint } from "./project-reader.js";
 import { CodexLoopDetector } from "./codex-loop-detector.js";
+import { codexExecPrefix, implementationBlocked } from "./codex-execution.js";
 import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { analyze, assessTaskContinuity, assessVerification } from "./analyzer.js";
@@ -176,7 +177,7 @@ function logTicketCompleted(tag: string, title: string) {
 /** Resumes one Codex turn in the existing thread. */
 function resumeCodexTurn(projectPath: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
   return new Promise(resolve => {
-    const args = ["exec", "resume", "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs(), threadId, prompt];
+    const args = [...codexExecPrefix(true), "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs(), threadId, prompt];
     const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...process.env, JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
     onStart(child);
     let buffer = ""; let settled = false;
@@ -485,8 +486,10 @@ export class Orchestrator {
     const pausedThread = prepared.length === 1 && first.execution?.events.some(event => event.title === "Codex session limit reached") ? first.execution.threadId : undefined;
     const groupId = prepared.length > 1 ? randomUUID() : undefined;
     const excluded = new Set(prepared.map(job => job.id));
-    const previous = this.queue.list(first.projectId).filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
-    const resumeThread = pausedThread ?? previous?.execution?.threadId;
+    const history = this.queue.list(first.projectId);
+    const blockedThreads = new Set(history.filter(job => implementationBlocked(job.output ?? "") || job.error?.startsWith("No project file changes were detected")).map(job => job.execution?.threadId).filter(Boolean));
+    const previous = history.filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt && !blockedThreads.has(job.execution.threadId)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    const resumeThread = pausedThread && !blockedThreads.has(pausedThread) ? pausedThread : previous?.execution?.threadId;
     const selectedContextFiles = [...new Set(prepared.flatMap(job => ["AGENTS.md", ...job.analysis!.context_files]))];
     const contextBefore = Object.fromEntries(selectedContextFiles.map(path => [path, projectFileFingerprint(first.projectPath, path)]).filter((entry): entry is [string, string] => Boolean(entry[1])));
     const reusableFiles = resumeThread ? this.queue.reusableProjectContext(first.projectId, resumeThread, contextBefore) : [];
@@ -501,7 +504,7 @@ export class Orchestrator {
       const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs()];
       const imageArgs = prepared.flatMap(job => (job.attachments ?? []).flatMap(attachment => ["--image", attachment.path]));
       const resumePrompt = pausedThread ? `${prompt}\n\nContinue the interrupted ticket in this thread. Review the work already made and finish any remaining implementation. Do not run tests or build checks; JEV will decide whether targeted tests are needed.` : prompt;
-      const args = resumeThread ? ["exec", "resume", ...common, ...imageArgs, resumeThread, resumePrompt] : ["exec", ...common, "--color", "never", "--approve-for-me", ...imageArgs, prompt];
+      const args = [...codexExecPrefix(Boolean(resumeThread)), ...common, ...imageArgs, ...(resumeThread ? [resumeThread, resumePrompt] : [prompt])];
       const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...process.env, JEV_HOOK_TASK: prepared.map(job => job.tasks.map(task => task.description).join(" ")).join(" ").slice(0, 2_000) } });
       child.stdin.end();
       let currentChild: ReturnType<typeof spawn> = child;
@@ -541,12 +544,12 @@ export class Orchestrator {
       let requestedRoute: { tier: CodexModel; effort: Reasoning } | undefined;
       const record = (line: string) => {
         if (!line.trim()) return;
-        if (/patch rejected|writing is blocked|impossible d['’]implémenter|could not implement|unable to implement/i.test(line)) reportedFailure = true;
         rawOutput = `${rawOutput}${line}\n`.slice(-250_000);
         if (/^Reading additional input from stdin\.\.\.$/i.test(line.trim())) { this.updateGroupOutput(prepared, rawOutput); return; }
         let parsed: JsonEvent; try { parsed = JSON.parse(line) as JsonEvent; } catch { parsed = { type: "raw", message: line }; }
         const description = describe(parsed);
         const action = parsed.item ?? {};
+        if ((parsed.type === "raw" || action.type === "error") && implementationBlocked(line)) reportedFailure = true;
         if (parsed.type === "item.completed" && /file|change|patch/i.test(String(action.type ?? ""))) loopDetector.reset();
         if (!loopDetected && parsed.type === "item.completed" && (action.type === "command_execution" || action.type === "agent_message")) {
           const repeated = action.type === "command_execution"
@@ -572,6 +575,7 @@ export class Orchestrator {
           this.updateGroup(prepared, execution => ({ ...execution, metrics: execution.metrics ? { ...execution.metrics, routes: execution.metrics.routes.map((route, index) => index === activeRouteIndex ? { ...route, usage: turnUsage } : route) } : execution.metrics }));
         }
         const item = parsed.item ?? {};
+        if (activeStage !== "verification" && parsed.type === "item.completed" && item.type === "agent_message") reportedFailure = implementationBlocked(line);
         if (activeStage === "implementation" && parsed.type === "item.completed" && item.type === "agent_message") {
           const requested = String(item.text ?? "").match(/(?:^|\n)JEV_ROUTE=([\w-]+):([\w-]+)\s*$/);
           requestedRoute = requested && MODEL_LEVELS.includes(requested[1]) && REASONING_LEVELS.includes(requested[2])
@@ -655,6 +659,11 @@ export class Orchestrator {
             if (!success) failureMessage = continued.error ?? `Codex implementation turn exited with code ${continued.code}`;
           }
           if (requestedRoute && success) { success = false; failureMessage = "Codex requested more than three implementation routing turns"; }
+        }
+        if (success && prepared.some(job => job.analysis!.files_to_modify.length > 0) && !changedProjectFiles(projectBefore, snapshotProject(first.projectPath)).length) {
+          success = false;
+          failureMessage = "No project file changes were detected for the requested implementation. Review Codex output and workspace permissions before retrying.";
+          logJevError(`[codex:${tag}] ${failureMessage}`);
         }
         const chooseVerification = async () => {
           const current = snapshotProject(first.projectPath);
@@ -777,8 +786,8 @@ export class Orchestrator {
             try { await this.archiver(representative.execution.threadId); this.queue.clearProjectThread(first.projectId, representative.execution.threadId, detail); logJev(`[codex:${tag}] /clear COMPLETED`); }
             catch (error) { clearError = messageOf(error); logJevError(`[codex:${tag}] /clear FAILED: ${clearError}`); }
           }
-          if (compactForContext && continuity !== "unrelated") logJev(`[codex:${tag}] Context reached ${contextTokens} tokens; JEV requests /compact.`);
-          if (continuity !== "unrelated" && ((success && successesSinceCompaction >= 3) || compactForContext)) {
+          if (success && compactForContext && continuity !== "unrelated") logJev(`[codex:${tag}] Context reached ${contextTokens} tokens; JEV requests /compact.`);
+          if (success && continuity !== "unrelated" && (successesSinceCompaction >= 3 || compactForContext)) {
             const reason = compactForContext ? `JEV measured ${contextTokens} context tokens (threshold: 90000).` : "Automatic compaction after three successful tasks.";
             logJev(`[codex:${tag}] /compact START thread ${representative.execution.threadId}`);
             this.updateGroup(prepared, execution => ({ ...execution, lastActivityAt: now, events: [...execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact started", detail: `Thread ${representative.execution!.threadId} — ${reason}`, status: "active" }] }));

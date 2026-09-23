@@ -148,7 +148,7 @@ createServer(async (request, response) => {
   try {
     if (request.method === "OPTIONS") return json(response, 204, {});
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
-    if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true });
+    if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true, app: "jev-codex-pilot" });
     if (request.method === "GET" && url.pathname === "/api/codex-models") {
       const available = await availableCodexModels();
       return json(response, 200, { models: Object.fromEntries(MODEL_LEVELS.map(tier => [tier, selectCodexModelId(tier, available)])), modelLevels: MODEL_LEVELS, reasoningLevels: REASONING_LEVELS, complexityRoutes: COMPLEXITY_ROUTES });

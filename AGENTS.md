@@ -20,3 +20,12 @@
 - Stopped repetitive Codex command and message loops without project progress and prevented automatic loop retries.
 - Replaced standalone delivery with six-level complexity scoring and configurable per-level Codex model and reasoning routes.
 - Clarified TOML model routing, DeepSWE benchmark context, measured token reporting, and per-ticket Telegram status in the README.
+- Preserved the selected queue ticket during live refreshes so pending work remains inspectable and editable while another ticket runs.
+- Added contribution guidance welcoming feedback and bug reports via X while declining code submissions for review.
+- Added a headless jc-pilot CLI that runs tickets through the shared JEV and Codex engine from a project directory.
+- Documented a cross-platform Node entry point for the CLI that avoids global npm links and shell setup.
+- Made CLI help print its actual path and clarified that target projects do not need Node.js.
+- Applied workspace write permissions to every Codex turn, rejected empty implementations, and stopped reusing blocked threads.
+- Added a user-local jc-pilot command installer for Linux, macOS, and Windows without global npm permissions.
+- Removed the incompatible explicit sandbox flag from Codex execution and resume commands; automatic approval review already enables workspace writes.
+- Clarified CLI setup and target-directory commands, automatic path discovery, and storage of machine-specific launcher paths outside the repository.

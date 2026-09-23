@@ -82,7 +82,7 @@ function ProjectWorkspace() {
   const selected = jobs.find(job => job.id === selectedId);
   useTaskCompletionPing(jobs);
 
-  const refresh = async () => { const next = await api<Job[]>(`/jobs?projectId=${encodeURIComponent(id)}`); setJobs(next); setSelectedId(current => { const currentJob = next.find(job => job.id === current); const active = currentJob?.batchId ? next.find(job => job.batchId === currentJob.batchId && job.status === "RUNNING") : next.find(job => job.status === "RUNNING"); const visible = next.filter(job => !job.archivedAt && job.status !== "SKIPPED"); return active?.id ?? current ?? visible[0]?.id; }); };
+  const refresh = async () => { const next = await api<Job[]>(`/jobs?projectId=${encodeURIComponent(id)}`); setJobs(next); setSelectedId(current => { const currentJob = next.find(job => job.id === current); const active = next.find(job => job.status === "RUNNING"); const visible = next.filter(job => !job.archivedAt && job.status !== "SKIPPED"); return currentJob?.id ?? active?.id ?? visible[0]?.id; }); };
   useEffect(() => { void api<ProjectRecord>(`/projects/${id}`).then(async next => { setRecord(next); setProject(await api<ProjectIndex>(`/project?path=${encodeURIComponent(next.path)}`)); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); void refresh(); const timer = window.setInterval(() => void refresh().catch(() => undefined), 900); return () => clearInterval(timer); }, [id]);
 
   const moveTask = (from: number, to: number) => setTasks(items => { if (to < 0 || to >= items.length) return items; const copy = [...items]; const [item] = copy.splice(from, 1); copy.splice(to, 0, item); return copy; });

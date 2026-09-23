@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { CodexModel, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
 import { codexModelId, defaultRoute, MODEL_LEVELS, REASONING_LEVELS, routesForComplexity } from "./codex-models.js";
 import { readDurableJson, writeDurableJson } from "./durable-json.js";
+import { implementationBlocked } from "./codex-execution.js";
 
 
 type ProjectThreadState = {
@@ -43,7 +44,7 @@ export class JobQueue {
           job = { ...job, analysis: { ...job.analysis, ...route, rationale: [...job.analysis.rationale, "Pending recommendation refreshed from config/model.toml."] } };
         }
       }
-      if (job.status === "SUCCESS" && /patch rejected|writing is blocked|impossible d['’]implémenter|could not implement|unable to implement/i.test(job.output ?? "")) {
+      if (job.status === "SUCCESS" && implementationBlocked(job.output ?? "")) {
         return { ...job, status: "FAILED", errorCategory: "code", updatedAt: new Date().toISOString(), error: "Codex reported that it could not implement the task", execution: job.execution ? { ...job.execution, phase: "ERROR" } : undefined } as Job;
       }
       return job;
