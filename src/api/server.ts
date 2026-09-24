@@ -15,7 +15,7 @@ import type { TaskSpec } from "../core/types.js";
 import { TelegramBot } from "../core/telegram-bot.js";
 import { COMPLEXITY_ROUTES, MODEL_LEVELS, REASONING_LEVELS } from "../core/codex-models.js";
 import { availableCodexModels, selectCodexModelId } from "../core/codex-catalog.js";
-import { logJev, logJevError, logSession } from "../core/jev-logger.js";
+import { logJev, logJevApplied, logJevError, logSession } from "../core/jev-logger.js";
 import { acquireApiInstance } from "../core/single-instance.js";
 
 await acquireApiInstance(resolve(process.cwd(), ".jev"));
@@ -32,14 +32,13 @@ const telegram = new TelegramBot({
     if (!projects.hasAgents(project.id)) throw new Error("AGENTS.md is required");
     projects.touch(project.id);
     const ticket = queue.create(project.id, project.path, [{ description: description.trim() }]);
-    logJev(`Task ${ticket.id.slice(0, 8)} created from Telegram and awaiting evaluation`);
     return ticket;
   },
   removeTicket: jobId => queue.removePending(jobId),
   runPending: project => {
-    if (queue.list(project.id).some(job => job.status === "RUNNING")) return "running";
+    if (queue.list(project.id).some(job => job.status === "RUNNING" || job.status === "ESCALATING")) return "running";
     const next = queue.listProjectExecutionOrder(project.id).find(job => !job.archivedAt && job.status === "PENDING");
-    if (!next || orchestrator.isBatchRunning(next.id)) return "empty";
+    if (!next || orchestrator.isProjectRunning(project.id)) return "empty";
     void runWithNotification(next.id, true);
     return "started";
   },
@@ -72,7 +71,7 @@ async function runWithNotification(jobId: string, batch: boolean) {
     else await orchestrator.run(jobId);
   } catch (error) {
     const current = queue.get(jobId);
-    if (current && (current.status === "PENDING" || current.status === "RUNNING") && !orchestrator.ownsProjectRun(current.projectId)) queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start", errorCategory: current.execution ? "codex" : "jev" });
+    if (current && (current.status === "PENDING" || current.status === "RUNNING" || current.status === "ESCALATING") && !orchestrator.ownsProjectRun(current.projectId)) queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start", errorCategory: current.execution ? "codex" : "jev" });
   } finally {
     const project = projects.get(starting.projectId);
     const finished = queue.list(starting.projectId).filter(job => job.attempts > (before.get(job.id) ?? 0) && (job.status === "SUCCESS" || job.status === "FAILED"));
@@ -96,7 +95,7 @@ function processAlive(pid: number) {
 
 /** Stops an orphan only when its PID still belongs to Codex and its heartbeat expired. */
 function stopStaleCodexProcesses() {
-  for (const job of queue.list().filter(item => item.status === "RUNNING" && !orchestrator.ownsProjectRun(item.projectId))) {
+  for (const job of queue.list().filter(item => (item.status === "RUNNING" || item.status === "ESCALATING") && !orchestrator.ownsProjectRun(item.projectId))) {
     const pid = job.execution?.pid;
     const heartbeat = job.execution?.heartbeatAt ?? job.execution?.lastActivityAt;
     if (!pid || !heartbeat || Date.now() - Date.parse(heartbeat) < 30 * 60_000 || !processAlive(pid)) continue;
@@ -257,8 +256,7 @@ createServer(async (request, response) => {
       return json(response, 200, { path: absolute, files, count: files.length, truncated: files.length >= 5000, hasAgents: existsSync(resolve(absolute, "AGENTS.md")), isGitRepository: hasGit, isGithubLinked: hasGit && hasGithubRemote(absolute) });
     }
     if (request.method === "POST" && url.pathname === "/api/jobs") {
-      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[] }>; fixedOrder?: unknown };
-      if (input.fixedOrder !== undefined && typeof input.fixedOrder !== "boolean") return json(response, 400, { error: "Fixed task order must be true or false." });
+      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[] }> };
       const taskInputs = Array.isArray(input.tasks) ? input.tasks.filter(task => task?.description?.trim()) : [];
       for (const task of taskInputs) attachments.validate(task.attachments);
       const tasks = taskInputs.map(task => ({ description: task.description.trim() }));
@@ -266,8 +264,7 @@ createServer(async (request, response) => {
       if (!project || !tasks.length) return json(response, 400, { error: "A saved project and at least one task are required" });
       if (!projects.hasAgents(project.id)) return json(response, 400, { error: "Describe the application and create AGENTS.md before analyzing tasks." });
       projects.touch(project.id);
-      const created = queue.createBatch(project.id, project.path, tasks, input.fixedOrder === true);
-      for (const job of created) logJev(`Task ${job.id.slice(0, 8)} created and awaiting evaluation`);
+      const created = queue.createBatch(project.id, project.path, tasks);
       const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments) })!);
       return json(response, 201, withAttachments);
     }
@@ -280,15 +277,6 @@ createServer(async (request, response) => {
     if (request.method === "PUT" && agentsMatch) {
       const input = await body(request) as { content?: string };
       return json(response, 200, { content: projects.updateAgents(agentsMatch[1], input.content ?? "") });
-    }
-    const threadControlMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/thread\/(compact|clear)$/);
-    if (threadControlMatch) {
-      const [, projectId, action] = threadControlMatch;
-      if (!projects.get(projectId)) return json(response, 404, { error: "Project not found" });
-      if (request.method === "GET") return json(response, 200, orchestrator.projectThreadStatus(projectId));
-      if (request.method !== "POST") return json(response, 405, { error: "Method not allowed" });
-      if (queue.list(projectId).some(job => job.status === "RUNNING")) return json(response, 409, { error: "Wait for the active Codex execution to finish before changing this project thread." });
-      return json(response, 200, action === "compact" ? await orchestrator.compactProjectThread(projectId) : await orchestrator.clearProjectThread(projectId));
     }
     const attachmentMatch = url.pathname.match(/^\/api\/jobs\/([^/]+)\/attachments\/([^/]+)$/);
     if (request.method === "GET" && attachmentMatch) {
@@ -303,7 +291,7 @@ createServer(async (request, response) => {
     const [, id, action] = match; const job = queue.get(id);
     if (!job) return json(response, 404, { error: "Job not found" });
     if (request.method === "GET" && !action) return json(response, 200, job);
-    if (request.method === "POST" && action === "prepare") { await orchestrator.prepare(job); sessionJevJobIds.add(id); if (job.batchId && queue.listBatch(job.batchId).every(item => item.analysis || item.status !== "PENDING")) await orchestrator.classifyBatch(job.batchId); return json(response, 200, queue.get(id)); }
+    if (request.method === "POST" && action === "prepare") { await orchestrator.prepare(job); sessionJevJobIds.add(id); return json(response, 200, queue.get(id)); }
     if (request.method === "POST" && action === "command") return json(response, 200, { command: await orchestrator.command(job) });
     if (request.method === "POST" && action === "skip") return json(response, 200, queue.transition(id, "SKIPPED"));
     if (request.method === "POST" && action === "archive") return json(response, 200, queue.archive(id));
@@ -334,16 +322,19 @@ createServer(async (request, response) => {
       if (input.dimension !== "model" && input.dimension !== "reasoning") return json(response, 400, { error: "Choose model or reasoning to adjust." });
       if (input.delta !== -1 && input.delta !== 1) return json(response, 400, { error: "The adjustment must be exactly one level down or up." });
       const adjusted = queue.adjustAnalysis(id, input.dimension, input.delta);
-      logJev(`Manual JEV ${input.dimension} adjustment applied to task ${id.slice(0, 8)}`);
+      const before = String(job.analysis?.[input.dimension] ?? "unknown");
+      const after = String(adjusted?.analysis?.[input.dimension] ?? "unknown");
+      if (before === after) logJev(`No further ${input.dimension} adjustment is available · task ${id.slice(0, 8)}`);
+      else logJevApplied(`${before.toUpperCase()} → ${after.toUpperCase()}`, `task ${id.slice(0, 8)}`);
       return json(response, 200, adjusted);
     }
     if (request.method === "POST" && action === "run") {
-      if (job.status !== "PENDING" || orchestrator.isBatchRunning(id)) return json(response, 409, { error: "This task cannot start while another execution is active or it is not pending." });
+      if (job.status !== "PENDING" || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "This task cannot start while another execution is active or it is not pending." });
       void runWithNotification(id, false);
       return json(response, 202, queue.get(id));
     }
     if (request.method === "POST" && action === "run-batch") {
-      if (job.status !== "PENDING" || orchestrator.isBatchRunning(id)) return json(response, 409, { error: "This task sequence cannot start while another execution is active or it is not pending." });
+      if (job.status !== "PENDING" || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "This task sequence cannot start while another execution is active or it is not pending." });
       void runWithNotification(id, true);
       return json(response, 202, queue.get(id));
     }

@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
-import { readFileSync, mkdirSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { execFileSync, spawn } from "node:child_process";
+import { readFileSync, mkdirSync, writeFileSync, existsSync, copyFileSync, cpSync, readdirSync, rmSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AppConfigStore } from "../src/core/app-config.js";
 import { activeCodexModelId } from "../src/core/codex-catalog.js";
 import { codexExecPrefix } from "../src/core/codex-execution.js";
@@ -14,11 +14,11 @@ type Command = string[];
 type Price = { inputUsdPerMillion: number; cachedInputUsdPerMillion?: number; outputUsdPerMillion: number };
 type Task = { id: string; prompt: string; checks: Command[]; setup?: Command[]; category?: string; timeoutSeconds?: number };
 type Scenario = { id: string; revision?: string; setup?: Command[]; tasks: Task[] };
-type Suite = { version: 1; repository: string; revision: string; repetitions?: number; scenarios: Scenario[]; pricing?: { codex?: Record<string, Price>; jev?: Pick<Price, "inputUsdPerMillion" | "outputUsdPerMillion"> } };
+type Suite = { version: 1; repository: string; revision?: string; repetitions?: number; scenarios: Scenario[]; pricing?: { codex?: Record<string, Price>; jev?: Pick<Price, "inputUsdPerMillion" | "outputUsdPerMillion"> } };
 type ProcessResult = { code: number | null; timedOut: boolean; stdout: string };
 type ModeResult = { status: string; seconds: number; usage?: CodexUsage; codexTokens?: number; cachedInputTokens?: number; estimatedCostUsd?: number; checkExitCodes: Array<number | null>; passed: boolean; threadId?: string; providerUsage?: JevTokenUsage; routes?: Array<{ stage: string; model: string; reasoning: string }> };
 type TaskResult = { scenario: string; repetition: number; task: string; category?: string; revision: string; model: string; reasoning: string; baseline?: ModeResult; jev?: ModeResult; error?: string };
-type Report = { suite: string; generatedAt: string; source: string; engineRevision: string; engineDirty: boolean; repetitions: number; results: TaskResult[] };
+type Report = { suite: string; generatedAt: string; source: string; sourceIsGit: boolean; engineRevision: string; engineDirty: boolean; repetitions: number; results: TaskResult[] };
 
 const identifier = /^[a-z0-9][a-z0-9_-]*$/i;
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -41,7 +41,7 @@ function validatePrice(value: unknown, label: string): asserts value is Price {
 
 function loadSuite(file: string): Suite {
   const value: unknown = JSON.parse(readFileSync(file, "utf8"));
-  if (!isObject(value) || value.version !== 1 || typeof value.repository !== "string" || !value.repository.trim() || typeof value.revision !== "string" || !value.revision.trim() || !Array.isArray(value.scenarios) || !value.scenarios.length) throw new Error("Suite needs version 1, repository, revision and scenarios");
+  if (!isObject(value) || value.version !== 1 || typeof value.repository !== "string" || !value.repository.trim() || value.revision !== undefined && (typeof value.revision !== "string" || !value.revision.trim()) || !Array.isArray(value.scenarios) || !value.scenarios.length) throw new Error("Suite needs version 1, repository and scenarios; Git repositories also need a revision");
   if (value.repetitions !== undefined && (!Number.isInteger(value.repetitions) || Number(value.repetitions) < 1 || Number(value.repetitions) > 20)) throw new Error("repetitions must be between 1 and 20");
   const scenarioIds = new Set<string>();
   for (const scenario of value.scenarios) {
@@ -116,10 +116,54 @@ async function checkedCommand(command: Command, cwd: string, timeoutSeconds: num
   return result.stdout;
 }
 
-async function cloneAt(repository: string, revision: string, destination: string): Promise<void> {
+function hasGitRepository(directory: string): boolean {
+  try { return execFileSync("git", ["-C", directory, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] }).trim() === "true"; }
+  catch { return false; }
+}
+
+function readAgentsFile(directory: string): Buffer {
+  const names = readdirSync(directory);
+  const candidates = [...(names.includes("AGENTS.md") ? ["AGENTS.md"] : []), ...names.filter(entry => entry !== "AGENTS.md" && entry.toLowerCase() === "agents.md")];
+  const name = candidates.find(entry => {
+    try { return statSync(join(directory, entry)).isFile(); }
+    catch { return false; }
+  });
+  if (!name) throw new Error("The benchmark project needs an AGENTS.md file at its root; any letter case is accepted");
+  return readFileSync(join(directory, name));
+}
+
+function installCanonicalAgents(directory: string, agents: Buffer): void {
+  for (const name of readdirSync(directory)) {
+    if (name.toLowerCase() === "agents.md") rmSync(join(directory, name), { recursive: true, force: true });
+  }
+  writeFileSync(join(directory, "AGENTS.md"), agents);
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const path = relative(resolve(parent), resolve(candidate));
+  return path === "" || path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
+}
+
+async function cloneAt(repository: string, revision: string, destination: string, agents: Buffer): Promise<void> {
   await checkedCommand(["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", repository, destination], repository, 300);
   await checkedCommand(["git", "-C", destination, "checkout", "--quiet", "--detach", revision], repository, 120);
-  if (!existsSync(join(destination, "AGENTS.md"))) throw new Error("The benchmark revision needs a committed AGENTS.md");
+  installCanonicalAgents(destination, agents);
+}
+
+function snapshotAt(repository: string, destination: string, agents: Buffer, outputDirectory: string): void {
+  const excludedOutput = isPathInside(repository, outputDirectory) && resolve(repository) !== resolve(outputDirectory) ? resolve(outputDirectory) : undefined;
+  cpSync(repository, destination, {
+    recursive: true,
+    filter: source => {
+      const path = resolve(source);
+      if (path === resolve(repository)) return true;
+      const name = basename(path);
+      if (name === ".git" || name === ".jev" || name === "node_modules") return false;
+      if (excludedOutput && (path === excludedOutput || path.startsWith(`${excludedOutput}${sep}`))) return false;
+      return true;
+    }
+  });
+  installCanonicalAgents(destination, agents);
 }
 
 async function setup(commands: Command[] | undefined, cwd: string): Promise<void> {
@@ -185,7 +229,7 @@ async function jevRun(task: Task, cwd: string, queue: JobQueue, orchestrator: Or
     if (seconds() - started < (task.timeoutSeconds ?? 1800)) return;
     timedOut = true;
     const current = queue.get(job.id);
-    const pid = current?.status === "RUNNING" ? current.execution?.pid : undefined;
+    const pid = current?.status === "RUNNING" || current?.status === "ESCALATING" ? current?.execution?.pid : undefined;
     if (pid && !killed.has(pid)) {
       killed.add(pid);
       try { process.kill(pid, "SIGTERM"); } catch { /* The child may have exited. */ }
@@ -286,7 +330,10 @@ function markdown(report: Report): string {
     if (details.length) lines.push(`- ${row.scenario} / ${row.task}: ${details.join("; ")}.`);
   }
   if (lines.at(-1) === "") lines.push("- None.");
-  lines.push("", "## Measurement notes", "", "- Each variant starts from the same committed Git revision; a scenario retains its own edits and thread between tasks.", "- Codex tokens are the sum of completed turn usage. Cached input is part of input tokens and is also recorded separately in results.json.", "- Independent checks run after each variant and do not count toward agent tokens or duration.", "- JEV provider usage includes analysis, verification, continuity and separate hook responses when the provider reports usage. The JSON report marks missing usage calls.", "- USD estimates appear in results.json only when the suite supplies prices and all required usage is available. Prices are supplied by the suite author, not fetched live.", "- Failed or incomplete pairs remain visible but are excluded from percentage changes and totals.", "");
+  const sourceNote = report.sourceIsGit
+    ? "- Each variant starts from its selected Git commit, with the current AGENTS.md snapshot saved beside this report; a scenario retains its own edits and thread between tasks."
+    : "- Each variant starts from the same filesystem snapshot copied at launch, with AGENTS.md saved beside this report; `.git`, `.jev`, `node_modules`, and the benchmark output directory are omitted. A scenario retains its own edits and thread between tasks.";
+  lines.push("", "## Measurement notes", "", sourceNote, "- Codex tokens are the sum of completed turn usage. Cached input is part of input tokens and is also recorded separately in results.json.", "- Independent checks run after each variant and do not count toward agent tokens or duration.", "- JEV provider usage includes analysis, verification, continuity and separate hook responses when the provider reports usage. The JSON report marks missing usage calls.", "- USD estimates appear in results.json only when the suite supplies prices and all required usage is available. Prices are supplied by the suite author, not fetched live.", "- Failed or incomplete pairs remain visible but are excluded from percentage changes and totals.", "");
   return lines.join("\n");
 }
 
@@ -308,10 +355,16 @@ async function main(): Promise<void> {
   if (args.some((arg, index) => index > 1 && arg !== "--dry-run" && arg !== "--output" && index !== outputIndex + 1)) throw new Error("Unknown benchmark option");
   const suite = loadSuite(suiteFile);
   const repository = resolve(dirname(suiteFile), suite.repository);
+  const agents = readAgentsFile(repository);
+  const sourceIsGit = hasGitRepository(repository);
+  if (!sourceIsGit && (suite.revision !== undefined || suite.scenarios.some(scenario => scenario.revision !== undefined))) throw new Error("This benchmark project is not a Git repository; omit revision fields to use its current filesystem snapshot");
   const revisions = new Map<string, string>();
-  for (const scenario of suite.scenarios) {
-    const revision = scenario.revision ?? suite.revision;
-    if (!revisions.has(revision)) revisions.set(revision, await checkedCommand(["git", "-C", repository, "rev-parse", "--verify", `${revision}^{commit}`], repository, 30, true));
+  if (sourceIsGit) {
+    for (const scenario of suite.scenarios) {
+      const revision = scenario.revision ?? suite.revision;
+      if (!revision) throw new Error("Git benchmark suites need a revision at suite level or for every scenario");
+      if (!revisions.has(revision)) revisions.set(revision, await checkedCommand(["git", "-C", repository, "rev-parse", "--verify", `${revision}^{commit}`], repository, 30, true));
+    }
   }
   const count = suite.scenarios.reduce((sum, scenario) => sum + scenario.tasks.length, 0) * (suite.repetitions ?? 1);
   if (dryRun) { process.stdout.write(`Benchmark plan: ${count} paired task runs across ${suite.scenarios.length} scenario(s). No agents started.\n`); return; }
@@ -321,20 +374,26 @@ async function main(): Promise<void> {
   mkdirSync(dirname(directory), { recursive: true });
   mkdirSync(directory);
   copyFileSync(suiteFile, join(directory, "suite.json"));
+  writeFileSync(join(directory, "AGENTS.md"), agents);
   const engineRevision = await checkedCommand(["git", "rev-parse", "HEAD"], process.cwd(), 30, true);
   const engineDirty = Boolean(await checkedCommand(["git", "status", "--porcelain"], process.cwd(), 30, true));
-  const report: Report = { suite: suiteFile, generatedAt: new Date().toISOString(), source: repository, engineRevision, engineDirty, repetitions: suite.repetitions ?? 1, results: [] };
+  const report: Report = { suite: suiteFile, generatedAt: new Date().toISOString(), source: repository, sourceIsGit, engineRevision, engineDirty, repetitions: suite.repetitions ?? 1, results: [] };
   writeReport(directory, report);
   process.stdout.write(`Benchmark results: ${directory}\n`);
   for (let repetition = 1; repetition <= report.repetitions; repetition++) {
     for (const [scenarioIndex, scenario] of suite.scenarios.entries()) {
-      const revision = revisions.get(scenario.revision ?? suite.revision)!;
+      const revision = sourceIsGit ? revisions.get(scenario.revision ?? suite.revision!)! : "working-tree snapshot";
       const trial = join(directory, `${scenario.id}-${repetition}`);
       mkdirSync(trial);
       const baselineDirectory = join(trial, "baseline");
       const jevDirectory = join(trial, "jev");
-      await cloneAt(repository, revision, baselineDirectory);
-      await cloneAt(repository, revision, jevDirectory);
+      if (sourceIsGit) {
+        await cloneAt(repository, revision, baselineDirectory, agents);
+        await cloneAt(repository, revision, jevDirectory, agents);
+      } else {
+        snapshotAt(repository, baselineDirectory, agents, directory);
+        snapshotAt(repository, jevDirectory, agents, directory);
+      }
       await setup(scenario.setup, baselineDirectory);
       await setup(scenario.setup, jevDirectory);
       const stateDirectory = join(trial, "state");

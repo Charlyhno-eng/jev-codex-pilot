@@ -47,11 +47,12 @@ const activeJobs = (jobs: Job[]) => jobs.filter(job => !job.archivedAt && job.st
 export function homeScreen(projects: ProjectRecord[], jobsFor: (projectId: string) => Job[], notice?: string): TelegramScreen {
   const jobs = projects.flatMap(project => activeJobs(jobsFor(project.id)));
   const pending = jobs.filter(job => job.status === "PENDING").length;
-  const running = jobs.filter(job => job.status === "RUNNING").length;
+  const running = jobs.filter(job => job.status === "RUNNING" || job.status === "ESCALATING").length;
+  const escalating = jobs.filter(job => job.status === "ESCALATING").length;
   const headline = notice ? `${notice}\n\n` : "";
   return {
     view: "home",
-    text: `${headline}✨ <b>JEV CODEX PILOT</b>\n<i>Your focused project cockpit.</i>\n\n🗂 <b>${projects.length}</b> project${projects.length === 1 ? "" : "s"}   ·   ⏳ <b>${pending}</b> pending   ·   ⚡ <b>${running}</b> running\n\nWhat would you like to do?`,
+    text: `${headline}✨ <b>JEV CODEX PILOT</b>\n<i>Your focused project cockpit.</i>\n\n🗂 <b>${projects.length}</b> project${projects.length === 1 ? "" : "s"}   ·   ⏳ <b>${pending}</b> pending   ·   ⚡ <b>${running}</b> active${escalating ? ` (${escalating} escalating)` : ""}\n\nWhat would you like to do?`,
     buttons: [
       [{ text: "📊  Projects", action: "projects" }, { text: "➕  New ticket", action: "new" }],
       [{ text: `▶️  Launch Codex${pending ? ` · ${pending}` : ""}`, action: "run-menu" }],
@@ -97,10 +98,11 @@ export function projectScreen(project: ProjectRecord, jobs: Job[]): TelegramScre
   const visible = activeJobs(jobs);
   const count = (status: Job["status"]) => visible.filter(job => job.status === status).length;
   const pending = count("PENDING");
-  const running = visible.find(job => job.status === "RUNNING");
+  const running = visible.find(job => job.status === "RUNNING" || job.status === "ESCALATING");
+  const escalating = count("ESCALATING");
   const latest = [...visible].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   const activity = running
-    ? `\n\n⚡ <b>Now running</b>\n${escape(running.tasks[0]?.description ?? "Current ticket")}\n<code>${running.execution?.phase ?? "RUNNING"}</code>`
+    ? `\n\n${running.status === "ESCALATING" ? "↗ <b>Escalating</b>" : "⚡ <b>Now running</b>"}\n${escape(running.tasks[0]?.description ?? "Current ticket")}\n<code>${running.execution?.phase ?? running.status}</code>`
     : latest
       ? `\n\n<b>Latest activity</b>\n${escape(latest.tasks[0]?.description ?? "Untitled ticket")}\n<code>${latest.status}</code>`
       : "\n\n<i>No tickets yet.</i>";
@@ -109,7 +111,7 @@ export function projectScreen(project: ProjectRecord, jobs: Job[]): TelegramScre
   buttons.push([{ text: "←  All projects", action: "projects" }, { text: "⌂  Dashboard", action: "home" }]);
   return {
     view: "project",
-    text: `📊 <b>${escape(project.name).toUpperCase()}</b>\n\n⏳ Pending      <b>${pending}</b>\n⚡ Running      <b>${count("RUNNING")}</b>\n✅ Completed   <b>${count("SUCCESS")}</b>\n⚠️ Failed         <b>${count("FAILED")}</b>${activity}`,
+    text: `📊 <b>${escape(project.name).toUpperCase()}</b>\n\n⏳ Pending      <b>${pending}</b>\n⚡ Running      <b>${count("RUNNING")}</b>\n↗ Escalating   <b>${escalating}</b>\n✅ Completed   <b>${count("SUCCESS")}</b>\n⚠️ Failed         <b>${count("FAILED")}</b>${activity}`,
     buttons
   };
 }

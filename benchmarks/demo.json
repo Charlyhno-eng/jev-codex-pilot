@@ -1,73 +1,40 @@
 {
   "version": 1,
-  "repository": "/home/charly/Téléchargements/benchmark-jev-codex",
-  "revision": "96024f21ca0bbd0ba2fa60605a595e18ae1c22d4",
+  "repository": "/home/charly/Téléchargements/benchmark-test",
   "repetitions": 1,
   "scenarios": [
     {
-      "id": "threejs_brain_lab",
+      "id": "recipe_manager",
       "tasks": [
         {
-          "id": "project_setup_configuration",
+          "id": "vite_react_app_setup",
           "category": "setup",
-          "prompt": "Set up this HTML/CSS/JavaScript project as a modular and scalable Three.js application. Create the project structure, install and configure Three.js, establish the initial application entry points, and integrate the repository's AGENTS.md instructions. Preserve and follow its guidance. Keep the architecture ready for the laboratory, containment tank, and interface tasks that follow.",
+          "prompt": "Following the project's AGENTS.md, set up a React + TypeScript web application with Vite and React Router. There is no backend and no 3D. Add the required scripts, a simple project structure, and reusable base components. Prepare the /, /recipes, /recipes/:id, and /favorites routes, with a shared navigation and a 404 page. Keep the app compiling and leave a clear foundation for adding recipes, search, and favorites in the following tasks.",
           "checks": [
             ["npm", "install"],
-            ["npm", "run", "build"],
-            ["node", "-e", "const p=require('./package.json'); if(!p.dependencies?.three) process.exit(1)"]
+            ["npm", "run", "build"]
           ],
           "timeoutSeconds": 1800
         },
         {
-          "id": "threejs_laboratory_environment",
-          "category": "scene",
-          "prompt": "Create the main Three.js laboratory scene. Add a suitable camera and renderer, lighting, a dark futuristic atmosphere, technological environment elements, and a clear base composition that leaves room for a central brain containment tank and a control computer. Keep the application runnable and preserve the modular structure.",
+          "id": "recipe_data_search_and_filters",
+          "category": "recipes",
+          "prompt": "Build on the existing app with a small set of typed local recipes and an accessible list page at /recipes. Add search and useful filters, such as category or preparation time, and synchronize their values with URL parameters so views can be shared and restored. Handle the no-results state and use reusable components. Preserve the established routes and structure, and ensure the project builds.",
           "checks": [["npm", "run", "build"]],
           "timeoutSeconds": 1800
         },
         {
-          "id": "brain_containment_tank",
-          "category": "tank",
-          "prompt": "Build the central brain containment tank and integrate it into the Three.js laboratory. Create a recognizable brain with procedural geometry or shapes, a transparent glass tank, suitable materials and lighting effects, and a deliberate position and scale within the scene. Keep the implementation modular and ensure the application builds.",
+          "id": "recipe_details_and_persistent_favorites",
+          "category": "features",
+          "prompt": "Add a recipe detail view at /recipes/:id with its ingredients and instructions, along with favorites persisted in localStorage. Create the /favorites page to display and remove favorite recipes, including an empty state. Handle unknown IDs gracefully and connect the views with navigation links. Reuse the typed data and existing components, then ensure the project builds.",
           "checks": [["npm", "run", "build"]],
           "timeoutSeconds": 1800
         },
         {
-          "id": "tank_parameters_state_management",
-          "category": "state",
-          "prompt": "Implement adjustable parameters for the brain containment tank and define a corresponding state model. Connect parameter changes to the 3D scene so the tank visibly responds. Keep state management modular and avoid unnecessary global variables. Preserve the existing scene and make sure the application builds.",
-          "checks": [["npm", "run", "build"]],
-          "timeoutSeconds": 1800
-        },
-        {
-          "id": "control_computer_interface",
-          "category": "interface",
-          "prompt": "Create a futuristic control computer and its interface in the laboratory. Include buttons labeled CERTIFICATIONS, SKILLS, PERSONAL PROJECTS, and BIOGRAPHY. Keep the buttons intentionally non-functional. Organize the interface in a modular structure, integrate it into the scene, and ensure the application builds.",
-          "checks": [["npm", "run", "build"]],
-          "timeoutSeconds": 1800
-        },
-        {
-          "id": "organic_vegetation_environmental_details",
-          "category": "environment",
-          "prompt": "Add wild vegetation growing naturally throughout the laboratory. Blend the organic elements with the technological environment, then refine materials, lighting, atmosphere, and environmental details. Keep the brain tank and control computer intact, and ensure the application builds.",
-          "checks": [["npm", "run", "build"]],
-          "timeoutSeconds": 1800
-        },
-        {
-          "id": "visual_integration_responsive_experience",
-          "category": "responsive",
-          "prompt": "Integrate the 3D laboratory, brain containment tank, control computer, and vegetation into one cohesive immersive experience. Refine camera positioning, lighting, materials, animations, and scene composition. Make the experience adapt correctly to different screen sizes, including renderer resizing and a usable interface on narrow screens. Ensure the application builds.",
-          "checks": [["npm", "run", "build"]],
-          "timeoutSeconds": 1800
-        },
-        {
-          "id": "testing_documentation",
+          "id": "responsive_accessibility_and_final_review",
           "category": "quality",
-          "prompt": "Test the JavaScript functionality and core interactions, fix any issues found, and add concise JSDoc comments to functions. Create an English README covering installation, project structure, architecture, configuration, and usage. Keep the project runnable and document the actual implemented behavior.",
-          "checks": [
-            ["npm", "run", "build"],
-            ["npm", "test"]
-          ],
+          "prompt": "Finish the recipe app by refining its responsive layout and accessibility: keyboard navigation, explicit labels, a consistent heading structure, readable contrast, and visible focus states. Review the home, list, detail, favorites, and 404 views, along with the no-results, unknown-recipe, and empty-favorites states. Fix any integration or functional issues without adding unnecessary dependencies. Before finishing, verify that the project builds without errors and that the main features work correctly.",
+          "checks": [["npm", "run", "build"]],
           "timeoutSeconds": 1800
         }
       ]

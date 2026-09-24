@@ -16,25 +16,10 @@ describe("task archive", () => {
     writeFileSync(file, JSON.stringify(jobs));
     const restored = new JobQueue(data).get(job.id)?.analysis;
     expect(restored?.complexity).toBe(4);
-    expect(restored).toMatchObject({ model: "sol", reasoning: "xhigh" });
+    expect(restored).toMatchObject({ model: "sol", reasoning: "high" });
     expect(restored).not.toHaveProperty("independent_delivery_score");
   });
 
-  it("persists context fingerprints for one thread and invalidates them on compact or clear", () => {
-    const root = mkdtempSync(join(tmpdir(), "jev-context-cache-"));
-    const data = join(root, "data");
-    const queue = new JobQueue(data);
-    queue.recordProjectThread("project", "thread-1");
-    queue.recordProjectContext("project", "thread-1", { "AGENTS.md": "same", "src/app.ts": "before" }, { "AGENTS.md": "same", "src/app.ts": "after" });
-    const restored = new JobQueue(data);
-    expect(restored.reusableProjectContext("project", "thread-1", { "AGENTS.md": "same", "src/app.ts": "after" })).toEqual(["AGENTS.md"]);
-    expect(restored.reusableProjectContext("project", "thread-2", { "AGENTS.md": "same" })).toEqual([]);
-    restored.markProjectCompacted("project");
-    expect(restored.reusableProjectContext("project", "thread-1", { "AGENTS.md": "same" })).toEqual([]);
-    restored.recordProjectContext("project", "thread-1", { "AGENTS.md": "same" }, { "AGENTS.md": "same" });
-    restored.clearProjectThread("project", "thread-1");
-    expect(restored.reusableProjectContext("project", "thread-1", { "AGENTS.md": "same" })).toEqual([]);
-  });
   it("hides a successful task reversibly without changing its execution result", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-queue-"));
     const project = join(root, "project");
@@ -107,7 +92,7 @@ describe("pending recommendation tuning", () => {
     expect(edited.analysis).toBeUndefined();
   });
 
-  it("moves model and reasoning one level while the task is pending", () => {
+  it("keeps pending recommendations within configured routes", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-tuning-"));
     const project = join(root, "project");
     mkdirSync(project);
@@ -115,9 +100,8 @@ describe("pending recommendation tuning", () => {
     const job = queue.create("project", project, [{ description: "Move two buttons" }]);
     queue.update(job.id, { analysis: { complexity: 2, task_types: ["ui_ux"], model: "luna", reasoning: "high", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
 
-    expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis).toMatchObject({ model: "sol", reasoning: "low" });
-    queue.update(job.id, { analysis: { ...queue.get(job.id)!.analysis!, reasoning: "medium" } });
-    expect(queue.adjustAnalysis(job.id, "reasoning", -1)?.analysis?.reasoning).toBe("low");
+    expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis).toMatchObject({ model: "luna", reasoning: "high" });
+    expect(queue.adjustAnalysis(job.id, "reasoning", -1)?.analysis?.reasoning).toBe("high");
     expect(queue.adjustAnalysis(job.id, "model", -1)?.analysis?.model).toBe("luna");
   });
 });

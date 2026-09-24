@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { changedProjectFiles, snapshotProject, type ProjectSnapshot } from "./verification-scope.js";
+import { changedProjectFiles, snapshotProject, type ProjectSnapshot } from "./project-snapshot.js";
 
 /** Detects repeated Codex actions while allowing repetitions that change project files. */
 export class CodexLoopDetector {

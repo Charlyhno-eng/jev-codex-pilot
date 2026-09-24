@@ -16,7 +16,7 @@ const help = `Usage: ${cliCommand} run "describe one task"
        ${cliCommand} status [ticket-id]
 
 Run from the project directory. The command analyses the task with JEV, runs
-Codex with the selected model and bounded context, and waits for validation.
+Codex with the selected model, and waits for validation.
 The project needs AGENTS.md; on an interactive terminal, JEV can create it
 from a short description you provide. Existing JEV settings and history are
 shared with the web application.
@@ -75,11 +75,11 @@ async function runViaApi(base: string, projectDirectory: string, description: st
   if (!settings.configured) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
   const project = await request<ProjectRecord>(base, "/projects", "POST", { path: projectDirectory, context });
   const jobs = await request<Job[]>(base, `/jobs?projectId=${encodeURIComponent(project.id)}`);
-  if (jobs.some(job => job.status === "RUNNING")) fail("A Codex execution is already running for this project.");
+  if (jobs.some(job => job.status === "RUNNING" || job.status === "ESCALATING")) fail("A Codex execution is already running for this project.");
   const [created] = await request<Job[]>(base, "/jobs", "POST", { projectId: project.id, tasks: [{ description }] });
   say(`Ticket ${created.id} created in ${projectDirectory}`);
   const prepared = await request<Job>(base, `/jobs/${created.id}/prepare`, "POST");
-  if (prepared.analysis) say(`JEV: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning} · ${prepared.analysis.context_files.length} context files`);
+  if (prepared.analysis) say(`JEV: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
   await request<Job>(base, `/jobs/${created.id}/run`, "POST");
   say("Codex started. Waiting for JEV validation…");
   let lastPhase = "";
@@ -87,6 +87,7 @@ async function runViaApi(base: string, projectDirectory: string, description: st
     const job = await request<Job>(base, `/jobs/${created.id}`);
     const phase = `${job.status}:${job.execution?.phase ?? ""}`;
     if (phase !== lastPhase && job.status === "RUNNING") say(`Codex: ${job.execution?.phase.toLowerCase() ?? "working"}`);
+    if (phase !== lastPhase && job.status === "ESCALATING") say(`JEV escalation: ${job.analysis?.model ?? "Codex"}/${job.analysis?.reasoning ?? "next route"}`);
     lastPhase = phase;
     if (done(job)) { summary(job); process.exitCode = job.status === "SUCCESS" ? 0 : 1; return; }
     await new Promise(resolve => setTimeout(resolve, 900));
@@ -100,13 +101,13 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   const queue = new JobQueue(dataDirectory);
   queue.recoverInterrupted(pid => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; } });
   const project = projects.create(projectDirectory, undefined, context);
-  if (queue.list(project.id).some(job => job.status === "RUNNING")) fail("A Codex execution is already running for this project.");
+  if (queue.list(project.id).some(job => job.status === "RUNNING" || job.status === "ESCALATING")) fail("A Codex execution is already running for this project.");
   projects.touch(project.id);
   const job = queue.create(project.id, project.path, [{ description }]);
   say(`Ticket ${job.id} created in ${projectDirectory}`);
   const orchestrator = new Orchestrator(queue);
   const prepared = await orchestrator.prepare(job);
-  if (prepared?.analysis) say(`JEV: ${prepared.analysis.context_files.length} context files selected`);
+  if (prepared?.analysis) say(`JEV: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
   const result = await orchestrator.run(job.id);
   if (result.status === "SUCCESS" || result.status === "FAILED") {
     const telegramSettings = config.read();

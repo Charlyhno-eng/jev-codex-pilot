@@ -15,14 +15,13 @@ describe("Codex model catalog", () => {
     expect(codexModelId("luna")).toBe("gpt-future-luna");
   });
 
-  it("applies the six configured default routes", () => {
-    expect([0, 1, 2, 3, 4, 5].map(level => defaultRoute(level as 0 | 1 | 2 | 3 | 4 | 5))).toEqual([
-      { model: "luna", reasoning: "low" },
+  it("applies the five configured default routes", () => {
+    expect([1, 2, 3, 4, 5].map(level => defaultRoute(level as 1 | 2 | 3 | 4 | 5))).toEqual([
       { model: "luna", reasoning: "medium" },
       { model: "luna", reasoning: "high" },
-      { model: "sol", reasoning: "medium" },
-      { model: "sol", reasoning: "xhigh" },
-      { model: "astra", reasoning: "high" }
+      { model: "luna", reasoning: "max" },
+      { model: "sol", reasoning: "high" },
+      { model: "sol", reasoning: "xhigh" }
     ]);
   });
 
@@ -36,17 +35,17 @@ describe("Codex model catalog", () => {
     const file = join(mkdtempSync(join(tmpdir(), "jev-model-routes-")), "model.toml");
     const content = readFileSync(resolve("config/model.toml"), "utf8")
       .replace('astra = "gpt-6-astra"', 'astra = "gpt-6-astra"\nnova = "gpt-next-nova"')
-      .replace('routes = ["sol:medium", "sol:high"]', 'routes = ["nova:high", "sol:medium"]');
+      .replace('routes = ["luna:max"]', 'routes = ["nova:high", "sol:medium"]');
     writeFileSync(file, content);
     expect(readCodexSettings(file).complexityRoutes[3]).toEqual([
       { model: "nova", reasoning: "high" }, { model: "sol", reasoning: "medium" }
     ]);
-    expect(defaultRoute(0)).toEqual({ model: "luna", reasoning: "low" });
+    expect(defaultRoute(1)).toEqual({ model: "luna", reasoning: "medium" });
   });
 
   it("rejects routes whose model or reasoning is not configured", () => {
     const file = join(mkdtempSync(join(tmpdir(), "jev-invalid-routes-")), "model.toml");
     writeFileSync(file, readFileSync(resolve("config/model.toml"), "utf8").replace("sol:xhigh", "unknown:xhigh"));
-    expect(() => readCodexSettings(file)).toThrow(/Invalid complexity 4 route/);
+    expect(() => readCodexSettings(file)).toThrow(/Invalid complexity 5 route/);
   });
 });

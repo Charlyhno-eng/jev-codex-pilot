@@ -1,24 +1,19 @@
 # JEV benchmark results
 
-Generated: 2026-09-23T19:27:20.849Z
+Generated: 2026-09-24T14:29:22.136Z
 Suite snapshot: suite.json
-JEV revision: 65e8f32a1b7c26809379f4acde713516b52e96ba (working tree changed)
+JEV revision: 55f850e38331da67a4bc6b1df75426b91b5f69e2 (working tree changed)
 Repetitions: 1
 
 ## Summary
 
-- Planned tasks: 8; both passed with token usage: 8.
-- Baseline passed: 8; JEV passed: 8.
-- Median Codex token change on tasks both passed: -64.8% (input + output, cached input included once).
-- setup: 1 paired pass(es), median change -75.7%.
-- scene: 1 paired pass(es), median change -62.2%.
-- tank: 1 paired pass(es), median change -51.7%.
-- state: 1 paired pass(es), median change -57.5%.
-- interface: 1 paired pass(es), median change -64.8%.
-- environment: 1 paired pass(es), median change -66.2%.
-- responsive: 1 paired pass(es), median change -76.7%.
-- test: 1 paired pass(es), median change -75.7%.
-
+- Planned tasks: 4; both passed with token usage: 4.
+- Baseline passed: 4; JEV passed: 4.
+- Median Codex token change on tasks both passed: -22.9% (input + output, cached input included once).
+- setup: 1 paired pass(es), median change +15.3%.
+- recipes: 1 paired pass(es), median change -20.5%.
+- features: 1 paired pass(es), median change -25.3%.
+- quality: 1 paired pass(es), median change -44.5%.
 
 Results are exploratory until the suite includes enough representative tasks and repetitions. A percentage change is reported only for pairs where both independent checks passed and Codex usage is complete.
 
@@ -32,17 +27,13 @@ Consumption is Codex input plus output tokens; performance is elapsed agent time
 <tr><th align="right">Baseline</th><th align="right">JEV</th><th align="right">Δ %</th><th align="right">Baseline</th><th align="right">JEV</th><th align="right">Δ %</th></tr>
 </thead>
 <tbody>
-<tr><th scope="row">threejs_brain_lab / project_setup_configuration</th><td align="right">501,228</td><td align="right">121,973</td><td align="right">-75.7%</td><td align="right">288.6 s</td><td align="right">97.8 s</td><td align="right">-66.1%</td></tr>
-<tr><th scope="row">threejs_brain_lab / threejs_laboratory_environment</th><td align="right">876,597</td><td align="right">331,200</td><td align="right">-62.2%</td><td align="right">177.6 s</td><td align="right">175.0 s</td><td align="right">-1.4%</td></tr>
-<tr><th scope="row">threejs_brain_lab / brain_containment_tank</th><td align="right">1,147,822</td><td align="right">553,980</td><td align="right">-51.7%</td><td align="right">149.7 s</td><td align="right">157.0 s</td><td align="right">+4.8%</td></tr>
-<tr><th scope="row">threejs_brain_lab / tank_parameters_state_management</th><td align="right">1,621,866</td><td align="right">688,673</td><td align="right">-57.5%</td><td align="right">136.5 s</td><td align="right">96.1 s</td><td align="right">-29.6%</td></tr>
-<tr><th scope="row">threejs_brain_lab / control_computer_interface</th><td align="right">2,302,991</td><td align="right">810,662</td><td align="right">-64.8%</td><td align="right">189.6 s</td><td align="right">85.3 s</td><td align="right">-55.0%</td></tr>
-<tr><th scope="row">threejs_brain_lab / organic_vegetation_environmental_details</th><td align="right">3,009,822</td><td align="right">1,016,615</td><td align="right">-66.2%</td><td align="right">197.0 s</td><td align="right">173.1 s</td><td align="right">-12.2%</td></tr>
-<tr><th scope="row">threejs_brain_lab / visual_integration_responsive_experience</th><td align="right">5,262,293</td><td align="right">1,223,486</td><td align="right">-76.7%</td><td align="right">317.1 s</td><td align="right">156.2 s</td><td align="right">-50.8%</td></tr>
-<tr><th scope="row">threejs_brain_lab / testing_documentation</th><td align="right">7,495,954</td><td align="right">1,818,887</td><td align="right">-75.7%</td><td align="right">378.9 s</td><td align="right">180.1 s</td><td align="right">-52.4%</td></tr>
+<tr><th scope="row">recipe_manager / vite_react_app_setup</th><td align="right">404,554</td><td align="right">466,360</td><td align="right">+15.3%</td><td align="right">389.4 s</td><td align="right">178.9 s</td><td align="right">-54.0%</td></tr>
+<tr><th scope="row">recipe_manager / recipe_data_search_and_filters</th><td align="right">1,207,428</td><td align="right">959,856</td><td align="right">-20.5%</td><td align="right">383.2 s</td><td align="right">242.8 s</td><td align="right">-36.6%</td></tr>
+<tr><th scope="row">recipe_manager / recipe_details_and_persistent_favorites</th><td align="right">2,574,858</td><td align="right">1,922,942</td><td align="right">-25.3%</td><td align="right">380.5 s</td><td align="right">244.5 s</td><td align="right">-35.7%</td></tr>
+<tr><th scope="row">recipe_manager / responsive_accessibility_and_final_review</th><td align="right">6,483,735</td><td align="right">3,597,714</td><td align="right">-44.5%</td><td align="right">835.7 s</td><td align="right">493.1 s</td><td align="right">-41.0%</td></tr>
 </tbody>
 <tfoot>
-<tr><th scope="row">TOTAL</th><th align="right">14,722,619</th><th align="right">4,746,589</th><th align="right">-67.8%</th><th align="right">24.3 min</th><th align="right">15.7 min</th><th align="right">-35.4%</th></tr>
+<tr><th scope="row">TOTAL</th><th align="right">10,670,575</th><th align="right">6,946,872</th><th align="right">-34.9%</th><th align="right">33.1 min</th><th align="right">19.3 min</th><th align="right">-41.7%</th></tr>
 </tfoot>
 </table>
 
@@ -50,19 +41,20 @@ Consumption is Codex input plus output tokens; performance is elapsed agent time
 
 | Scenario / task | Repeat | Route | Baseline | JEV | JEV provider tokens | Cost B/J |
 | --- | ---: | --- | --- | --- | ---: | --- |
-| threejs_brain_lab / project_setup_configuration | 1 | gpt-6-sol medium | completed / pass | success / pass | 1701 | — / — |
-| threejs_brain_lab / threejs_laboratory_environment | 1 | gpt-6-sol medium | completed / pass | success / pass | 2152 | — / — |
-| threejs_brain_lab / brain_containment_tank | 1 | gpt-6-sol medium | completed / pass | success / pass | 2235 | — / — |
-| threejs_brain_lab / tank_parameters_state_management | 1 | gpt-6-sol medium | completed / pass | success / pass | 2394 | — / — |
-| threejs_brain_lab / control_computer_interface | 1 | gpt-6-sol medium | completed / pass | success / pass | 2490 | — / — |
-| threejs_brain_lab / organic_vegetation_environmental_details | 1 | gpt-6-sol medium | completed / pass | success / pass | 2642 | — / — |
-| threejs_brain_lab / visual_integration_responsive_experience | 1 | gpt-6-sol medium | completed / pass | success / pass | 2748 | — / — |
-| threejs_brain_lab / testing_documentation | 1 | gpt-6-luna high | completed / pass | success / check pass | 2829 | — / — |
+| recipe_manager / vite_react_app_setup | 1 | gpt-6-luna max | completed / pass | success / pass | 1669 | — / — |
+| recipe_manager / recipe_data_search_and_filters | 1 | gpt-6-luna max | completed / pass | success / pass | 2309 | — / — |
+| recipe_manager / recipe_details_and_persistent_favorites | 1 | gpt-6-luna max | completed / pass | success / pass | 2300 | — / — |
+| recipe_manager / responsive_accessibility_and_final_review | 1 | gpt-6-luna max | completed / pass | success / pass | 2367 | — / — |
+
+## Check failures and skipped tasks
+
+- None.
 
 ## Measurement notes
 
-- Each variant starts from the same committed Git revision; a scenario retains its own edits and thread between tasks.
+- Each variant starts from the same filesystem snapshot copied at launch, with AGENTS.md saved beside this report; `.git`, `.jev`, `node_modules`, and the benchmark output directory are omitted. A scenario retains its own edits and thread between tasks.
 - Codex tokens are the sum of completed turn usage. Cached input is part of input tokens and is also recorded separately in results.json.
 - Independent checks run after each variant and do not count toward agent tokens or duration.
 - JEV provider usage includes analysis, verification, continuity and separate hook responses when the provider reports usage. The JSON report marks missing usage calls.
 - USD estimates appear in results.json only when the suite supplies prices and all required usage is available. Prices are supplied by the suite author, not fetched live.
+- Failed or incomplete pairs remain visible but are excluded from percentage changes and totals.

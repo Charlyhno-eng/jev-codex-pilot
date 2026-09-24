@@ -13,7 +13,7 @@ describe("Telegram screens", () => {
     const jobs = [job("PENDING"), job("RUNNING"), job("SUCCESS", "old", { archivedAt: "2026-01-02" }), job("SKIPPED")];
     const home = homeScreen([project], () => jobs);
     expect(home.text).toContain("<b>1</b> pending");
-    expect(home.text).toContain("<b>1</b> running");
+    expect(home.text).toContain("<b>1</b> active");
     expect(projectScreen(project, jobs).buttons.flat().some(button => button.action === "run")).toBe(true);
     expect(runProjectScreen([project], () => jobs.filter(item => item.status === "PENDING")).buttons[0][0].argument).toBe(project.id);
     expect(runProjectScreen([project], () => []).text).toContain("QUEUE CLEAR");

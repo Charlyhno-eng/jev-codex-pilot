@@ -3,10 +3,11 @@ import logoUrl from "../../../assets/jev-codex-pilot-logo2.png";
 import { api } from "../lib/api.js";
 import type { Job } from "../lib/types.js";
 
-type TicketState = "RUNNING" | "SUCCESS" | "FAILED";
+type TicketState = "RUNNING" | "ESCALATING" | "SUCCESS" | "FAILED";
 
 const STATE_COLORS: Record<TicketState, string> = {
   RUNNING: "#5c9dff",
+  ESCALATING: "#bf91ff",
   SUCCESS: "#70dcff",
   FAILED: "#ff718c"
 };
@@ -43,7 +44,7 @@ export function useBrowserTabIndicator() {
   useEffect(() => {
     let previous = "";
     const update = () => void api<Job[]>("/jobs").then(jobs => {
-      const states = (["RUNNING", "SUCCESS", "FAILED"] as TicketState[]).filter(state => jobs.some(job => job.status === state));
+      const states = (["RUNNING", "ESCALATING", "SUCCESS", "FAILED"] as TicketState[]).filter(state => jobs.some(job => job.status === state));
       const next = states.join(",");
       if (next === previous) return;
       previous = next;

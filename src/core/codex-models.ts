@@ -14,11 +14,10 @@ export interface CodexSettings {
 const fallbackModels = { luna: "gpt-6-luna", sol: "gpt-6-sol", astra: "gpt-6-astra" };
 const fallbackReasoning = ["low", "medium", "high", "xhigh", "max"];
 const fallbackRoutes: Record<Complexity, string[]> = {
-  0: ["luna:low"], 1: ["luna:medium", "luna:high"],
-  2: ["sol:medium", "luna:high", "luna:max", "sol:low"], 3: ["sol:medium", "sol:high"],
-  4: ["sol:xhigh", "sol:max", "astra:low", "astra:medium"], 5: ["astra:high"]
+  1: ["luna:medium"], 2: ["luna:high"], 3: ["luna:max"],
+  4: ["sol:high"], 5: ["sol:xhigh"]
 };
-const complexityLevels: Complexity[] = [0, 1, 2, 3, 4, 5];
+const complexityLevels: Complexity[] = [1, 2, 3, 4, 5];
 
 function parseString(value: string): string | undefined {
   try { const parsed: unknown = JSON.parse(value); return typeof parsed === "string" && parsed.trim() ? parsed.trim() : undefined; }
@@ -93,9 +92,25 @@ export function defaultRoute(complexity: Complexity): ModelRoute { return routes
 export function allowedEfforts(complexity: Complexity, model: CodexModel): Reasoning[] {
   return REASONING_LEVELS.filter(reasoning => routesForComplexity(complexity).some(route => route.model === model && route.reasoning === reasoning));
 }
-/** Selects the nearest allowed reasoning level for a route. */
-export function clampRouteReasoning(complexity: Complexity, model: CodexModel, requested: Reasoning): Reasoning {
-  const allowed = allowedEfforts(complexity, model);
+const escalationRoutes: readonly ModelRoute[] = [
+  { model: "luna", reasoning: "low" },
+  { model: "luna", reasoning: "medium" },
+  { model: "luna", reasoning: "high" },
+  { model: "luna", reasoning: "max" },
+  { model: "sol", reasoning: "high" },
+  { model: "sol", reasoning: "xhigh" }
+];
+
+/** Returns the next stronger route when a Codex ticket attempt fails. */
+export function nextEscalationRoute(model: CodexModel, reasoning: Reasoning): ModelRoute | undefined {
+  const index = escalationRoutes.findIndex(route => route.model === model && route.reasoning === reasoning);
+  const next = index >= 0 ? escalationRoutes[index + 1] : undefined;
+  return next && settings.models[next.model] && settings.reasoningLevels.includes(next.reasoning) ? next : undefined;
+}
+
+/** Keeps continuation reasoning within the configured range for its model. */
+export function clampModelReasoning(model: CodexModel, requested: Reasoning): Reasoning {
+  const allowed = Object.values(COMPLEXITY_ROUTES).flat().filter(route => route.model === model).map(route => route.reasoning);
   if (!allowed.length) return clampReasoning(model, requested);
   return allowed.reduce((best, effort) => Math.abs(reasoningIndex(effort) - reasoningIndex(requested)) < Math.abs(reasoningIndex(best) - reasoningIndex(requested)) ? effort : best);
 }
@@ -120,14 +135,12 @@ export function reasoningIndex(value: Reasoning): number {
   return 0;
 }
 
-/** Returns the manual/code reasoning range supported by one routing tier. */
-export function reasoningBounds(tier: CodexModel, _taskTypes: readonly string[] = []): { minimum: number; maximum: number } {
+function reasoningBounds(tier: CodexModel): { minimum: number; maximum: number } {
   const allowed = Object.values(COMPLEXITY_ROUTES).flat().filter(route => route.model === tier).map(route => reasoningIndex(route.reasoning));
   return { minimum: Math.min(...allowed), maximum: Math.max(...allowed) };
 }
 
-/** Keeps reasoning within the configured model bounds. */
-export function clampReasoning(tier: CodexModel, reasoning: Reasoning, taskTypes: readonly string[] = []): Reasoning {
-  const bounds = reasoningBounds(tier, taskTypes);
+function clampReasoning(tier: CodexModel, reasoning: Reasoning): Reasoning {
+  const bounds = reasoningBounds(tier);
   return reasoningAt(Math.max(bounds.minimum, Math.min(bounds.maximum, reasoningIndex(reasoning))));
 }

@@ -1,43 +1,45 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { CodexModel, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
+import type { CodexModel, Complexity, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
 import { codexModelId, defaultRoute, MODEL_LEVELS, REASONING_LEVELS, routesForComplexity } from "./codex-models.js";
 import { readDurableJson, writeDurableJson } from "./durable-json.js";
 import { implementationBlocked } from "./codex-execution.js";
 
 
-type ProjectThreadState = {
-  activeThreadId?: string;
-  successfulSinceCompaction: number;
-  contextThreadId?: string;
-  contextFiles?: Record<string, string>;
-};
-
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && value.every(job => isRecord(job) && typeof job.id === "string" && typeof job.projectId === "string" && typeof job.projectPath === "string" && Array.isArray(job.tasks) && job.tasks.every((task: unknown) => isRecord(task) && typeof task.description === "string") && ["PENDING", "RUNNING", "SESSION_PAUSED", "SUCCESS", "FAILED", "SKIPPED"].includes(String(job.status)) && typeof job.createdAt === "string" && Number.isInteger(job.attempts) && (!job.execution || isRecord(job.execution) && Array.isArray(job.execution.events)));
-const validThreads = (value: unknown): value is Record<string, ProjectThreadState> => isRecord(value) && Object.values(value).every(state => isRecord(state) && Number.isInteger(state.successfulSinceCompaction) && (state.activeThreadId === undefined || typeof state.activeThreadId === "string") && (state.contextThreadId === undefined || typeof state.contextThreadId === "string") && (state.contextFiles === undefined || isRecord(state.contextFiles) && Object.values(state.contextFiles).every(hash => typeof hash === "string")));
+const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && value.every(job => isRecord(job) && typeof job.id === "string" && typeof job.projectId === "string" && typeof job.projectPath === "string" && Array.isArray(job.tasks) && job.tasks.every((task: unknown) => isRecord(task) && typeof task.description === "string") && ["PENDING", "RUNNING", "ESCALATING", "SESSION_PAUSED", "SUCCESS", "FAILED", "SKIPPED"].includes(String(job.status)) && typeof job.createdAt === "string" && Number.isInteger(job.attempts) && (!job.execution || isRecord(job.execution) && Array.isArray(job.execution.events)));
 
 /** Persists and updates ticket queue state. */
 export class JobQueue {
   private jobs: Job[] = [];
   private readonly file: string;
-  private readonly threadStateFile: string;
-  private threadStates: Record<string, ProjectThreadState> = {};
   constructor(dataDirectory = ".jev") {
     mkdirSync(dataDirectory, { recursive: true });
     this.file = join(dataDirectory, "jobs.json");
-    this.threadStateFile = join(dataDirectory, "thread-state.json");
     this.jobs = readDurableJson(this.file, validJobs, () => []);
-    this.threadStates = readDurableJson(this.threadStateFile, validThreads, () => ({}));
     this.jobs = this.jobs.map(job => {
-      if (job.analysis && typeof job.analysis.complexity === "string") {
-        const legacy: Record<string, 0 | 1 | 2 | 4 | 5> = { trivial: 0, low: 1, medium: 2, high: 4, very_high: 5 };
-        const old = job.analysis as typeof job.analysis & { independent_delivery_score?: number };
-        const { independent_delivery_score: _removed, ...analysis } = old;
-        job = { ...job, analysis: { ...analysis, complexity: legacy[String(old.complexity)] ?? 2 } };
+      const current = { ...job } as Job & Record<string, unknown>;
+      delete current["fixedOrder"];
+      delete current["submittedOrder"];
+      return current;
+    });
+    this.jobs = this.jobs.map(job => {
+      if (job.analysis) {
+        const old = job.analysis as unknown as Record<string, unknown>;
+        const legacy: Record<string, Complexity> = { trivial: 1, low: 1, medium: 2, high: 4, very_high: 5 };
+        const rawComplexity = old.complexity;
+        const complexity = typeof rawComplexity === "string"
+          ? legacy[rawComplexity] ?? 2
+          : typeof rawComplexity === "number" && Number.isFinite(rawComplexity)
+            ? Math.max(1, Math.min(5, Math.round(rawComplexity))) as Complexity
+            : 2;
+        if (complexity !== rawComplexity || old.independent_delivery_score !== undefined) {
+          const { independent_delivery_score: _removed, ...analysis } = old;
+          job = { ...job, analysis: { ...analysis, complexity } as unknown as typeof job.analysis };
+        }
       }
-      if (job.status === "PENDING" && job.analysis) {
+      if (job.status === "PENDING" && job.analysis && !job.execution?.escalationPending) {
         const routes = routesForComplexity(job.analysis.complexity);
         if (!routes.some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)) {
           const route = defaultRoute(job.analysis.complexity);
@@ -53,16 +55,6 @@ export class JobQueue {
   }
   private persist() {
     writeDurableJson(this.file, this.jobs);
-    writeDurableJson(this.threadStateFile, this.threadStates);
-  }
-  private threadState(projectId: string): ProjectThreadState {
-    const existing = this.threadStates[projectId];
-    if (existing) return existing;
-    const successfulSinceCompaction = this.jobs.filter(job => job.projectId === projectId && job.status === "SUCCESS").length % 3;
-    const activeThreadId = this.jobs
-      .filter(job => job.projectId === projectId && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.execution?.threadId;
-    return this.threadStates[projectId] = { activeThreadId, successfulSinceCompaction };
   }
   list(projectId?: string): Job[] { return this.jobs.filter(job => !projectId || job.projectId === projectId).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || (a.order ?? 0) - (b.order ?? 0)); }
   listProjectExecutionOrder(projectId: string): Job[] {
@@ -77,70 +69,20 @@ export class JobQueue {
   create(projectId: string, projectPath: string, tasks: TaskSpec[]): Job {
     return this.createBatch(projectId, projectPath, tasks)[0];
   }
-  createBatch(projectId: string, projectPath: string, tasks: TaskSpec[], fixedOrder = false): Job[] {
+  /** Creates independently queued tickets in their submitted order. */
+  createBatch(projectId: string, projectPath: string, tasks: TaskSpec[]): Job[] {
     const now = new Date().toISOString();
     const batchId = randomUUID();
-    const jobs = tasks.map((task, order): Job => ({ id: randomUUID(), projectId, batchId, order, submittedOrder: order, fixedOrder, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
+    const jobs = tasks.map((task, order): Job => ({ id: randomUUID(), projectId, batchId, order, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
     this.jobs.push(...jobs); this.persist(); return jobs;
   }
   update(id: string, change: Partial<Job>): Job | undefined {
     const index = this.jobs.findIndex(j => j.id === id); if (index < 0) return undefined;
     this.jobs[index] = { ...this.jobs[index], ...change, updatedAt: new Date().toISOString() }; this.persist(); return this.jobs[index];
   }
-  recordProjectThread(projectId: string, threadId: string) {
-    const state = this.threadState(projectId);
-    if (state.contextThreadId !== threadId) { state.contextThreadId = threadId; state.contextFiles = {}; }
-    state.activeThreadId = threadId;
-    this.persist();
-  }
-  reusableProjectContext(projectId: string, threadId: string, fingerprints: Record<string, string>): string[] {
-    const state = this.threadState(projectId);
-    if (state.contextThreadId !== threadId) return [];
-    return Object.keys(fingerprints).filter(path => state.contextFiles?.[path] === fingerprints[path]);
-  }
-  recordProjectContext(projectId: string, threadId: string, before: Record<string, string>, after: Record<string, string>) {
-    const state = this.threadState(projectId);
-    if (state.activeThreadId !== threadId) return;
-    if (state.contextThreadId !== threadId) { state.contextThreadId = threadId; state.contextFiles = {}; }
-    for (const path of Object.keys(before)) {
-      if (after[path] === before[path]) state.contextFiles![path] = after[path];
-      else delete state.contextFiles![path];
-    }
-    this.persist();
-  }
-  invalidateProjectContext(projectId: string) {
-    const state = this.threadState(projectId);
-    state.contextFiles = {};
-    this.persist();
-  }
-  activeProjectThread(projectId: string) {
-    const state = this.threadState(projectId);
-    if (state.activeThreadId) return state.activeThreadId;
-    const threadId = this.jobs
-      .filter(job => job.projectId === projectId && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.execution?.threadId;
-    if (threadId) { state.activeThreadId = threadId; this.persist(); }
-    return threadId;
-  }
-  successesSinceCompaction(projectId: string) { return this.threadState(projectId).successfulSinceCompaction; }
-  recordSuccessfulTasks(projectId: string, count: number) {
-    const state = this.threadState(projectId);
-    state.successfulSinceCompaction += count;
-    this.persist();
-    return state.successfulSinceCompaction;
-  }
-  markProjectCompacted(projectId: string) {
-    this.threadState(projectId).successfulSinceCompaction = 0;
-    this.threadState(projectId).contextFiles = {};
-    this.persist();
-  }
-  clearProjectThread(projectId: string, threadId: string, detail = "The user cleared this project thread; the next task starts a fresh Codex conversation.") {
+  /** Archives every saved ticket entry that belongs to a cleared Codex thread. */
+  clearProjectThread(projectId: string, threadId: string, detail = "JEV cleared this project thread; the next task starts a fresh Codex conversation.") {
     const now = new Date().toISOString();
-    const state = this.threadState(projectId);
-    if (state.activeThreadId === threadId) state.activeThreadId = undefined;
-    state.successfulSinceCompaction = 0;
-    state.contextThreadId = undefined;
-    state.contextFiles = {};
     this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId ? job : {
       ...job,
       execution: {
@@ -148,6 +90,15 @@ export class JobQueue {
         threadArchivedAt: now,
         events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system" as const, title: "Codex /clear confirmed", detail, status: "success" as const }]
       }
+    });
+    this.persist();
+  }
+  /** Prevents JEV from resuming a thread whose automatic archive failed. */
+  disableProjectThreadResume(projectId: string, threadId: string) {
+    const now = new Date().toISOString();
+    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId ? job : {
+      ...job,
+      execution: { ...job.execution, threadResumeDisabledAt: now }
     });
     this.persist();
   }
@@ -163,14 +114,17 @@ export class JobQueue {
   /** Recovers work only when its former Codex process is no longer alive. */
   recoverInterrupted(isActive: (pid: number) => boolean, owned: (projectId: string) => boolean = () => false): Job[] {
     const recovered: Job[] = [];
-    for (const job of this.jobs.filter(item => item.status === "RUNNING" && !owned(item.projectId))) {
+    for (const job of this.jobs.filter(item => (item.status === "RUNNING" || item.status === "ESCALATING") && !owned(item.projectId))) {
       if (job.execution?.pid && isActive(job.execution.pid)) {
         if (!job.recoveryNote) this.update(job.id, { errorCategory: "interruption", recoveryNote: "Server restarted while the previous Codex process is still active. Waiting for that process to exit before allowing a new launch." });
         continue;
       }
       const now = new Date().toISOString();
-      const note = "Server execution was interrupted. Codex is no longer running; review the project before restarting this ticket.";
-      const updated = this.update(job.id, { status: "PENDING", error: undefined, errorCategory: "interruption", recoveryNote: note, execution: job.execution ? { ...job.execution, phase: "QUEUED", pid: undefined, lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: "Execution interrupted", detail: note, status: "active" }] } : undefined });
+      const wasEscalating = job.status === "ESCALATING" || job.execution?.escalationPending;
+      const note = wasEscalating
+        ? "JEV was interrupted during model escalation. Review the partial work before resuming at the selected route."
+        : "Server execution was interrupted. Codex is no longer running; review the project before restarting this ticket.";
+      const updated = this.update(job.id, { status: "PENDING", error: undefined, errorCategory: "interruption", recoveryNote: note, execution: job.execution ? { ...job.execution, phase: "QUEUED", pid: undefined, lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: wasEscalating ? "Escalation interrupted" : "Execution interrupted", detail: note, status: "active" }] } : undefined });
       if (updated) recovered.push(updated);
     }
     return recovered;
@@ -222,14 +176,19 @@ export class JobQueue {
       detail: status === "SUCCESS" ? "A user confirmed that this task is complete." : `A user returned this ${job.status.toLowerCase()} task to the pending column.`,
       status: "success" as const
     };
+    const retryRoute = status === "PENDING" && job.analysis && !routesForComplexity(job.analysis.complexity).some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)
+      ? defaultRoute(job.analysis.complexity)
+      : undefined;
     return this.update(id, {
       status,
+      analysis: retryRoute && job.analysis ? { ...job.analysis, ...retryRoute, rationale: [...job.analysis.rationale, "Manual retry restarted at the complexity default route."] } : job.analysis,
       error: undefined,
       errorCategory: undefined,
       recoveryNote: undefined,
       archivedAt: undefined,
       execution: job.execution ? {
         ...job.execution,
+        escalationPending: false,
         phase: status === "SUCCESS" ? "COMPLETED" : "ERROR",
         completedAt: status === "SUCCESS" ? (job.execution.completedAt ?? now) : undefined,
         events: [...job.execution.events, event]

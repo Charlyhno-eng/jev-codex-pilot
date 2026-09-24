@@ -1,7 +1,7 @@
-export type Complexity = 0 | 1 | 2 | 3 | 4 | 5;
+export type Complexity = 1 | 2 | 3 | 4 | 5;
 export type CodexModel = string;
 export type Reasoning = string;
-export type JobStatus = "PENDING" | "RUNNING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
+export type JobStatus = "PENDING" | "RUNNING" | "ESCALATING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
 export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "loop" | "quota" | "interruption" | "telegram" | "jev";
 export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";
 
@@ -39,16 +39,23 @@ export interface ExecutionState {
   completedAt?: string;
   pid?: number;
   threadId?: string;
-  /** The rollout was archived through the project's explicit /clear control. */
+  /** The rollout was archived after JEV found the next ticket unrelated. */
   threadArchivedAt?: string;
+  /** The thread must not be resumed after its automatic archive failed. */
+  threadResumeDisabledAt?: string;
+  /** The ticket is progressing through JEV's automatic model escalation ladder. */
+  escalationPending?: boolean;
+  /** Whether any attempt in this escalation chain changed project files. */
+  projectChangesDetected?: boolean;
+  /** The continuity decision already made for the next queued ticket. */
+  reviewedNextTaskId?: string;
+  reviewedNextContinuity?: "related" | "unrelated" | "uncertain";
   usage?: CodexUsage;
   /** A best-effort account-wide usage snapshot captured from Codex app-server. */
   accountUsage?: CodexAccountUsage;
   codexStatus?: CodexStatusSnapshot;
   /** Planning and reported usage metrics for this Codex execution. */
   metrics?: CodexExecutionMetrics;
-  /** Present when compatible, independently analysed jobs shared one Codex prompt. */
-  group?: CodexExecutionGroup;
   compactedAfterTask?: boolean;
   verification: "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
   verificationNote?: string;
@@ -67,9 +74,7 @@ export interface CodexExecutionMetrics {
   estimateBasis?: "scope" | "project_history";
   actualTokens?: number;
   turns: number;
-  repairs: number;
-  stoppedAfterValidation?: boolean;
-  routes: Array<{ stage: "implementation" | "verification" | "repair"; model: string; reasoning: Reasoning; usage?: CodexUsage }>;
+  routes: Array<{ stage: "implementation"; model: string; reasoning: Reasoning; usage?: CodexUsage }>;
 }
 
 export interface CodexAccountUsage {
@@ -93,12 +98,6 @@ export interface CodexStatusSnapshot {
   unavailableReason?: string;
 }
 
-export interface CodexExecutionGroup {
-  id: string;
-  size: number;
-  position: number;
-}
-
 export interface JevAnalysis {
   complexity: Complexity;
   /** Advisory score for how clearly the ticket describes its expected result. */
@@ -106,8 +105,9 @@ export interface JevAnalysis {
   task_types: string[];
   model: CodexModel;
   reasoning: Reasoning;
-  context_files: string[];
-  files_to_modify: string[];
+  /** Legacy fields retained when reading older ticket history. */
+  context_files?: string[];
+  files_to_modify?: string[];
   rationale: string[];
   evaluator: "typesafe-ai/jev";
   evaluation_usage?: {
@@ -124,8 +124,6 @@ export interface Job {
   projectId: string;
   batchId?: string;
   order?: number;
-  submittedOrder?: number;
-  fixedOrder?: boolean;
   projectPath: string;
   tasks: TaskSpec[];
   attachments?: JobAttachment[];

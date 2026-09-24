@@ -9,22 +9,19 @@ astra = "gpt-6-astra"
 [reasoning]
 levels = ["low", "medium", "high", "xhigh", "max"]
 
-# Each level lists permitted model:effort pairs. The first pair is JEV's default.
+# Each level from 1 to 5 lists permitted model:effort pairs. The first pair is JEV's default.
 # Edit model IDs above, then these routes when models or recommendations change.
-[complexity.0]
+[complexity.1]
 routes = ["luna:medium"]
 
-[complexity.1]
+[complexity.2]
 routes = ["luna:high"]
 
-[complexity.2]
-routes = ["luna:xhigh", "luna:max"]
-
 [complexity.3]
-routes = ["sol:high", "sol:xhigh"]
+routes = ["luna:max"]
 
 [complexity.4]
-routes = ["sol:xhigh", "astra:low", "astra:medium"]
+routes = ["sol:high"]
 
 [complexity.5]
-routes = ["astra:high"]
+routes = ["sol:xhigh"]

@@ -5,14 +5,13 @@ import { join } from "node:path";
 import { analyze } from "../../src/core/analyzer.js";
 
 describe("JEV model policy", () => {
-  it("uses Luna low for level-zero installation work", async () => {
+  it("uses the lowest complexity route for installation work", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-install-"));
     writeFileSync(join(root, "AGENTS.md"), "Project rules");
     writeFileSync(join(root, "package.json"), "{}");
-    const result = await analyze(root, [{ description: "Install the libraries required for the game" }], async () => ({ taskType: "installation", complexity: 0 }));
+    const result = await analyze(root, [{ description: "Install the libraries required for the game" }], async () => ({ taskType: "installation", complexity: 1 }));
     expect(result.model).toBe("luna");
-    expect(result.reasoning).toBe("low");
-    expect(result.files_to_modify).toContain("package.json");
+    expect(result.reasoning).toBe("medium");
   });
 
   it("keeps outcome clarity and complexity independently of model selection", async () => {
@@ -23,12 +22,12 @@ describe("JEV model policy", () => {
     expect(result.model).toBe("luna");
   });
 
-  it("uses Sol Extra High for level-four UI and UX work", async () => {
+  it("uses Sol High for level-four UI and UX work", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-ui-"));
     writeFileSync(join(root, "AGENTS.md"), "Build a browser game");
     const result = await analyze(root, [{ description: "Create a polished laboratory interface with animated flames" }], async () => ({ taskType: "ui_ux", complexity: 4 }));
     expect(result.model).toBe("sol");
-    expect(result.reasoning).toBe("xhigh");
+    expect(result.reasoning).toBe("high");
   });
 
   it("uses Luna medium for a low-complexity UI adjustment", async () => {
@@ -59,11 +58,11 @@ describe("JEV model policy", () => {
     expect(result.reasoning).toBe("high");
   });
 
-  it("uses GPT-6 Astra High for exceptional high-risk work", async () => {
+  it("uses the configured Sol route for exceptional high-risk work", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-critical-"));
     const result = await analyze(root, [{ description: "Audit the critical distributed security architecture" }], async () => ({ taskType: "security", complexity: 5 }));
-    expect(result.model).toBe("astra");
-    expect(result.reasoning).toBe("high");
+    expect(result.model).toBe("sol");
+    expect(result.reasoning).toBe("xhigh");
   });
 
   it("uses JEV's decision and recommends Sol for level-four architecture", async () => {
@@ -77,26 +76,17 @@ describe("JEV model policy", () => {
     expect(result.evaluation_usage?.estimated_cost_usd).toBe(0.00000168);
   });
 
-  it("always includes README.md in the context when the project has one", async () => {
-    const root = mkdtempSync(join(tmpdir(), "jev-readme-"));
-    writeFileSync(join(root, "AGENTS.md"), "Project rules");
-    writeFileSync(join(root, "README.md"), "Project overview");
-    const result = await analyze(root, [{ description: "Fix the game" }], async () => ({ taskType: "bugfix", complexity: 1 }));
-    expect(result.context_files.slice(0, 2)).toEqual(["AGENTS.md", "README.md"]);
-  });
-
-  it("prioritizes JEV-selected implementation files in Codex guidance", async () => {
+  it("does not select project files during task analysis", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-files-"));
     writeFileSync(join(root, "AGENTS.md"), "Project rules");
     writeFileSync(join(root, "orchestrator.ts"), "export {};");
     writeFileSync(join(root, "unrelated.ts"), "export {};");
-    const result = await analyze(root, [{ description: "Fix repeated verification" }], async state => {
-      expect(JSON.parse(state).project.fileCandidates).toContain("orchestrator.ts");
-      return { taskType: "bugfix", complexity: 2, relevantFiles: ["orchestrator.ts", "outside.ts"] };
+    const state = await analyze(root, [{ description: "Fix repeated verification" }], async input => {
+      expect(JSON.parse(input).project).toEqual({ agents: "Project rules" });
+      return { taskType: "bugfix", complexity: 2 };
     });
-    expect(result.context_files).toContain("orchestrator.ts");
-    expect(result.files_to_modify).toContain("orchestrator.ts");
-    expect(result.files_to_modify).not.toContain("outside.ts");
+    expect(state).not.toHaveProperty("context_files");
+    expect(state).not.toHaveProperty("files_to_modify");
   });
 
 });

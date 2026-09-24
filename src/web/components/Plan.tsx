@@ -19,7 +19,7 @@ export function Plan({ analysis, adjustable, onAdjust }: { analysis: Analysis; a
       <div><small>MODEL</small><b>{modelName}</b></div>
       <div><small>REASONING</small><b>{reasoningLabel(analysis.reasoning)}</b></div>
       <div title="How clearly does this ticket describe the result that should be achieved?"><small>EXPECTED OUTCOME CLARITY</small><b>{analysis.outcome_clarity_score === undefined ? "—" : `${analysis.outcome_clarity_score}%`}</b></div>
-      <div title="JEV's assessment of the task's implementation difficulty on a six-level scale."><small>COMPLEXITY</small><b>{analysis.complexity}/5</b></div>
+      <div title="JEV's assessment of the task's implementation difficulty on a five-level scale."><small>COMPLEXITY</small><b>{analysis.complexity}/5</b></div>
     </div>
     {analysis.outcome_clarity_score !== undefined && analysis.outcome_clarity_score < 60 && <p className="score-advisory">The ticket is still valid, but its expected result may need clarification before Codex starts.</p>}
     {adjustable && <div className="jev-tuning">
@@ -29,7 +29,5 @@ export function Plan({ analysis, adjustable, onAdjust }: { analysis: Analysis; a
     </div>}
     <div className="type-list"><span>{analysis.evaluator ?? "legacy analyzer"}</span>{analysis.task_types.map(type => <span key={type}>{type.replace("_", " / ")}</span>)}{analysis.evaluation_usage?.total_tokens !== undefined && <span>{analysis.evaluation_usage.total_tokens} JEV tokens</span>}{analysis.evaluation_usage?.estimated_cost_usd !== undefined && <span>≈ {formatUsd(analysis.evaluation_usage.estimated_cost_usd)} JEV cost</span>}</div>
     <ul>{analysis.rationale.map(item => <li key={item}>{item}</li>)}</ul>
-  </div><div className="scope-panel"><p className="panel-label">MINIMAL CONTEXT</p><FileGroup title="Context" values={analysis.context_files}/></div></div>;
+  </div></div>;
 }
-
-function FileGroup({ title, values }: { title: string; values: string[] }) { return <div className="file-group"><div><span className="scope-dot context"/><b>{title}</b><small>{values.length}</small></div>{values.length ? <ul>{values.map(value => <li key={value}>{value}</li>)}</ul> : <p>Nothing inferred</p>}</div>; }

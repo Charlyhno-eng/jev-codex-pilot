@@ -9,7 +9,6 @@ export type JevDecision = {
   taskType: TaskType;
   complexity: Complexity;
   outcomeClarityScore?: number;
-  relevantFiles?: string[];
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
 };
 
@@ -17,7 +16,6 @@ export type JevProvider = {
   id: string;
   inputUsdPerMillionTokens: number;
   evaluate(state: string): Promise<JevDecision>;
-  evaluateVerification(state: string): Promise<boolean>;
   evaluateContinuity(state: string): Promise<"related" | "unrelated" | "uncertain">;
 };
 
@@ -38,12 +36,11 @@ const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
 };
 
 export const COMPLEXITY_CRITERIA = [
-  "0 — Documentation, running tests, installation commands, or similarly mechanical work.",
-  "1 — Simple or semi-structured work: small refactor, small feature, technical Q&A, short script, or extraction.",
-  "2 — Medium feature, standard debugging, limited multi-file work, or simple business workflow.",
-  "3 — Complex multi-step feature, non-trivial refactor, standard agentic coding, or multi-tool workflow.",
-  "4 — Difficult or long task: architecture, hard debugging, long-horizon coding, or serious computer use.",
-  "5 — Frontier or critical task: major architecture, security, science, very long horizon, or demanding computer use."
+  "1 — Documentation, running tests, installation commands, and other straightforward or mechanical work; also very light UI/UX polish with a tiny, clearly bounded visual adjustment.",
+  "2 — Simple or semi-structured work: small refactor, small feature, technical Q&A, short script, or extraction; also conventional, relatively simple UI/UX changes such as a straightforward layout or styling adjustment.",
+  "3 — Medium feature, standard debugging, limited multi-file work, or simple business workflow; also medium UI/UX work, including interface work involving 3D.",
+  "4 — Complex multi-step feature, non-trivial refactor, architecture, or hard debugging; also complex UI/UX work, including substantial or technically demanding 3D interface work.",
+  "5 — Critical or long-horizon work: major architecture, security, science, or demanding computer use; also critical or long-horizon UI/UX work with unusually broad or technically demanding requirements."
 ] as const;
 
 export const OUTCOME_CLARITY_CRITERIA = [
@@ -70,9 +67,6 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
     id: VERCEL_AI_GATEWAY_EVALUATOR_ID,
     inputUsdPerMillionTokens: JEV_INPUT_USD_PER_MILLION_TOKENS,
     async evaluate(state) {
-      const project = JSON.parse(state) as { project?: { fileCandidates?: string[] } };
-      const candidates = (project.project?.fileCandidates ?? []).slice(0, 120);
-      const fileChoices = Object.fromEntries([["none", "No clearly relevant file in the list."], ...candidates.map((path, index) => [`f${index}`, path])]);
       const result = await evaluate({
         model,
         state,
@@ -85,54 +79,22 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           complexity: {
             type: "score",
             criteria: COMPLEXITY_CRITERIA,
-            instructions: "Score this task alone from 0 to 5. Judge the actual reasoning and implementation difficulty, not repository size, language, or other queued tasks. Use 0 for documentation, running tests, and installation commands; 1 for clearly bounded routine changes."
+            instructions: "Score this task alone from 1 to 5. Judge the actual reasoning and implementation difficulty, not repository size, language, or other queued tasks. Use 1 for documentation, running tests, installation commands, and clearly bounded routine changes."
           },
           outcomeClarity: {
             type: "score",
             criteria: OUTCOME_CLARITY_CRITERIA,
             instructions: "Score how clearly this ticket describes the expected result, using its project AGENTS.md context. Judge the outcome and observable behavior, not how many implementation details or file names are specified. This is advisory only."
-          },
-          primaryFile: {
-            type: "choice",
-            criteria: fileChoices,
-            instructions: "Choose the most likely source, test, style, or configuration file Codex should inspect first for this task. Pick none if no candidate is credible. Prefer a concrete implementation file over general project documentation."
-          },
-          secondaryFile: {
-            type: "choice",
-            criteria: fileChoices,
-            instructions: "Choose a second distinct file only when it is directly relevant to implementing this task. Otherwise choose none. Avoid unrelated files and project-wide reading."
           }
         }
       });
       recordJevUsage(result.usage);
-      const chosen = [result.answers.primaryFile.choice, result.answers.secondaryFile.choice]
-        .map(key => /^f\d+$/.test(key) ? candidates[Number(key.slice(1))] : undefined)
-        .filter((path): path is string => Boolean(path));
       return {
         taskType: result.answers.taskType.choice,
-        complexity: Math.max(0, Math.min(5, Math.round(result.answers.complexity.score))) as Complexity,
+        complexity: Math.max(1, Math.min(5, Math.round(result.answers.complexity.score) + 1)) as Complexity,
         outcomeClarityScore: scorePercentage(result.answers.outcomeClarity.score),
-        relevantFiles: [...new Set(chosen)],
         usage: result.usage
       };
-    },
-    async evaluateVerification(state) {
-      const result = await evaluate({
-        model,
-        state,
-        questions: {
-          runAffectedTests: {
-            type: "choice",
-            criteria: {
-              yes: "The actual added, changed, or deleted files have relevant existing tests in the provided candidate list. Run only those tests.",
-              no: "The changes are documentation-only, or no listed test can meaningfully check the changed behavior. Do not run tests."
-            },
-            instructions: "Decide whether Codex should run targeted tests for the current ticket. Use only the changed files and candidate tests in the state. Never request a full test suite, a broad build, or dependency installation. Prefer yes for changed code with a directly related test."
-          }
-        }
-      });
-      recordJevUsage(result.usage);
-      return result.answers.runAffectedTests.choice === "yes";
     },
     async evaluateContinuity(state) {
       const result = await evaluate({
@@ -144,7 +106,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
             criteria: {
               related: "The next task continues the completed feature, fixes its outcome, or needs decisions and implementation context from it.",
               unrelated: "The next task is independent and can start from the project files and instructions without the completed task's conversation.",
-              uncertain: "The task descriptions and likely files do not establish whether the prior conversation will help."
+              uncertain: "The task descriptions do not establish whether the prior conversation will help."
             },
             instructions: "Compare only the completed task and the next pending task in this project. Shared repository, common documentation, or a broad category alone does not make tasks related. Choose unrelated only when independence is clear; otherwise choose uncertain."
           }
