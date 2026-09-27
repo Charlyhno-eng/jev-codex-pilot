@@ -12,7 +12,7 @@ export type Escalation = { kind: "escalation"; reason: "text_or_code" | "low_con
 export type OffloadResult = { kind: "jev"; answer: PureAnswer } | Escalation;
 
 export type HookEvent = {
-  hook_event_name: "PreToolUse" | "PostToolUse" | "PreCompact";
+  hook_event_name: "PreToolUse" | "PostToolUse" | "PreCompact" | "SessionStart";
   session_id?: string;
   turn_id?: string;
   tool_use_id?: string;
@@ -22,4 +22,5 @@ export type HookEvent = {
   tool_input?: unknown;
   tool_response?: unknown;
   trigger?: "manual" | "auto";
+  source?: "startup" | "resume" | "clear" | "compact";
 };

@@ -9,3 +9,9 @@ Do not change target project code or run its tests as part of JEV. Create or edi
 Give every exported function a concise adjacent JSDoc comment explaining its purpose. Record each delivered change in this file as a concise English paragraph. Earlier delivery notes are archived in `docs/agents-history.md`.
 
 This update documents the project overview and replaces the README's CLI loop example with sequential commands joined by `&&`.
+
+This update replaces advisory context review with Jev-scored tool-pair compaction. Pre-compaction processing now preserves user and assistant text, classifies paired calls and results as `keep`, `drop_result`, or `drop_call`, stores a redacted private checkpoint, and restores missing critical context through Codex's post-compaction `SessionStart` lifecycle.
+
+This update replaces the demo benchmark's recipe manager scenario with seven sequential English tasks for a frontend-only Three.js, TypeScript, and Tailwind laboratory portfolio.
+
+This update refreshes the README's JEV benchmark summary with the September 27, 2026 laboratory-portfolio run results.

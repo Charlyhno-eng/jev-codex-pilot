@@ -26,13 +26,15 @@ The current defaults are **Luna Medium/High/Max** for complexity levels 1–3 an
 
 ## JEV benchmark
 
-In the latest paired run, all four recipe-manager tasks passed in both variants. JEV used **22.9% fewer Codex tokens at the median** and **41.7% less total elapsed time**. This is one short, exploratory sequence; see the [full report](docs/benchmark-results/report.md), [archived results](docs/benchmark-results/), and [benchmark guide](docs/benchmark.md) for measurements and reproduction details.
+In the latest paired run on September 27, 2026, all seven laboratory-portfolio tasks passed in both variants. JEV used **69.8% fewer total Codex tokens** and **48.4% less elapsed time** than direct Codex. This was one exploratory repetition; see the [full report](docs/benchmark-results/report2.md), [archived results](docs/benchmark-results/), and [benchmark guide](docs/benchmark.md) for measurements and reproduction details.
 
 ## Optimisation
 
 JEV scores each ticket from 1 to 5 and starts Codex on the model and reasoning route configured for that level. Codex can request another implementation turn with stronger reasoning, chooses the checks that fit the task, and reports the commands it ran. JEV records their results and stops repeated failed actions when the project has not changed.
 
 When another ticket is queued, JEV reviews whether it relates to the completed work. It clears unrelated work and compacts a related or uncertain thread after the context reaches 100,000 tokens.
+
+Before native Codex compaction, JEV replays the active transcript and pairs completed tool calls with their results. It independently decides whether to keep each pair verbatim, keep the call with a bounded result (`drop_result`), or remove the pair (`drop_call`). User and assistant text remains verbatim, the newest transcript items are pinned, and malformed or unavailable JEV decisions fall back to native compaction. The retained context is written to a private temporary checkpoint with secrets redacted. After Codex compacts the thread, a `SessionStart` hook compares the compacted history with that checkpoint and immediately restores missing high-priority content within a fixed context budget; overflow remains available in the private checkpoint.
 
 Tickets submitted together are analyzed and executed separately in queue order. Launching a sequence drains every pending ticket for that project, including tickets added while it runs. JEV applies the selected model and reasoning level independently to each ticket.
 

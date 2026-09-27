@@ -7,11 +7,13 @@ export function codexHookArgs(): string[] {
   const loader = resolve(root, "node_modules/tsx/dist/loader.mjs");
   const runner = resolve(root, "src/core/hooks/runner.ts");
   const command = `${JSON.stringify(process.execPath)} --import ${JSON.stringify(loader)} ${JSON.stringify(runner)}`;
-  const handler = `{type="command",command=${JSON.stringify(command)},timeout=3}`;
+  const shellHandler = `{type="command",command=${JSON.stringify(command)},timeout=3}`;
+  const compactHandler = `{type="command",command=${JSON.stringify(command)},timeout=60}`;
+  const restoreHandler = `{type="command",command=${JSON.stringify(command)},timeout=10,additionalContextLimit=40000}`;
   return [
     "-c", "features.hooks=true",
-    "-c", `hooks.PreToolUse=[{matcher="^Bash$",hooks=[${handler}]}]`,
-    "-c", `hooks.PostToolUse=[{matcher="*",hooks=[${handler}]}]`,
-    "-c", `hooks.PreCompact=[{matcher="*",hooks=[${handler}]}]`
+    "-c", `hooks.PreToolUse=[{matcher="^Bash$",hooks=[${shellHandler}]}]`,
+    "-c", `hooks.PreCompact=[{matcher="^(manual|auto)$",hooks=[${compactHandler}]}]`,
+    "-c", `hooks.SessionStart=[{matcher="^compact$",hooks=[${restoreHandler}]}]`
   ];
 }
