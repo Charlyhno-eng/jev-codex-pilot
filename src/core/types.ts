@@ -142,12 +142,14 @@ export interface Job {
   /** Archived tasks stay in history but are hidden from the active board. */
   archivedAt?: string;
   execution?: ExecutionState;
+  gitDelivery?: { status: "pending" | "committed" | "pushed" | "failed" | "skipped"; branch?: string; startHead?: string; commit?: string; message?: string; error?: string };
 }
 
 export interface ProjectRecord {
   id: string;
   name: string;
   path: string;
+  autoCommitPush?: boolean;
   /** True only when JEV created the project's initial AGENTS.md file. */
   agentsCreatedByJev?: boolean;
   /** Hidden from the JEV workspace list, but retained locally so history can be restored by re-adding the same folder. */

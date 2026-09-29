@@ -9,6 +9,7 @@ import { fetchVercelGatewayCredits, VERCEL_AI_GATEWAY_DASHBOARD_URL } from "../c
 import { AppConfigStore, maskedApiKey } from "../core/app-config.js";
 import { listProjectFiles } from "../core/project-reader.js";
 import { readProjectDiff } from "../core/git-diff.js";
+import { pushGitBranch, readGitWorkspace, selectGitBranch } from "../core/git-workspace.js";
 import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
@@ -22,6 +23,7 @@ await acquireApiInstance(resolve(process.cwd(), ".jev"));
 const queue = new JobQueue(resolve(process.cwd(), ".jev"));
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
 const orchestrator = new Orchestrator(queue);
+orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
 const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const telegram = new TelegramBot({
@@ -186,7 +188,29 @@ createServer(async (request, response) => {
     const diffMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/diff$/);
     if (request.method === "GET" && diffMatch) {
       const project = projects.get(diffMatch[1]);
-      return project ? json(response, 200, readProjectDiff(project.path)) : json(response, 404, { error: "Project not found" });
+      return project ? json(response, 200, readProjectDiff(project.path, url.searchParams.get("commit") ?? undefined)) : json(response, 404, { error: "Project not found" });
+    }
+    const gitMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/git(?:\/(branch|settings|push))?$/);
+    if (gitMatch) {
+      const project = projects.get(gitMatch[1]);
+      if (!project) return json(response, 404, { error: "Project not found" });
+      if (request.method === "GET" && !gitMatch[2]) return json(response, 200, readGitWorkspace(project.path));
+      if (request.method === "POST" && gitMatch[2] === "branch") {
+        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before changing branches." });
+        const input = await body(request) as { name?: unknown; create?: unknown };
+        if (typeof input.name !== "string" || typeof input.create !== "boolean") return json(response, 400, { error: "A branch name and create choice are required." });
+        return json(response, 200, selectGitBranch(project.path, input.name, input.create));
+      }
+      if (request.method === "POST" && gitMatch[2] === "push") {
+        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before pushing." });
+        return json(response, 200, pushGitBranch(project.path));
+      }
+      if (request.method === "PUT" && gitMatch[2] === "settings") {
+        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before changing Git automation." });
+        const input = await body(request) as { autoCommitPush?: unknown };
+        if (typeof input.autoCommitPush !== "boolean") return json(response, 400, { error: "autoCommitPush must be true or false." });
+        return json(response, 200, projects.setAutoCommitPush(project.id, input.autoCommitPush));
+      }
     }
     if (request.method === "GET" && url.pathname === "/api/billing") {
       const apiKey = appConfig.read().aiGatewayApiKey;

@@ -40,6 +40,8 @@ export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMo
               <span>{job.status === "SESSION_PAUSED" ? `Waiting for Codex session${job.sessionResumeAt ? ` · resumes after ${new Date(job.sessionResumeAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}` : job.status === "ESCALATING" ? `Escalating to ${job.analysis ? `${modelName(job.analysis.model)} · ${reasoningLabel(job.analysis.reasoning)}` : "next route"}` : job.analysis ? `${modelName(job.analysis.model)} · ${reasoningLabel(job.analysis.reasoning)}` : "Waiting for JEV"}{job.attachments?.length ? ` · ${job.attachments.length} image${job.attachments.length === 1 ? "" : "s"}` : ""}</span>
               {job.recoveryNote && <em className="queue-verification-note">{job.recoveryNote}</em>}
               {job.error && <em className="queue-verification-note">{job.errorCategory ?? "error"}: {job.error}</em>}
+              {job.gitDelivery?.status === "failed" && <em className="queue-verification-note">Git delivery failed: {job.gitDelivery.error}</em>}
+              {(job.gitDelivery?.status === "committed" || job.gitDelivery?.status === "pushed") && <em className="queue-verification-note">Committed {job.gitDelivery.commit} on {job.gitDelivery.branch}{job.gitDelivery.message ? ` · ${job.gitDelivery.message}` : ""}</em>}
               {job.execution?.verificationNote && <em className="queue-verification-note">{job.execution.verificationNote}</em>}
               {job.notificationError && <em className="queue-verification-note">Telegram notification failed: {job.notificationError}</em>}
             </button>

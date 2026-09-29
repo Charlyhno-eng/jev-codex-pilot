@@ -257,7 +257,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     mkdirSync(project); mkdirSync(bin);
     writeFileSync(join(project, "package.json"), "{}");
     const fakeCodex = join(bin, "codex");
-    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{"type":"thread.started","thread_id":"paused-thread"}' '{"type":"error","message":"You’ve hit your usage limit. Try again at Sep 26th, 2026 3:17 PM."}' '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again at Sep 26th, 2026 3:17 PM."}}'\nexit 1\n`);
+    writeFileSync(fakeCodex, `#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{"type":"thread.started","thread_id":"paused-thread"}' '{"type":"error","message":"You’ve hit your usage limit. Try again at Sep 26th, 2099 3:17 PM."}' '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again at Sep 26th, 2099 3:17 PM."}}'\nexit 1\n`);
     chmodSync(fakeCodex, 0o755);
     process.env.PATH = `${bin}:${originalPath}`;
 
@@ -272,7 +272,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     expect(paused.status).toBe("SESSION_PAUSED");
     expect(paused.execution?.events.some(event => event.title === "Codex session limit reached")).toBe(true);
     expect(paused.execution?.threadId).toBe("paused-thread");
-    expect(paused.sessionResumeAt).toBe(new Date(Date.parse("Sep 26, 2026 3:17 PM") + 60_000).toISOString());
+    expect(paused.sessionResumeAt).toBe(new Date(Date.parse("Sep 26, 2099 3:17 PM") + 60_000).toISOString());
     expect(statusReads).toBe(1);
     expect(await orchestrator.resumeSessionPausedJobs()).toHaveLength(0);
     expect(queue.get(job.id)?.status).toBe("SESSION_PAUSED");

@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -21,5 +21,4 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npx tsc --noEmit --noUnusedLocals --noUnusedParameters
       - run: npm test

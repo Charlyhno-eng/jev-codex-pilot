@@ -12,6 +12,7 @@ import { logJev, logJevApplied, logJevError, logSession } from "./jev-logger.js"
 import { buildCodexCommand, buildCodexPrompt } from "./prompt.js";
 import { changedProjectFiles, snapshotProject } from "./project-snapshot.js";
 import { codexHookArgs } from "./hooks/codex-config.js";
+import { commitMessageFromOutput, deliverGitTicket, prepareGitDelivery } from "./git-workspace.js";
 import type { JobQueue } from "./queue.js";
 import type { CodexAccountUsage, CodexModel, CodexStatusSnapshot, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
 
@@ -238,7 +239,11 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
 export class Orchestrator {
   private runningProjects = new Set<string>();
   private continuityDecisions = new Map<string, "related" | "unrelated" | "uncertain">();
+  private autoGitEnabled: (projectId: string) => boolean = () => false;
   constructor(private queue: JobQueue, private analyzer = analyze, private compactor: (threadId: string) => Promise<void> = compactThread, private accountUsageReader: () => Promise<CodexAccountUsage> = readCodexAccountUsage, private archiver: (threadId: string) => Promise<void> = archiveThread, private rateLimitReader: () => Promise<CodexRateLimit> = readCodexRateLimit, private statusReader: (threadId?: string) => Promise<CodexStatusSnapshot> = readCodexStatusSnapshot, private continuityReviewer: (completed: Job[], next: Job) => Promise<"related" | "unrelated" | "uncertain"> = assessTaskContinuity) {}
+
+  /** Connects persisted project Git preferences to ticket execution. */
+  configureGitDelivery(enabled: (projectId: string) => boolean) { this.autoGitEnabled = enabled; }
 
   async prepare(job: Job) {
     if (!existsSync(job.projectPath)) throw new Error(`Project not found: ${job.projectPath}`);
@@ -303,6 +308,7 @@ export class Orchestrator {
         try {
           const completed = await this.runWithEscalation(current);
           if (completed.status === "SESSION_PAUSED") break;
+          if (completed.gitDelivery?.status === "failed") break;
           const lastOrder = completed.status === "SUCCESS" ? completed.order ?? Number.MAX_SAFE_INTEGER : -1;
           if (lastOrder < 0) continue;
           const failures = this.queue.listBatch(first.batchId ?? first.id).filter(job => job.status === "FAILED" && job.errorCategory !== "loop" && job.analysis && nextEscalationRoute(job.analysis.model, job.execution?.reasoning ?? job.analysis.reasoning) && (job.order ?? Number.MAX_SAFE_INTEGER) < lastOrder && !retried.has(job.id));
@@ -314,6 +320,7 @@ export class Orchestrator {
         } catch (error) {
           const latest = this.queue.get(current.id);
           if (latest && latest.status !== "SUCCESS" && latest.status !== "SESSION_PAUSED") this.queue.transition(current.id, "FAILED", { error: messageOf(error), errorCategory: "codex" });
+          break;
         }
       }
     } finally { this.runningProjects.delete(first.projectId); }
@@ -330,6 +337,18 @@ export class Orchestrator {
 
   private async runWithEscalation(input: Job): Promise<Job> {
     let current = this.queue.get(input.id) ?? input;
+    const autoGit = this.autoGitEnabled(current.projectId);
+    const resumed = current.gitDelivery?.status === "pending" && current.gitDelivery.branch !== undefined && current.gitDelivery.startHead !== undefined ? { branch: current.gitDelivery.branch, head: current.gitDelivery.startHead } : undefined;
+    let gitStart = resumed;
+    if (autoGit && !gitStart) {
+      try { gitStart = prepareGitDelivery(current.projectPath); }
+      catch (error) {
+        this.queue.update(current.id, { gitDelivery: { status: "failed", error: messageOf(error) } });
+        throw error;
+      }
+    }
+    if (!autoGit) gitStart = undefined;
+    if (gitStart && !resumed) this.queue.update(current.id, { gitDelivery: { status: "pending", branch: gitStart.branch, startHead: gitStart.head } });
     while (true) {
       let completed: Job;
       try {
@@ -344,6 +363,18 @@ export class Orchestrator {
           errorCategory: "codex",
           execution: latest.execution ? { ...latest.execution, phase: "ERROR", completedAt: at, escalationPending: false, events: [...latest.execution.events, { id: randomUUID(), timestamp: at, kind: "error", title: "Codex attempt failed to start", detail, status: "error" }] } : undefined
         })!;
+      }
+      if (completed.status === "SUCCESS" && gitStart) {
+        const message = commitMessageFromOutput(completed.output ?? "", completed.tasks[0]?.description ?? "Complete JEV ticket");
+        try {
+          const delivery = deliverGitTicket(completed.projectPath, gitStart, message);
+          const at = new Date().toISOString();
+          return this.queue.update(completed.id, { gitDelivery: delivery, execution: completed.execution ? { ...completed.execution, events: [...completed.execution.events, { id: randomUUID(), timestamp: at, kind: "system", title: "Ticket committed locally", detail: `${delivery.commit} · ${delivery.branch} · ${delivery.message}`, status: "success" }] } : undefined })!;
+        } catch (error) {
+          const detail = messageOf(error);
+          const at = new Date().toISOString();
+          return this.queue.update(completed.id, { gitDelivery: { status: "failed", branch: gitStart.branch, error: detail }, execution: completed.execution ? { ...completed.execution, events: [...completed.execution.events, { id: randomUUID(), timestamp: at, kind: "error", title: "Automatic Git commit failed", detail, status: "error" }] } : undefined })!;
+        }
       }
       if (completed.status !== "FAILED" || !completed.analysis || completed.errorCategory === "loop") return completed;
       const previousReasoning = completed.execution?.reasoning ?? completed.analysis.reasoning;

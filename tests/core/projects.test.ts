@@ -5,6 +5,17 @@ import { describe, expect, it } from "vitest";
 import { ProjectStore } from "../../src/core/projects.js";
 
 describe("project AGENTS.md setup", () => {
+  it("persists the per-project Git delivery choice", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-project-git-"));
+    const projectPath = join(root, "project");
+    mkdirSync(projectPath);
+    writeFileSync(join(projectPath, "AGENTS.md"), "# Project\n");
+    const data = join(root, "data");
+    const store = new ProjectStore(data);
+    const project = store.create(projectPath);
+    expect(store.setAutoCommitPush(project.id, true).autoCommitPush).toBe(true);
+    expect(new ProjectStore(data).get(project.id)?.autoCommitPush).toBe(true);
+  });
   it("requires context and creates concise project instructions only when absent", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-projects-"));
     const projectPath = join(root, "new-project");

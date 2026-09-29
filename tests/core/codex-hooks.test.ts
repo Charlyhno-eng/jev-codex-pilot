@@ -53,8 +53,8 @@ describe("native Codex hooks", () => {
     const args = codexHookArgs();
     expect(args).toContain("features.hooks=true");
     expect(args.join(" ")).toContain("hooks.PreToolUse");
-    expect(args.join(" ")).toContain("hooks.PostToolUse");
     expect(args.join(" ")).toContain("hooks.PreCompact");
+    expect(args.join(" ")).toContain("hooks.SessionStart");
     expect(args.join(" ")).toContain("src/core/hooks/runner.ts");
   });
 });

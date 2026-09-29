@@ -40,3 +40,22 @@ body{background:radial-gradient(circle at 82% -10%,rgba(76,124,255,.2),transpare
 .project-live.active{color:var(--lime)}.project-live.active i{background:var(--lime);box-shadow:0 0 8px var(--lime)}
 .credit-pill{border-color:#315f88;background:#101f2e;color:#b8d7ed}.credit-pill b{color:#91dcff}.credit-pill:hover{border-color:#578fbd;background:#142a3d}
 .toast{background:linear-gradient(135deg,#71dbff,#6993ff);color:#06111e}
+
+/* Keep the composer compact and give each Kanban ticket room to be read. */
+.workspace-layout .setup-card{padding:26px 30px}
+.workspace-layout .task-list{margin-top:18px}
+.workspace-layout .task-row{background:#0b111d;border-color:#293a56}
+.queue-compose-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}
+.queue-compose-actions .add-task{width:auto;min-height:44px;height:auto;margin:0;padding:10px 16px;border-color:#365477;background:#101d30;color:#c9d9ee;font-weight:700}
+.queue-compose-actions .add-task:hover{border-color:#6db5ff;background:#162b46;color:#fff}
+.queue-compose-actions .analyze-button{min-height:44px;margin:0;white-space:nowrap}
+.queue-board{margin-top:18px;padding:26px 30px}
+.queue-columns{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:20px}
+.queue-column{min-height:154px;padding:14px;border-color:#2a3b55;background:#0b111c}
+.queue-column>header{padding:0 0 11px;border-bottom:1px solid #203048}
+.queue-column>header>b{color:#97aec8;font-size:11px}
+.queue-card{margin-top:11px;padding:12px 34px 12px 13px;border-color:#355073;background:#11213a}
+.queue-card>b{font-size:12px;line-height:1.5;-webkit-line-clamp:3}
+.queue-card>span{color:#92aac7;font-size:9px;line-height:1.5;overflow-wrap:anywhere}
+@media(max-width:950px){.queue-columns{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:620px){.workspace-layout .setup-card,.queue-board{padding:20px 18px}.queue-compose-actions{align-items:stretch;flex-direction:column}.queue-compose-actions .add-task,.queue-compose-actions .analyze-button{width:100%;justify-content:center}.queue-columns{grid-template-columns:1fr}.queue-column{min-height:120px}}

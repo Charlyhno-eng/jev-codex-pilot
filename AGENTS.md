@@ -23,3 +23,11 @@ This update adds an interactive Codex-style terminal workspace to `jc-pilot`. Us
 This update gives the interactive terminal workspace colored project, queue, and next-action panels with opaque backgrounds for readability. All terminal prompts and messages are in English, and the README now shows the target-project launch command explicitly.
 
 This update simplifies the README terminal section to the one-time setup command and the command that opens the interactive interface from a target project.
+
+This update expands the web Git workspace with branch creation and selection, recent commit diffs, and an optional per-project commit and push after each successful ticket. JEV preserves the selected branch, uses Codex's suggested commit subject, and stops a ticket sequence when Git delivery fails.
+
+This update fixes quota-resume and native Codex hook assertions, removes no-longer-used Git review UI code and a duplicate CI type-check, and makes TypeScript fail on unused local declarations and parameters. CI now uses Ubuntu 24.04 to avoid the upcoming ubuntu-latest image migration.
+
+This update makes pending model and reasoning controls span all configured levels, changes per-ticket Git automation to create local commits only, and adds a manual push action for the selected branch.
+
+This update gives the task composer a compact action row and shows the six Kanban states in a responsive three-column layout. It also aligns the Git controls with the application's blue theme and confirms a successful manual push with its branch and remote.

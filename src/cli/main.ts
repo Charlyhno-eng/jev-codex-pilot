@@ -38,6 +38,9 @@ function summary(job: Job) {
   if (job.analysis) say(`Route: ${job.execution?.model ?? codexModelId(job.analysis.model)} / ${job.execution?.reasoning ?? job.analysis.reasoning} · complexity ${job.analysis.complexity}/5`);
   if (job.execution) say(`Verification: ${job.execution.verification}`);
   if (job.error) say(`Error: ${job.error}`);
+  if (job.gitDelivery?.status === "committed") say(`Git: committed ${job.gitDelivery.commit} on ${job.gitDelivery.branch}`);
+  if (job.gitDelivery?.status === "pushed") say(`Git: pushed ${job.gitDelivery.commit} to ${job.gitDelivery.branch}`);
+  if (job.gitDelivery?.status === "failed") say(`Git delivery failed: ${job.gitDelivery.error}`);
   if (job.status === "SESSION_PAUSED") say(`Codex session paused${job.sessionResumeAt ? ` until ${job.sessionResumeAt}` : ""}. The ticket remains in JEV history.`);
 }
 
@@ -98,9 +101,9 @@ async function runViaApi(base: string, projectDirectory: string, descriptions: s
     if (phase !== lastPhase && job.status === "RUNNING") say(`Codex ${job.id.slice(0, 8)}: ${job.execution?.phase.toLowerCase() ?? "working"}`);
     if (phase !== lastPhase && job.status === "ESCALATING") say(`JEV ${job.id.slice(0, 8)} escalation: ${job.analysis?.model ?? "Codex"}/${job.analysis?.reasoning ?? "next route"}`);
     lastPhase = phase;
-    if (jobs.every(done) || jobs.some(item => item.status === "SESSION_PAUSED") && jobs.every(item => item.status !== "RUNNING" && item.status !== "ESCALATING")) {
+    if (jobs.every(done) || jobs.some(item => item.status === "SESSION_PAUSED" || item.gitDelivery?.status === "failed") && jobs.every(item => item.status !== "RUNNING" && item.status !== "ESCALATING")) {
       for (const item of jobs) summary(item);
-      process.exitCode = jobs.every(item => item.status === "SUCCESS") ? 0 : 1;
+      process.exitCode = jobs.every(item => item.status === "SUCCESS" && item.gitDelivery?.status !== "failed") ? 0 : 1;
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 900));
@@ -121,6 +124,7 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   try {
   for (const [index, job] of jobs.entries()) say(`Ticket ${index + 1}/${jobs.length} · ${job.id.slice(0, 8)} · ${descriptions[index]}`);
   const orchestrator = new Orchestrator(queue);
+  orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
   for (const job of jobs) {
     const prepared = await orchestrator.prepare(job);
     if (prepared?.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
@@ -148,7 +152,7 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
     }
   }
   for (const result of results) summary(result);
-  process.exitCode = results.every(result => result.status === "SUCCESS") ? 0 : 1;
+  process.exitCode = results.every(result => result.status === "SUCCESS" && result.gitDelivery?.status !== "failed") ? 0 : 1;
   } catch (error) { throw persisted(error); }
 }
 

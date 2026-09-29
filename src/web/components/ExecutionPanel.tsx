@@ -27,6 +27,7 @@ export function ExecutionPanel({ job }: { job: Job }) {
     </section>
     {execution && <CodexStatusPanel status={execution.codexStatus}/>}
     {job.error && <div className="execution-error"><b>{issueLabel(job.errorCategory)}</b><span>{job.error}</span></div>}
+    {job.gitDelivery?.status === "failed" && <div className="execution-error"><b>Automatic Git commit failed</b><span>{job.gitDelivery.error}</span></div>}
     {job.recoveryNote && <div className="verification-note"><b>Interrupted execution</b><span>{job.recoveryNote}</span></div>}
     {job.status === "SESSION_PAUSED" && <div className="verification-note"><b>Codex quota reached</b><span>{job.sessionResumeAt ? `Development will resume after ${new Date(job.sessionResumeAt).toLocaleString()}.` : "Development will resume when the next Codex session is available."}</span></div>}
     {execution?.verificationNote && <div className="verification-note"><b>{job.errorCategory === "dependency" ? "Missing verification dependency" : "Verification note"}</b><span>{execution.verificationNote}</span></div>}

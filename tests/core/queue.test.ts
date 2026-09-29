@@ -92,7 +92,7 @@ describe("pending recommendation tuning", () => {
     expect(edited.analysis).toBeUndefined();
   });
 
-  it("keeps pending recommendations within configured routes", () => {
+  it("lets users adjust pending recommendations across configured levels", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-tuning-"));
     const project = join(root, "project");
     mkdirSync(project);
@@ -100,8 +100,8 @@ describe("pending recommendation tuning", () => {
     const job = queue.create("project", project, [{ description: "Move two buttons" }]);
     queue.update(job.id, { analysis: { complexity: 2, task_types: ["ui_ux"], model: "luna", reasoning: "high", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
 
-    expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis).toMatchObject({ model: "luna", reasoning: "high" });
-    expect(queue.adjustAnalysis(job.id, "reasoning", -1)?.analysis?.reasoning).toBe("high");
+    expect(queue.adjustAnalysis(job.id, "model", 1)?.analysis).toMatchObject({ model: "sol", reasoning: "high" });
+    expect(queue.adjustAnalysis(job.id, "reasoning", -1)?.analysis?.reasoning).toBe("medium");
     expect(queue.adjustAnalysis(job.id, "model", -1)?.analysis?.model).toBe("luna");
   });
 });

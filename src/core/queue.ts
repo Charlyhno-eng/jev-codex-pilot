@@ -229,15 +229,15 @@ export class JobQueue {
       } : undefined
     });
   }
+  /** Moves a pending ticket's model or reasoning one configured level. */
   adjustAnalysis(id: string, dimension: "model" | "reasoning", delta: -1 | 1) {
     const job = this.get(id);
     if (!job) throw new Error("Job not found");
     if (job.status !== "PENDING") throw new Error("Only pending tasks can be adjusted");
     if (!job.analysis) throw new Error("Analyze this task before adjusting its recommendation");
-    const allowedRoutes = routesForComplexity(job.analysis.complexity);
     const levels = dimension === "model"
-      ? MODEL_LEVELS.filter(model => allowedRoutes.some(route => route.model === model))
-      : REASONING_LEVELS.filter(reasoning => allowedRoutes.some(route => route.model === job.analysis!.model && route.reasoning === reasoning));
+      ? MODEL_LEVELS
+      : REASONING_LEVELS;
     const current = job.analysis[dimension] as CodexModel | Reasoning;
     const configuredIndex = levels.indexOf(current as never);
     const index = configuredIndex < 0 ? (dimension === "reasoning" && current === "max" ? levels.length - 1 : dimension === "reasoning" && current === "xhigh" ? Math.max(0, levels.length - 2) : 0) : configuredIndex;
@@ -246,15 +246,12 @@ export class JobQueue {
     if (next === current) return job;
     const direction = delta < 0 ? "lower" : "higher";
     const label = dimension === "model" ? codexModelId(next as CodexModel) : next === "xhigh" ? "Extra high" : next === "max" ? "Max" : next;
-    const pairedReasoning = dimension === "model"
-      ? allowedRoutes.find(route => route.model === next && route.reasoning === job.analysis!.reasoning)?.reasoning ?? allowedRoutes.find(route => route.model === next)?.reasoning ?? job.analysis.reasoning
-      : job.analysis.reasoning;
     return this.update(id, {
       analysis: {
         ...job.analysis,
         [dimension]: next,
-        reasoning: dimension === "model" ? pairedReasoning : next as Reasoning,
-        rationale: [...job.analysis.rationale, `Manual JEV tuning: ${dimension} moved one level ${direction} to ${label}.${dimension === "model" && pairedReasoning !== job.analysis.reasoning ? " Reasoning was adjusted to that model's supported policy range." : ""}`]
+        reasoning: dimension === "reasoning" ? next as Reasoning : job.analysis.reasoning,
+        rationale: [...job.analysis.rationale, `Manual JEV tuning: ${dimension} moved one level ${direction} to ${label}.`]
       }
     });
   }

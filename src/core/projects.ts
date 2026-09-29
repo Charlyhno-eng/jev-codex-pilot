@@ -98,6 +98,16 @@ export class ProjectStore {
     this.persist();
   }
 
+  /** Saves the per-project automatic Git delivery choice. */
+  setAutoCommitPush(id: string, enabled: boolean): ProjectRecord {
+    const project = this.get(id);
+    if (!project) throw new Error("Project not found");
+    project.autoCommitPush = enabled;
+    project.updatedAt = new Date().toISOString();
+    this.persist();
+    return project;
+  }
+
   unregister(id: string) {
     const project = this.get(id);
     if (!project) throw new Error("Project not found");

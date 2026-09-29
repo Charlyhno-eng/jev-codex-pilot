@@ -4,10 +4,9 @@ import { useCodexModels } from "../hooks/use-codex-models.js";
 
 /** Renders JEV analysis and pending route controls. */
 export function Plan({ analysis, adjustable, onAdjust }: { analysis: Analysis; adjustable: boolean; onAdjust: (dimension: "model" | "reasoning", delta: -1 | 1) => Promise<void> }) {
-  const { models, modelLevels, reasoningLevels, complexityRoutes } = useCodexModels();
-  const routes = complexityRoutes?.[String(analysis.complexity)];
-  const availableModels = routes ? modelLevels.filter(model => routes.some(route => route.model === model)) : modelLevels;
-  const availableReasoning = routes ? reasoningLevels.filter(reasoning => routes.some(route => route.model === analysis.model && route.reasoning === reasoning)) : reasoningLevels;
+  const { models, modelLevels, reasoningLevels } = useCodexModels();
+  const availableModels = modelLevels;
+  const availableReasoning = reasoningLevels;
   const configuredModelIndex = availableModels.indexOf(analysis.model);
   const modelIndex = configuredModelIndex < 0 ? 0 : configuredModelIndex;
   const reasoningIndex = availableReasoning.indexOf(analysis.reasoning);

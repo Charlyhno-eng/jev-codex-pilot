@@ -1,0 +1,44 @@
+.git-page .project-overview b{font-size:16px;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.git-control-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:22px 0}.git-control-card{display:grid;align-content:start;gap:15px;padding:22px;border:1px solid #323044;border-radius:16px;background:#11111b}.git-card-heading{display:grid;gap:5px;padding-bottom:10px;border-bottom:1px solid #302e3d}.git-card-heading strong{font-size:20px;color:#eeeafa;overflow-wrap:anywhere}.git-card-heading small,.git-control-card p,.git-control-card label{font-size:11px;color:#a9a3b8;line-height:1.5}.git-control-card label{display:grid;gap:7px}.git-control-card input:not([type=checkbox]),.git-control-card select{width:100%;min-height:40px;padding:0 12px;border:1px solid #484258;border-radius:9px;background:#0b0b12;color:#e9e4f1;font:inherit}.git-control-card form{display:grid;grid-template-columns:1fr auto;align-items:end;gap:8px}.git-control-card form button,.git-control-card>button{min-height:40px;padding:0 13px;border:1px solid #697e4a;border-radius:9px;background:#26351e;color:#dfffaa;font-weight:700;cursor:pointer}.git-control-card form button:disabled,.git-control-card>button:disabled{opacity:.45;cursor:default}.git-control-card .git-auto-toggle{display:flex;align-items:center;gap:12px;padding:15px;border:1px solid #4e6244;border-radius:10px;background:#192218;color:#e7f5d7;font-size:12px;font-weight:700;cursor:pointer}.git-auto-toggle input{width:17px;height:17px;accent-color:#b2e873}.git-control-card .git-hint{margin:0;color:#928ca2}.git-review{display:grid;grid-template-columns:250px minmax(0,1fr);border:1px solid #323044;border-radius:17px;overflow:hidden;background:#101018}.git-history{border-right:1px solid #323044;background:#12121c}.git-history header{display:flex;justify-content:space-between;padding:17px 15px;border-bottom:1px solid #302e3d;font-size:10px;color:#dad4e6}.git-history header small{font-size:8px;color:#81798c}.git-history button{display:grid;gap:5px;width:100%;padding:13px 15px;border:0;border-bottom:1px solid #262431;background:transparent;color:#c7bfd4;text-align:left;cursor:pointer}.git-history button:hover,.git-history button.active{background:#292238}.git-history button b{font-size:11px;line-height:1.35;overflow-wrap:anywhere}.git-history button small{font-size:9px;color:#8e879d;line-height:1.4}.git-review-body{min-width:0}.git-review-title{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:20px}.git-review-title h2{margin:5px 0;font-size:18px}.git-review-title p{margin:0;color:#928ba1;font-size:10px}.git-review-title>b{color:#a8d0ff;font-size:10px;white-space:nowrap}.git-review .diff-workbench{margin:0 15px 15px;min-height:540px;grid-template-columns:minmax(180px,.3fr) minmax(0,1fr)}.git-review .diff-view>header{top:0}@media(max-width:900px){.git-review{grid-template-columns:1fr}.git-history{border-right:0;border-bottom:1px solid #323044;max-height:250px;overflow:auto}.git-control-grid{grid-template-columns:1fr}}@media(max-width:620px){.git-review .diff-workbench{grid-template-columns:1fr}.git-control-card form{grid-template-columns:1fr}.git-control-card form button{justify-self:start}.git-page .project-overview{width:100%}}
+
+/* Git controls use the same blue surfaces and action hierarchy as the workspace. */
+.git-control-grid{gap:18px;margin:22px 0 26px}
+.git-control-card{display:flex;flex-direction:column;gap:20px;padding:25px;border-color:#2c4260;border-radius:18px;background:linear-gradient(155deg,#111d30,#0c1422);box-shadow:0 18px 48px rgba(0,0,0,.2)}
+.git-card-heading{gap:7px;padding-bottom:18px;border-bottom-color:#28405e}
+.git-card-heading .eyebrow,.git-push-panel .eyebrow{margin:0;color:#85caff}
+.git-card-heading strong{color:#f1f7ff;font-size:20px}
+.git-card-heading small,.git-control-card p,.git-control-card label{color:#9cafc7}
+.git-branch-fields{display:grid;gap:16px}
+.git-control-card input:not([type=checkbox]),.git-control-card select{min-height:44px;border-color:#395476;background:#0a1422;color:#ebf5ff}
+.git-control-card input:not([type=checkbox]):focus,.git-control-card select:focus{outline:2px solid #5daeff;outline-offset:2px}
+.git-control-card form button{min-height:44px;border-color:#3d73ae;background:#173457;color:#c6eaff}
+.git-control-card form button:hover:not(:disabled){border-color:#74c4ff;background:#214976;color:#fff}
+.git-control-card form button:disabled{opacity:.45;cursor:not-allowed}
+.git-delivery-settings{display:grid;gap:8px}
+.git-control-card .git-auto-toggle{display:flex;gap:14px;padding:15px;border-color:#3c628b;background:#122b49;color:#e7f4ff}
+.git-control-card .git-auto-toggle:hover{border-color:#6dbaff;background:#173659}
+.git-auto-toggle input{flex:none;width:18px;height:18px;accent-color:#65c9f5}
+.git-auto-toggle span{display:grid;gap:2px}
+.git-auto-toggle b{color:#e7f4ff;font-size:12px}
+.git-auto-toggle small{color:#9eb8d1;font-size:10px;font-weight:500}
+.git-delivery-settings p{margin:0;line-height:1.55}
+.git-control-card .git-hint{color:#8ea5bf}
+.git-push-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;margin-top:auto;padding:17px;border:1px solid #2d4b6c;border-radius:12px;background:#0b1a2c}
+.git-push-panel>div{display:grid;gap:4px;min-width:0}
+.git-push-panel strong{font-size:14px;color:#ecf6ff}
+.git-push-panel small{font:10px/1.4 "DM Mono",monospace;color:#92b7d5;overflow-wrap:anywhere}
+.git-push-panel button{display:inline-flex;align-items:center;justify-content:center;gap:12px;min-height:43px;padding:0 15px;border:1px solid #68beef;border-radius:9px;background:linear-gradient(135deg,#64ccf3,#638dfa);color:#071525;font-size:12px;font-weight:800;white-space:nowrap;cursor:pointer}
+.git-push-panel button:hover:not(:disabled){filter:brightness(1.12)}
+.git-push-panel button:disabled{opacity:.45;cursor:not-allowed}
+.git-push-panel button span{font-size:16px}
+.git-push-success{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:0!important;padding:10px 12px;border:1px solid #398b9e;border-radius:8px;background:#0e303c;color:#bdf4ff!important;font-size:11px!important;font-weight:700}
+.git-push-success span{display:grid;place-items:center;width:18px;height:18px;border-radius:50%;background:#69dbed;color:#08202b;font-size:11px}
+.git-review{border-color:#2c4260;background:#0d1624}
+.git-history{border-color:#2c4260;background:#101c2e}
+.git-history header{border-color:#29405d;color:#dbeeff}
+.git-history header small,.git-history button small{color:#8da9c6}
+.git-history button{border-color:#20344c;color:#d0e2f4}
+.git-history button:hover,.git-history button.active{background:#173253}
+.git-review-title p{color:#93a9c2}
+@media(max-width:1100px){.git-push-panel{grid-template-columns:1fr}.git-push-panel button{width:100%}}
+@media(max-width:900px){.git-control-grid{grid-template-columns:1fr}.git-push-panel{grid-template-columns:minmax(0,1fr) auto}.git-push-panel button{width:auto}}
+@media(max-width:620px){.git-control-card{padding:20px}.git-push-panel{grid-template-columns:1fr}.git-push-panel button{width:100%}}

@@ -33,6 +33,7 @@ vi.mock("../../src/core/queue.js", () => ({ JobQueue: class {
   update = mocks.update;
 } }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class {
+  configureGitDelivery() {}
   async prepare() { return undefined; }
   async run() { return { id: "ticket-1", projectId: "project-1", projectPath: "", tasks: [{ description: "A task" }], status: mocks.status, createdAt: "", updatedAt: "", attempts: 1 } as Job; }
   async runBatch(id: string) { mocks.runBatch(id); }
