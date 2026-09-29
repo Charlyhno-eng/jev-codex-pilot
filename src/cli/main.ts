@@ -9,10 +9,12 @@ import { ProjectStore } from "../core/projects.js";
 import { acquireApiInstance } from "../core/single-instance.js";
 import { TelegramBot } from "../core/telegram-bot.js";
 import { logJevError } from "../core/jev-logger.js";
+import { interactiveSession } from "./interactive.js";
 import type { Job, ProjectRecord } from "../core/types.js";
 
 const cliCommand = `node "${realpathSync(process.argv[1] ?? "bin/jc-pilot.mjs")}"`;
-const help = `Usage: ${cliCommand} run "describe one task"
+const help = `Usage: ${cliCommand}                 interactive terminal
+       ${cliCommand} run "describe one task"
        ${cliCommand} status [ticket-id]
 
 Run from the project directory. The command analyses the task with JEV, runs
@@ -26,6 +28,9 @@ then open a new terminal. No global npm link or administrator rights are needed.
 
 function say(message: string) { process.stdout.write(`${message}\n`); }
 function fail(message: string): never { throw new Error(message); }
+function persisted(error: unknown): Error {
+  return Object.assign(new Error(error instanceof Error ? error.message : String(error)), { ticketsPersisted: true });
+}
 function done(job: Job): boolean { return ["SUCCESS", "FAILED", "SESSION_PAUSED", "SKIPPED"].includes(job.status); }
 
 function summary(job: Job) {
@@ -70,31 +75,40 @@ async function useApi(): Promise<string> {
   return base;
 }
 
-async function runViaApi(base: string, projectDirectory: string, description: string, context?: string) {
+async function runViaApi(base: string, projectDirectory: string, descriptions: string[], context?: string) {
   const settings = await request<{ configured: boolean }>(base, "/settings");
   if (!settings.configured) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
   const project = await request<ProjectRecord>(base, "/projects", "POST", { path: projectDirectory, context });
   const jobs = await request<Job[]>(base, `/jobs?projectId=${encodeURIComponent(project.id)}`);
   if (jobs.some(job => job.status === "RUNNING" || job.status === "ESCALATING")) fail("A Codex execution is already running for this project.");
-  const [created] = await request<Job[]>(base, "/jobs", "POST", { projectId: project.id, tasks: [{ description }] });
-  say(`Ticket ${created.id} created in ${projectDirectory}`);
-  const prepared = await request<Job>(base, `/jobs/${created.id}/prepare`, "POST");
-  if (prepared.analysis) say(`JEV: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
-  await request<Job>(base, `/jobs/${created.id}/run`, "POST");
+  const created = await request<Job[]>(base, "/jobs", "POST", { projectId: project.id, tasks: descriptions.map(description => ({ description })) });
+  try {
+  for (const [index, job] of created.entries()) say(`Ticket ${index + 1}/${created.length} · ${job.id.slice(0, 8)} · ${descriptions[index]}`);
+  for (const job of created) {
+    const prepared = await request<Job>(base, `/jobs/${job.id}/prepare`, "POST");
+    if (prepared.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
+  }
+  await request<Job>(base, `/jobs/${created[0].id}/${created.length > 1 ? "run-batch" : "run"}`, "POST");
   say("Codex started. Waiting for JEV validation…");
   let lastPhase = "";
   while (true) {
-    const job = await request<Job>(base, `/jobs/${created.id}`);
-    const phase = `${job.status}:${job.execution?.phase ?? ""}`;
-    if (phase !== lastPhase && job.status === "RUNNING") say(`Codex: ${job.execution?.phase.toLowerCase() ?? "working"}`);
-    if (phase !== lastPhase && job.status === "ESCALATING") say(`JEV escalation: ${job.analysis?.model ?? "Codex"}/${job.analysis?.reasoning ?? "next route"}`);
+    const jobs = await Promise.all(created.map(job => request<Job>(base, `/jobs/${job.id}`)));
+    const job = jobs.find(item => item.status === "RUNNING" || item.status === "ESCALATING") ?? jobs.find(item => !done(item)) ?? jobs.at(-1)!;
+    const phase = `${job.id}:${job.status}:${job.execution?.phase ?? ""}`;
+    if (phase !== lastPhase && job.status === "RUNNING") say(`Codex ${job.id.slice(0, 8)}: ${job.execution?.phase.toLowerCase() ?? "working"}`);
+    if (phase !== lastPhase && job.status === "ESCALATING") say(`JEV ${job.id.slice(0, 8)} escalation: ${job.analysis?.model ?? "Codex"}/${job.analysis?.reasoning ?? "next route"}`);
     lastPhase = phase;
-    if (done(job)) { summary(job); process.exitCode = job.status === "SUCCESS" ? 0 : 1; return; }
+    if (jobs.every(done) || jobs.some(item => item.status === "SESSION_PAUSED") && jobs.every(item => item.status !== "RUNNING" && item.status !== "ESCALATING")) {
+      for (const item of jobs) summary(item);
+      process.exitCode = jobs.every(item => item.status === "SUCCESS") ? 0 : 1;
+      return;
+    }
     await new Promise(resolve => setTimeout(resolve, 900));
   }
+  } catch (error) { throw persisted(error); }
 }
 
-async function runLocally(dataDirectory: string, projectDirectory: string, description: string, context?: string) {
+async function runLocally(dataDirectory: string, projectDirectory: string, descriptions: string[], context?: string) {
   const config = new AppConfigStore();
   if (!config.read().aiGatewayApiKey) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
   const projects = new ProjectStore(dataDirectory);
@@ -103,13 +117,18 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   const project = projects.create(projectDirectory, undefined, context);
   if (queue.list(project.id).some(job => job.status === "RUNNING" || job.status === "ESCALATING")) fail("A Codex execution is already running for this project.");
   projects.touch(project.id);
-  const job = queue.create(project.id, project.path, [{ description }]);
-  say(`Ticket ${job.id} created in ${projectDirectory}`);
+  const jobs = descriptions.length === 1 ? [queue.create(project.id, project.path, [{ description: descriptions[0] }])] : queue.createBatch(project.id, project.path, descriptions.map(description => ({ description })));
+  try {
+  for (const [index, job] of jobs.entries()) say(`Ticket ${index + 1}/${jobs.length} · ${job.id.slice(0, 8)} · ${descriptions[index]}`);
   const orchestrator = new Orchestrator(queue);
-  const prepared = await orchestrator.prepare(job);
-  if (prepared?.analysis) say(`JEV: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
-  const result = await orchestrator.run(job.id);
-  if (result.status === "SUCCESS" || result.status === "FAILED") {
+  for (const job of jobs) {
+    const prepared = await orchestrator.prepare(job);
+    if (prepared?.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
+  }
+  const singleResult = jobs.length === 1 ? await orchestrator.run(jobs[0].id) : undefined;
+  if (jobs.length > 1) await orchestrator.runBatch(jobs[0].id);
+  const results = singleResult ? [singleResult] : jobs.map(job => queue.get(job.id) ?? job);
+  if (results.some(result => result.status === "SUCCESS" || result.status === "FAILED")) {
     const telegramSettings = config.read();
     if (telegramSettings.telegramEnabled && telegramSettings.telegramBotToken && telegramSettings.telegramAllowedChatId) {
       try {
@@ -119,17 +138,18 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
           listJobs: projectId => queue.list(projectId),
           createTicket: () => { throw new Error("Ticket creation is unavailable in the CLI"); }
         }, dataDirectory);
-        await telegram.notifyDevelopmentFinished(project, [result]);
+        await telegram.notifyDevelopmentFinished(project, results.filter(result => result.status === "SUCCESS" || result.status === "FAILED"));
       }
       catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        queue.update(result.id, { notificationError: detail });
+        for (const result of results) queue.update(result.id, { notificationError: detail });
         logJevError(`Telegram completion notice failed: ${detail}`);
       }
     }
   }
-  summary(result);
-  process.exitCode = result.status === "SUCCESS" ? 0 : 1;
+  for (const result of results) summary(result);
+  process.exitCode = results.every(result => result.status === "SUCCESS") ? 0 : 1;
+  } catch (error) { throw persisted(error); }
 }
 
 async function statusViaApi(base: string, projectDirectory: string, ticketId?: string) {
@@ -151,30 +171,44 @@ function statusLocally(dataDirectory: string, projectDirectory: string, ticketId
   summary(job);
 }
 
+/** Creates and executes an ordered ticket batch for a selected project. */
+export async function executeBatch(directory: string, descriptions: string[], projectDescription?: string) {
+  if (!new AppConfigStore().read().aiGatewayApiKey) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
+  const context = projectDescription ?? await projectContext(directory);
+  const dataDirectory = resolve(process.cwd(), ".jev");
+  let release: (() => void) | undefined;
+  try { release = await acquireApiInstance(dataDirectory); }
+  catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("Another JEV API process")) throw error;
+    await runViaApi(await useApi(), directory, descriptions, context);
+    return;
+  }
+  try { await runLocally(dataDirectory, directory, descriptions, context); }
+  finally { release(); }
+}
+
 /** Runs the CLI command for the selected project directory. */
 export async function main(args: string[], projectDirectory: string) {
   const [command, ...rest] = args;
-  if (!command || command === "help" || command === "--help" || command === "-h") { say(help); return; }
-  if (command !== "run" && command !== "status") { process.stderr.write(`Unknown command: ${command}\n\n${help}\n`); process.exitCode = 2; return; }
+  if (command === "help" || command === "--help" || command === "-h") { say(help); return; }
+  if (command && command !== "run" && command !== "status") { process.stderr.write(`Unknown command: ${command}\n\n${help}\n`); process.exitCode = 2; return; }
   if (command === "run" && (rest.length !== 1 || !rest[0].trim())) { process.stderr.write(`${help}\n`); process.exitCode = 2; return; }
   if (command === "status" && rest.length > 1) { process.stderr.write(`${help}\n`); process.exitCode = 2; return; }
   try {
     const directory = resolve(projectDirectory);
-    if (command === "run" && !new AppConfigStore().read().aiGatewayApiKey) fail("Configure a Vercel AI Gateway key in JEV Settings before starting a ticket.");
-    const context = command === "run" ? await projectContext(directory) : undefined;
+    if (!command) { await interactiveSession(directory, (tasks, context) => executeBatch(directory, tasks, context)); return; }
+    if (command === "run") { await executeBatch(directory, [rest[0].trim()]); return; }
     const dataDirectory = resolve(process.cwd(), ".jev");
     let release: (() => void) | undefined;
     try { release = await acquireApiInstance(dataDirectory); }
     catch (error) {
       if (!(error instanceof Error) || !error.message.startsWith("Another JEV API process")) throw error;
       const base = await useApi();
-      if (command === "run") await runViaApi(base, directory, rest[0].trim(), context);
-      else await statusViaApi(base, directory, rest[0]);
+      await statusViaApi(base, directory, rest[0]);
       return;
     }
     try {
-      if (command === "run") await runLocally(dataDirectory, directory, rest[0].trim(), context);
-      else statusLocally(dataDirectory, directory, rest[0]);
+      statusLocally(dataDirectory, directory, rest[0]);
     } finally { release(); }
   } catch (error) {
     process.stderr.write(`jc-pilot: ${error instanceof Error ? error.message : String(error)}\n`);

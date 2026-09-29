@@ -10,7 +10,9 @@ const mocks = vi.hoisted(() => ({
   notify: vi.fn(),
   update: vi.fn(),
   logError: vi.fn(),
-  release: vi.fn()
+  release: vi.fn(),
+  createBatch: vi.fn(),
+  runBatch: vi.fn()
 }));
 
 vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class { read() { return mocks.config; } } }));
@@ -23,17 +25,23 @@ vi.mock("../../src/core/queue.js", () => ({ JobQueue: class {
   recoverInterrupted() {}
   list() { return []; }
   create(projectId: string, projectPath: string) { return { id: "ticket-1", projectId, projectPath, tasks: [{ description: "A task" }], status: "PENDING", createdAt: "", updatedAt: "", attempts: 0 } as Job; }
+  createBatch(projectId: string, projectPath: string, tasks: Array<{ description: string }>) {
+    mocks.createBatch(projectId, projectPath, tasks);
+    return tasks.map((task, index) => ({ id: `ticket-${index + 1}`, projectId, projectPath, tasks: [task], status: "PENDING", createdAt: "", updatedAt: "", attempts: 0 }) as Job);
+  }
+  get(id: string) { return { id, projectId: "project-1", projectPath: "", tasks: [{ description: "A task" }], status: mocks.status, createdAt: "", updatedAt: "", attempts: 1 } as Job; }
   update = mocks.update;
 } }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class {
   async prepare() { return undefined; }
   async run() { return { id: "ticket-1", projectId: "project-1", projectPath: "", tasks: [{ description: "A task" }], status: mocks.status, createdAt: "", updatedAt: "", attempts: 1 } as Job; }
+  async runBatch(id: string) { mocks.runBatch(id); }
 } }));
 vi.mock("../../src/core/telegram-bot.js", () => ({ TelegramBot: class { notifyDevelopmentFinished = mocks.notify; } }));
 vi.mock("../../src/core/single-instance.js", () => ({ acquireApiInstance: async () => mocks.release }));
 vi.mock("../../src/core/jev-logger.js", () => ({ logJevError: mocks.logError }));
 
-import { main } from "../../src/cli/main.js";
+import { executeBatch, main } from "../../src/cli/main.js";
 
 const originalExitCode = process.exitCode;
 beforeEach(() => {
@@ -55,6 +63,12 @@ function projectDirectory() {
 }
 
 describe("CLI completion notice", () => {
+  it("creates a terminal batch in submitted order and launches it once", async () => {
+    await executeBatch(projectDirectory(), ["First", "Second"]);
+    expect(mocks.createBatch).toHaveBeenCalledExactlyOnceWith("project-1", expect.any(String), [{ description: "First" }, { description: "Second" }]);
+    expect(mocks.runBatch).toHaveBeenCalledExactlyOnceWith("ticket-1");
+    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "project-1" }), [expect.objectContaining({ id: "ticket-1" }), expect.objectContaining({ id: "ticket-2" })]);
+  });
   it.each(["SUCCESS", "FAILED"] as const)("sends the existing Telegram summary for a %s ticket", async status => {
     mocks.status = status;
     await main(["run", "A task"], projectDirectory());

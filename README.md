@@ -70,40 +70,22 @@ GitHub Actions runs `.github/workflows/ci.yml` on pushes and pull requests. It i
 
 ---
 
-## Command line
+## Terminal interface
 
-The headless CLI runs tickets through the same JEV and Codex engine. From the **jev-codex-pilot repository directory**, install dependencies and the command once:
+Install the terminal command once from the JEV repository:
 
 ```bash
+cd /path/to/jev-codex-pilot
 npm install
 npm run setup:cli
 ```
 
-From the **directory of the target project**, run:
-
-```bash
-jc-pilot run "Fix bug X"
-jc-pilot status
-```
-
-Each `run` invocation creates and executes one ticket. To run several tickets in order, join one command per ticket with `&&`. The shell waits for each ticket to finish before starting the next and stops if a command fails:
-
-```bash
-jc-pilot run "Fix bug X" && \
-jc-pilot run "Add a regression test for bug X"
-```
-
-The target is selected from the current directory. The launcher is installed for your user account (`~/.local/bin` on Linux/macOS or `%LOCALAPPDATA%\jc-pilot\bin` on Windows), so setup is only needed once and should be repeated if you move the JEV repository. The target project needs Node.js only on the machine running JEV, plus an `AGENTS.md`; if it is missing, create one before a noninteractive run. Codex CLI must be installed and authenticated, and JEV needs its configured Vercel AI Gateway key.
-
-To run without installing the launcher, replace the placeholder with your JEV checkout path:
+Open a new terminal, go to the project you want to work on, and launch the interface:
 
 ```bash
 cd /path/to/your/project
-node "/path/to/jev-codex-pilot/bin/jc-pilot.mjs" run "Fix bug X"
-node "/path/to/jev-codex-pilot/bin/jc-pilot.mjs" status
+jc-pilot
 ```
-
-`run` creates and executes a ticket; `status [ticket-id]` shows the latest ticket or a selected one. The CLI shares `.jev/` history and `config/model.toml` with the app, and uses a running local API when available. See the CLI help (`jc-pilot --help`) for options.
 
 ## Telegram
 

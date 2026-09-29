@@ -366,7 +366,8 @@ async function main(): Promise<void> {
       if (!revisions.has(revision)) revisions.set(revision, await checkedCommand(["git", "-C", repository, "rev-parse", "--verify", `${revision}^{commit}`], repository, 30, true));
     }
   }
-  const count = suite.scenarios.reduce((sum, scenario) => sum + scenario.tasks.length, 0) * (suite.repetitions ?? 1);
+  const tasksPerRepetition = suite.scenarios.reduce((sum, scenario) => sum + scenario.tasks.length, 0);
+  const count = tasksPerRepetition * (suite.repetitions ?? 1);
   if (dryRun) { process.stdout.write(`Benchmark plan: ${count} paired task runs across ${suite.scenarios.length} scenario(s). No agents started.\n`); return; }
   if (!new AppConfigStore().read().aiGatewayApiKey) throw new Error("Configure Vercel AI Gateway in JEV Settings before running the benchmark");
   const directory = resolve(outputIndex >= 0 ? args[outputIndex + 1] : join(".jev", "benchmarks", new Date().toISOString().replace(/[:.]/g, "-")));
@@ -383,6 +384,7 @@ async function main(): Promise<void> {
   for (let repetition = 1; repetition <= report.repetitions; repetition++) {
     for (const [scenarioIndex, scenario] of suite.scenarios.entries()) {
       const revision = sourceIsGit ? revisions.get(scenario.revision ?? suite.revision!)! : "working-tree snapshot";
+      const scenarioTaskOffset = suite.scenarios.slice(0, scenarioIndex).reduce((sum, previous) => sum + previous.tasks.length, 0);
       const trial = join(directory, `${scenario.id}-${repetition}`);
       mkdirSync(trial);
       const baselineDirectory = join(trial, "baseline");
@@ -402,11 +404,12 @@ async function main(): Promise<void> {
       const orchestrator = new Orchestrator(queue);
       let baselineThread: string | undefined;
       for (const [taskIndex, task] of scenario.tasks.entries()) {
+        const ticketNumber = (repetition - 1) * tasksPerRepetition + scenarioTaskOffset + taskIndex + 1;
         await setup(task.setup, baselineDirectory);
         await setup(task.setup, jevDirectory);
         const row: TaskResult = { scenario: scenario.id, repetition, task: task.id, category: task.category, revision, model: "", reasoning: "" };
         report.results.push(row);
-        process.stdout.write(`[${repetition}/${report.repetitions}] ${scenario.id}/${task.id}: preparing JEV route\n`);
+        process.stdout.write(`[${ticketNumber}/${count}] ${scenario.id}/${task.id} (repeat ${repetition}/${report.repetitions}): preparing JEV route\n`);
         try {
           const job = queue.create(project.id, jevDirectory, [{ description: task.prompt }]);
           const preparationStarted = seconds();
@@ -418,14 +421,19 @@ async function main(): Promise<void> {
           row.model = model;
           row.reasoning = reasoning;
           const price = suite.pricing?.codex?.[model];
-          const baseline = async () => { row.baseline = await baselineRun(task, baselineDirectory, model, reasoning, baselineThread, price); baselineThread = row.baseline.threadId; };
+          const baseline = async () => {
+            const message = `  [${ticketNumber}/${count}] ${scenario.id}/${task.id}: baseline coding`;
+            process.stdout.write(process.stdout.isTTY ? `\u001b[95m${message}\u001b[0m\n` : `${message}\n`);
+            row.baseline = await baselineRun(task, baselineDirectory, model, reasoning, baselineThread, price);
+            baselineThread = row.baseline.threadId;
+          };
           const jev = async () => { row.jev = await jevRun(task, jevDirectory, queue, orchestrator, job, prepared.usage, preparationSeconds, join(stateDirectory, `${task.id}-hook-usage.jsonl`), suite.pricing?.codex, suite.pricing?.jev); };
           if ((repetition + scenarioIndex + taskIndex) % 2) { await baseline(); await jev(); }
           else { await jev(); await baseline(); }
-          process.stdout.write(`  baseline ${row.baseline?.passed ? "pass" : "fail"}; JEV ${row.jev?.passed ? "pass" : "fail"}\n`);
+          process.stdout.write(`[${ticketNumber}/${count}] baseline ${row.baseline?.passed ? "pass" : "fail"}; JEV ${row.jev?.passed ? "pass" : "fail"}\n`);
         } catch {
           row.error = "The paired run could not complete; inspect local environment and configuration";
-          process.stdout.write(`  incomplete; see results.json\n`);
+          process.stdout.write(`[${ticketNumber}/${count}] incomplete; see results.json\n`);
         }
         writeReport(directory, report);
         if (!row.baseline?.passed || !row.jev?.passed) {

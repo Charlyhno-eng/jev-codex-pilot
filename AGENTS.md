@@ -15,3 +15,11 @@ This update replaces advisory context review with Jev-scored tool-pair compactio
 This update replaces the demo benchmark's recipe manager scenario with seven sequential English tasks for a frontend-only Three.js, TypeScript, and Tailwind laboratory portfolio.
 
 This update refreshes the README's JEV benchmark summary with the September 27, 2026 laboratory-portfolio run results.
+
+This update adds a global ticket counter to benchmark terminal progress and highlights baseline coding in fuchsia.
+
+This update adds an interactive Codex-style terminal workspace to `jc-pilot`. Users can compose multiple tickets, enter multiline requests, review or edit the pending session list, and run the batch in queue order. The existing headless `run` and `status` commands remain available, and the README documents the new flow.
+
+This update gives the interactive terminal workspace colored project, queue, and next-action panels with opaque backgrounds for readability. All terminal prompts and messages are in English, and the README now shows the target-project launch command explicitly.
+
+This update simplifies the README terminal section to the one-time setup command and the command that opens the interactive interface from a target project.
