@@ -16,7 +16,7 @@ describe("task archive", () => {
     writeFileSync(file, JSON.stringify(jobs));
     const restored = new JobQueue(data).get(job.id)?.analysis;
     expect(restored?.complexity).toBe(4);
-    expect(restored).toMatchObject({ model: "sol", reasoning: "high" });
+    expect(restored).toMatchObject({ model: "sol", reasoning: "medium" });
     expect(restored).not.toHaveProperty("independent_delivery_score");
   });
 

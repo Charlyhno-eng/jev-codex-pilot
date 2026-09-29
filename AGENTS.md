@@ -39,3 +39,5 @@ This update replaces the shared Codex execution slot with truly parallel project
 This update replaces the README's model benchmark charts with a DeepSWE-inspired table of reasoning effort scores and estimated task costs for five models.
 
 This update routes complexity levels 1–2 to GPT-6 Luna Medium/High and levels 3–5 to GPT-6.1 Sol Low/Medium/High, aligning configuration, fallback models, failure escalation, and documentation.
+
+This update fixes the saved-ticket migration test to expect Sol Medium for complexity level 4 under the new routing policy.
