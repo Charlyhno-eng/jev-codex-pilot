@@ -2,7 +2,7 @@
 # the values are the model IDs passed to Codex. Keep models ordered from lighter to stronger.
 [models]
 luna = "gpt-6-luna"
-sol = "gpt-6-sol"
+sol = "gpt-6.1-sol"
 astra = "gpt-6-astra"
 
 # Reasoning choices are ordered from lowest to highest effort.
@@ -18,10 +18,10 @@ routes = ["luna:medium"]
 routes = ["luna:high"]
 
 [complexity.3]
-routes = ["luna:max"]
+routes = ["sol:low"]
 
 [complexity.4]
-routes = ["sol:high"]
+routes = ["sol:medium"]
 
 [complexity.5]
-routes = ["sol:xhigh"]
+routes = ["sol:high"]

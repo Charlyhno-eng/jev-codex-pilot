@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { clampModelReasoning, codexModelId, MODEL_LEVELS, nextEscalationRoute, REASONING_LEVELS, reasoningAt, reasoningIndex } from "./codex-models.js";
 import { activeCodexModelId } from "./codex-catalog.js";
 import { readCodexStatusSnapshot } from "./codex-status.js";
+import { projectCodexEnv, projectCodexHome, projectCodexStateArgs } from "./codex-home.js";
 import { CodexLoopDetector } from "./codex-loop-detector.js";
 import { codexExecPrefix, implementationBlocked } from "./codex-execution.js";
 import { existsSync } from "node:fs";
@@ -101,9 +102,9 @@ function describe(event: JsonEvent): { phase: ExecutionPhase; item?: Omit<Execut
   return { phase: "WORKING" };
 }
 
-function compactThread(threadId: string): Promise<void> {
+function compactThread(threadId: string, home: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", [...codexHookArgs(), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("codex", [...projectCodexStateArgs(home), ...codexHookArgs(), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: projectCodexEnv(home) });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex compaction timed out after 5 minutes")), 300_000);
@@ -126,9 +127,9 @@ function compactThread(threadId: string): Promise<void> {
   });
 }
 
-function archiveThread(threadId: string): Promise<void> {
+function archiveThread(threadId: string, home: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", ["app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("codex", [...projectCodexStateArgs(home), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: projectCodexEnv(home) });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex thread clear timed out")), 30_000);
@@ -154,10 +155,10 @@ function logTicketCompleted(tag: string, title: string) {
 }
 
 /** Resumes one Codex turn in the existing thread. */
-function resumeCodexTurn(projectPath: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
+function resumeCodexTurn(projectPath: string, home: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
   return new Promise(resolve => {
-    const args = [...codexExecPrefix(true), "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs(), threadId, prompt];
-    const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...process.env, JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
+    const args = [...codexExecPrefix(true), "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...projectCodexStateArgs(home), ...codexHookArgs(), threadId, prompt];
+    const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...projectCodexEnv(home), JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
     onStart(child);
     let buffer = ""; let settled = false;
     child.stdin.end();
@@ -240,7 +241,7 @@ export class Orchestrator {
   private runningProjects = new Set<string>();
   private continuityDecisions = new Map<string, "related" | "unrelated" | "uncertain">();
   private autoGitEnabled: (projectId: string) => boolean = () => false;
-  constructor(private queue: JobQueue, private analyzer = analyze, private compactor: (threadId: string) => Promise<void> = compactThread, private accountUsageReader: () => Promise<CodexAccountUsage> = readCodexAccountUsage, private archiver: (threadId: string) => Promise<void> = archiveThread, private rateLimitReader: () => Promise<CodexRateLimit> = readCodexRateLimit, private statusReader: (threadId?: string) => Promise<CodexStatusSnapshot> = readCodexStatusSnapshot, private continuityReviewer: (completed: Job[], next: Job) => Promise<"related" | "unrelated" | "uncertain"> = assessTaskContinuity) {}
+  constructor(private queue: JobQueue, private analyzer = analyze, private compactor: (threadId: string, home: string) => Promise<void> = compactThread, private accountUsageReader: () => Promise<CodexAccountUsage> = readCodexAccountUsage, private archiver: (threadId: string, home: string) => Promise<void> = archiveThread, private rateLimitReader: () => Promise<CodexRateLimit> = readCodexRateLimit, private statusReader: (threadId?: string, home?: string) => Promise<CodexStatusSnapshot> = readCodexStatusSnapshot, private continuityReviewer: (completed: Job[], next: Job) => Promise<"related" | "unrelated" | "uncertain"> = assessTaskContinuity) {}
 
   /** Connects persisted project Git preferences to ticket execution. */
   configureGitDelivery(enabled: (projectId: string) => boolean) { this.autoGitEnabled = enabled; }
@@ -424,6 +425,7 @@ export class Orchestrator {
     const previousExecution = preserveExecution ? first.execution : undefined;
     const excluded = new Set([first.id]);
     const history = this.queue.list(first.projectId);
+    const home = projectCodexHome(first.projectId, history.map(job => job.execution?.threadId).filter((id): id is string => Boolean(id)));
     const blockedThreads = new Set(history.filter(job => implementationBlocked(job.output ?? "") || job.error?.startsWith("No project file changes were detected")).map(job => job.execution?.threadId).filter(Boolean));
     const previous = history.filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt && !job.execution.threadResumeDisabledAt && !blockedThreads.has(job.execution.threadId)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     let resumeThread = pausedThread && !blockedThreads.has(pausedThread) ? pausedThread : escalationThread ?? previous?.execution?.threadId;
@@ -438,7 +440,7 @@ export class Orchestrator {
         logJev(`[codex:${first.id.slice(0, 8)}] /clear START thread ${resumeThread}`);
         this.queue.appendProjectThreadEvent(first.projectId, resumeThread, "Codex /clear started", detail, "active");
         try {
-          await this.archiver(resumeThread);
+          await this.archiver(resumeThread, home);
           this.queue.clearProjectThread(first.projectId, resumeThread, detail);
           logJev(`[codex:${first.id.slice(0, 8)}] /clear COMPLETED`);
         } catch (error) {
@@ -489,7 +491,7 @@ export class Orchestrator {
       }
     });
     return new Promise(resolve => {
-      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...codexHookArgs()];
+      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...projectCodexStateArgs(home), ...codexHookArgs()];
       const imageArgs = (first.attachments ?? []).flatMap(attachment => ["--image", attachment.path]);
       const resumePrompt = pausedThread
         ? `${prompt}\n\nContinue the interrupted ticket in this thread. Review the work already made and finish the task. Use your judgment about any checks needed to verify the final result.`
@@ -497,7 +499,7 @@ export class Orchestrator {
           ? `${prompt}\n\nContinue this same ticket after a previous attempt. Inspect the work already made, correct what remains incomplete, and finish the requested task. Use your judgment about any checks needed to verify the final result.`
           : prompt;
       const args = [...codexExecPrefix(Boolean(resumeThread)), ...common, ...imageArgs, ...(resumeThread ? [resumeThread, resumePrompt] : [prompt])];
-      const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...process.env, JEV_HOOK_TASK: first.tasks.map(task => task.description).join(" ").slice(0, 2_000) } });
+      const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...projectCodexEnv(home), JEV_HOOK_TASK: first.tasks.map(task => task.description).join(" ").slice(0, 2_000) } });
       child.stdin.end();
       let currentChild: ReturnType<typeof spawn> = child;
       let stalled = false;
@@ -601,7 +603,7 @@ export class Orchestrator {
           logJevApplied(change, `[codex:${tag}] ${modelChanged ? `${previousSetting?.model ?? "unknown"} → ${nextModelId}` : nextModelId}`);
           activeRouteIndex += 1;
           this.updateTicketExecution(first, execution => ({ ...execution, model: nextModelId, reasoning: effort, lastActivityAt: routedAt, metrics: execution.metrics ? { ...execution.metrics, turns: execution.metrics.turns + 1, routes: [...execution.metrics.routes, { stage: "implementation", model: nextModelId, reasoning: effort }] } : execution.metrics, events: [...execution.events, { id: randomUUID(), timestamp: routedAt, kind: "system", title: modelChanged ? "Codex model changed" : "Codex reasoning changed", detail: `implementation: ${nextModelId} · ${effort} reasoning`, status: "active" }] }));
-          return resumeCodexTurn(first.projectPath, threadId, nextModelId, effort, instruction, tag, record, resumed => { currentChild = resumed; this.updateTicketExecution(first, execution => ({ ...execution, pid: resumed.pid })); });
+          return resumeCodexTurn(first.projectPath, home, threadId, nextModelId, effort, instruction, tag, record, resumed => { currentChild = resumed; this.updateTicketExecution(first, execution => ({ ...execution, pid: resumed.pid })); });
         };
         if (success) {
           let previousImplementationRoute: string | undefined;
@@ -655,7 +657,7 @@ export class Orchestrator {
         if (loopDetected) { success = false; failureMessage = failureMessage.startsWith("JEV stopped repeated") ? failureMessage : "JEV stopped repeated Codex activity without project changes"; }
         const now = new Date().toISOString();
         const representative = this.queue.get(first.id)!; let compactedAfterTask = false; let compactionError: string | undefined; let clearError: string | undefined;
-        let codexStatus = await this.statusReader(representative.execution?.threadId).catch(error => ({ capturedAt: new Date().toISOString(), unavailableReason: messageOf(error) })) as CodexStatusSnapshot;
+        let codexStatus = await this.statusReader(representative.execution?.threadId, home).catch(error => ({ capturedAt: new Date().toISOString(), unavailableReason: messageOf(error) })) as CodexStatusSnapshot;
         let reviewedNextTaskId: string | undefined;
         let reviewedNextContinuity: "related" | "unrelated" | "uncertain" | undefined;
         if (representative.execution?.threadId) {
@@ -673,14 +675,14 @@ export class Orchestrator {
             const detail = `JEV found no task dependency between completed work and next ticket ${next!.id.slice(0, 8)}; the next task starts a fresh Codex conversation.`;
             logJev(`[codex:${tag}] /clear START thread ${representative.execution.threadId}`);
             this.updateTicketExecution(first, execution => ({ ...execution, events: [...execution.events, { id: randomUUID(), timestamp: new Date().toISOString(), kind: "system", title: "Codex /clear started", detail, status: "active" }] }));
-            try { await this.archiver(representative.execution.threadId); this.queue.clearProjectThread(first.projectId, representative.execution.threadId, detail); logJev(`[codex:${tag}] /clear COMPLETED`); }
+            try { await this.archiver(representative.execution.threadId, home); this.queue.clearProjectThread(first.projectId, representative.execution.threadId, detail); logJev(`[codex:${tag}] /clear COMPLETED`); }
             catch (error) { clearError = messageOf(error); this.queue.disableProjectThreadResume(first.projectId, representative.execution.threadId); logJevError(`[codex:${tag}] /clear FAILED: ${clearError}. The next ticket will start a fresh thread.`); }
           }
           if (success && next && continuity !== "unrelated" && (codexStatus.context?.usedTokens ?? 0) >= AUTO_COMPACTION_CONTEXT_TOKENS) {
             const reason = `Context reached ${codexStatus.context!.usedTokens.toLocaleString("en-US")} tokens (automatic threshold: ${AUTO_COMPACTION_CONTEXT_TOKENS.toLocaleString("en-US")}).`;
             logJev(`[codex:${tag}] /compact START thread ${representative.execution.threadId}`);
             this.updateTicketExecution(first, execution => ({ ...execution, lastActivityAt: now, events: [...execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact started", detail: `Thread ${representative.execution!.threadId} — ${reason}`, status: "active" }] }));
-            try { await this.compactor(representative.execution.threadId); compactedAfterTask = true; codexStatus = await this.statusReader(representative.execution.threadId).catch(() => codexStatus); }
+            try { await this.compactor(representative.execution.threadId, home); compactedAfterTask = true; codexStatus = await this.statusReader(representative.execution.threadId, home).catch(() => codexStatus); }
             catch (error) { compactionError = messageOf(error); }
           }
         }

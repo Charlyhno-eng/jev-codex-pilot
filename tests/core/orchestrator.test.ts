@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JobQueue } from "../../src/core/queue.js";
@@ -11,7 +11,10 @@ import type { Complexity, JevAnalysis, TaskType } from "../../src/core/types.js"
 vi.mock("../../src/core/codex-status.js", () => ({ readCodexStatusSnapshot: async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", unavailableReason: "Unavailable in this test." }) }));
 
 const originalPath = process.env.PATH;
-afterEach(() => { process.env.PATH = originalPath; });
+const originalCodexHome = process.env.CODEX_HOME;
+let testCodexHome = "";
+beforeEach(() => { testCodexHome = mkdtempSync(join(tmpdir(), "jev-codex-home-")); process.env.CODEX_HOME = testCodexHome; });
+afterEach(() => { process.env.PATH = originalPath; if (originalCodexHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = originalCodexHome; rmSync(testCodexHome, { recursive: true, force: true }); });
 
 const analyzerFor = (taskType: TaskType, complexity: Complexity = 1) =>
   (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity }));
@@ -187,6 +190,43 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     await expect(orchestrator.run(second.id)).rejects.toThrow("already running for this project");
     expect((await running).status).toBe("SUCCESS");
     expect(queue.get(second.id)?.status).toBe("PENDING");
+  });
+  it("runs independent project batches concurrently in separate Codex homes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-project-fairness-"));
+    const bin = join(root, "bin");
+    const firstProject = join(root, "first");
+    const secondProject = join(root, "second");
+    const calls = join(root, "calls");
+    mkdirSync(bin); mkdirSync(firstProject); mkdirSync(secondProject);
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+project="$(basename "$PWD")"
+printf 'start:%s:%s:%s\\n' "$project" "$CODEX_HOME" "$CODEX_SQLITE_HOME" >> '${calls}'
+sleep 0.12
+printf 'end:%s\\n' "$project" >> '${calls}'
+printf '{"type":"thread.started","thread_id":"%s-thread"}\\n' "$project"
+printf '%s\\n' '{"type":"turn.completed"}'
+`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const queue = new JobQueue(join(root, "queue"));
+    const first = queue.createBatch("first", firstProject, [{ description: "First A" }, { description: "Second A" }]);
+    const second = queue.createBatch("second", secondProject, [{ description: "First B" }, { description: "Second B" }]);
+    const orchestrator = new Orchestrator(queue, analyzerFor("research"), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related");
+    await Promise.all([orchestrator.runBatch(first[0].id), orchestrator.runBatch(second[0].id)]);
+    expect([...first, ...second].map(job => queue.get(job.id)?.status)).toEqual(["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]);
+    expect(first.map(job => queue.get(job.id)?.execution?.threadId)).toEqual(["first-thread", "first-thread"]);
+    expect(second.map(job => queue.get(job.id)?.execution?.threadId)).toEqual(["second-thread", "second-thread"]);
+    const lines = readFileSync(calls, "utf8").trim().split("\n");
+    expect(lines.slice(0, 2).map(line => line.split(":")[0])).toEqual(["start", "start"]);
+    expect(new Set(lines.slice(0, 2).map(line => line.split(":")[1]))).toEqual(new Set(["first", "second"]));
+    const starts = lines.filter(line => line.startsWith("start:")).map(line => line.split(":"));
+    expect(starts).toHaveLength(4);
+    expect(new Set(starts.filter(([, project]) => project === "first").map(([, , home]) => home)).size).toBe(1);
+    expect(new Set(starts.filter(([, project]) => project === "second").map(([, , home]) => home)).size).toBe(1);
+    expect(new Set(starts.map(([, , home]) => home)).size).toBe(2);
+    expect(starts.every(([, , home, sqliteHome]) => home === sqliteHome)).toBe(true);
   });
   it("reuses an analysis already attached to a newly created ticket", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-prepared-ticket-"));
@@ -468,7 +508,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     const orchestrator = new Orchestrator(queue, analyzerFor("research"), compactor, accountUsage, archiver, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 120_000, windowTokens: 258_000 } }), continuity);
     expect((await orchestrator.run(completed.id)).status).toBe("SUCCESS");
     expect(continuity).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ id: completed.id })]), expect.objectContaining({ id: next.id }));
-    expect(archiver).toHaveBeenCalledWith("unrelated-thread");
+    expect(archiver).toHaveBeenCalledWith("unrelated-thread", expect.any(String));
     expect(compactor).not.toHaveBeenCalled();
     expect(queue.get(completed.id)?.execution?.threadArchivedAt).toBeTruthy();
     expect(queue.get(next.id)?.status).toBe("PENDING");
@@ -500,7 +540,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(queue.listBatch(jobs[0].batchId!).map(job => job.status)).toEqual(["SUCCESS", "SUCCESS"]);
     expect(queue.get(jobs[0].id)?.execution?.threadId).toBe("thread-1");
     expect(continuity).toHaveBeenCalledTimes(1);
-    expect(archiver).toHaveBeenCalledWith("thread-1");
+    expect(archiver).toHaveBeenCalledWith("thread-1", expect.any(String));
     expect(queue.get(jobs[1].id)?.execution?.threadId).toBe("thread-2");
   }, 3000);
 
@@ -519,7 +559,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     const archiver = vi.fn(async () => undefined);
     const orchestrator = new Orchestrator(queue, analyzerFor("research"), compactor, accountUsage, archiver, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 258_000 } }), async () => "related");
     expect((await orchestrator.run(completed.id)).status).toBe("SUCCESS");
-    expect(compactor).toHaveBeenCalledWith("related-thread");
+    expect(compactor).toHaveBeenCalledWith("related-thread", expect.any(String));
     expect(archiver).not.toHaveBeenCalled();
   }, 3000);
 });

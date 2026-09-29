@@ -11,11 +11,11 @@ export interface CodexSettings {
   complexityRoutes: Record<Complexity, readonly ModelRoute[]>;
 }
 
-const fallbackModels = { luna: "gpt-6-luna", sol: "gpt-6-sol", astra: "gpt-6-astra" };
+const fallbackModels = { luna: "gpt-6-luna", sol: "gpt-6.1-sol", astra: "gpt-6-astra" };
 const fallbackReasoning = ["low", "medium", "high", "xhigh", "max"];
 const fallbackRoutes: Record<Complexity, string[]> = {
-  1: ["luna:medium"], 2: ["luna:high"], 3: ["luna:max"],
-  4: ["sol:high"], 5: ["sol:xhigh"]
+  1: ["luna:medium"], 2: ["luna:high"], 3: ["sol:low"],
+  4: ["sol:medium"], 5: ["sol:high"]
 };
 const complexityLevels: Complexity[] = [1, 2, 3, 4, 5];
 
@@ -96,9 +96,9 @@ const escalationRoutes: readonly ModelRoute[] = [
   { model: "luna", reasoning: "low" },
   { model: "luna", reasoning: "medium" },
   { model: "luna", reasoning: "high" },
-  { model: "luna", reasoning: "max" },
-  { model: "sol", reasoning: "high" },
-  { model: "sol", reasoning: "xhigh" }
+  { model: "sol", reasoning: "low" },
+  { model: "sol", reasoning: "medium" },
+  { model: "sol", reasoning: "high" }
 ];
 
 /** Returns the next stronger route when a Codex ticket attempt fails. */

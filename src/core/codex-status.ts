@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
+import { projectCodexEnv, projectCodexStateArgs } from "./codex-home.js";
 import type { CodexStatusSnapshot, CodexStatusWindow } from "./types.js";
 
 type JsonObject = Record<string, any>;
@@ -38,10 +39,10 @@ export function codexQuotaWindows(result: JsonObject): Pick<CodexStatusSnapshot,
 }
 
 /** Captures a best-effort Codex status snapshot after a ticket. */
-export async function readCodexStatusSnapshot(threadId?: string): Promise<CodexStatusSnapshot> {
+export async function readCodexStatusSnapshot(threadId?: string, home?: string): Promise<CodexStatusSnapshot> {
   const capturedAt = new Date().toISOString();
   return new Promise(resolve => {
-    const child = spawn("codex", ["app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("codex", [...(home ? projectCodexStateArgs(home) : []), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: home ? projectCodexEnv(home) : process.env });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
     let limits: Pick<CodexStatusSnapshot, "fiveHour" | "weekly"> = {};

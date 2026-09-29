@@ -31,3 +31,11 @@ This update fixes quota-resume and native Codex hook assertions, removes no-long
 This update makes pending model and reasoning controls span all configured levels, changes per-ticket Git automation to create local commits only, and adds a manual push action for the selected branch.
 
 This update gives the task composer a compact action row and shows the six Kanban states in a responsive three-column layout. It also aligns the Git controls with the application's blue theme and confirms a successful manual push with its branch and remote.
+
+This update coordinates Codex execution fairly across project queues, letting another project run after each ticket instead of waiting for a whole batch or overlapping Codex processes. The web workspace also resets its ticket selection when switching projects, so Run cannot target a ticket from the previous project.
+
+This update replaces the shared Codex execution slot with truly parallel project runs. Each project now has a private Codex home and SQLite state, while existing authentication and settings are linked and prior project sessions are imported for continuity; thread resume, compaction, and archival use the same private home.
+
+This update replaces the README's model benchmark charts with a DeepSWE-inspired table of reasoning effort scores and estimated task costs for five models.
+
+This update routes complexity levels 1–2 to GPT-6 Luna Medium/High and levels 3–5 to GPT-6.1 Sol Low/Medium/High, aligning configuration, fallback models, failure escalation, and documentation.

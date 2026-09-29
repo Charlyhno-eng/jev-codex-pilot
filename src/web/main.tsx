@@ -63,6 +63,11 @@ function ProjectsHome() {
     <section className="project-library"><div className="section-heading"><span className="step">02</span><div><h2>Your projects</h2><p>Each project keeps its own queue, history and Codex thread.</p></div></div>{projects.length ? <div className="project-grid">{projects.map(project => { const projectJobs = jobs.filter(job => job.projectId === project.id); const running = projectJobs.filter(job => job.status === "RUNNING" || job.status === "ESCALATING").length; return <div key={project.id} className="project-card-wrap"><button className="project-card" onClick={() => navigate(`/projects/${project.id}`)}><span className="project-letter">{project.name.slice(0, 1).toUpperCase()}</span><div><h3>{project.name}</h3><p>{project.path}</p><small>{projectJobs.length} tasks · {projectJobs.filter(job => job.status === "SUCCESS").length} completed</small></div><span className={running ? "project-live active" : "project-live"}><i/>{running ? `${running} live` : "idle"}</span><b>↗</b></button><button className="remove-project" type="button" onClick={() => void removeProject(project)} disabled={Boolean(running)} title={running ? "Wait for the active Codex execution to finish" : "Remove this project from JEV Codex Pilot"}>Remove</button></div>; })}</div> : <div className="empty-projects"><span>⌁</span><h3>No project registered yet</h3><p>Choose a local folder above to create your first workspace.</p></div>}</section></main>{contextOpen && <InitialAgentsModal context={context} onChange={setContext} onClose={() => setContextOpen(false)} onCreate={() => void createWithContext()} busy={busy} error={error}/>} {notice && <div className="toast">✓ {notice}</div>}</Shell>;
 }
 
+function ProjectWorkspaceRoute() {
+  const { id } = useParams();
+  return <ProjectWorkspace key={id} />;
+}
+
 function ProjectWorkspace() {
   const { id = "" } = useParams();
   const [record, setRecord] = useState<ProjectRecord>();
@@ -202,4 +207,4 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     {error && <p className="agents-error">{error}</p>}<footer><button type="button" className="modal-secondary" onClick={onClose}>Close</button><button className="modal-primary" disabled={busy}>{busy ? "Saving…" : "Save settings"}</button></footer>
   </form></div>;
 }
-createRoot(document.getElementById("root")!).render(<BrowserRouter><Routes><Route path="/" element={<ProjectsHome/>}/><Route path="/projects/:id" element={<ProjectWorkspace/>}/><Route path="/projects/:id/diff" element={<Shell><GitPage/></Shell>}/><Route path="/projects/:id/console" element={<ConsolePage/>}/><Route path="/projects/:id/console/:jobId" element={<ConsolePage/>}/><Route path="*" element={<ProjectsHome/>}/></Routes></BrowserRouter>);
+createRoot(document.getElementById("root")!).render(<BrowserRouter><Routes><Route path="/" element={<ProjectsHome/>}/><Route path="/projects/:id" element={<ProjectWorkspaceRoute/>}/><Route path="/projects/:id/diff" element={<Shell><GitPage/></Shell>}/><Route path="/projects/:id/console" element={<ConsolePage/>}/><Route path="/projects/:id/console/:jobId" element={<ConsolePage/>}/><Route path="*" element={<ProjectsHome/>}/></Routes></BrowserRouter>);

@@ -16,17 +16,25 @@ JEV assigns each ticket a complexity score from 1 to 5 when it enters the Kanban
 
 ## Model benchmarks and routing
 
-These charts compare benchmark score with estimated cost per task: AutomationBench covers agent automation tasks, while DeepSWE 1.1 focuses on original, long-horizon software engineering. Each point shows a model at a reasoning effort; moving right costs more, and moving up scores better.
+DeepSWE-inspired benchmark scores and estimated cost per task by reasoning effort:
 
-![AutomationBench score by cost per task for GPT-6 and Claude models](assets/benchmark_AutomationBench.jpg)
+| Effort | **GPT-6 Luna** Score | Cost | **GPT-6 Sol** Score | Cost | **GPT-6.1 Sol** Score | Cost | **GPT-6 Astra** Score | Cost | **GPT-5.6 Sol** Score | Cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **Low** | 2,4 % | ~$0,006 | 37,2 % | ~$0,16 | **~64 %** | **~$0,25** | 67,0 % | ~$1,60 | 45,4 % | ~$1,07 |
+| **Medium** | 44,5 % | ~$0,052 | 56,6 % | ~$0,38 | **~73 %** | **~$0,50** | 72,8 % | ~$3,08 | 61,1 % | ~$1,86 |
+| **High** | 59,3 % | ~$0,084 | 65,3 % | ~$0,64 | **~75 %** | **~$0,80** | 73,2 % | ~$3,92 | 69,4 % | ~$3,47 |
+| **XHigh** | 61,3 % | ~$0,11 | 66,6 % | ~$1,00 | **~75,2 %** | **~$1,00** | 74,1 % | ~$4,43 | 70,7 % | ~$4,70 |
+| **Max** | 66,6 % | ~$0,22 | 68,8 % | ~$2,74 | **~74 %** | **~$1,50** | 73,2 % | ~$7,50 | 72,7 % | ~$8,39 |
 
-![DeepSWE 1.1 score by cost per task for GPT-6 and Claude models](assets/benchmark_DeepSWE.jpg)
+The current defaults are **GPT-6 Luna Medium** for complexity level 1, **GPT-6 Luna High** for level 2, and **GPT-6.1 Sol Low/Medium/High** for levels 3–5. These scores guide configurable defaults; they do not guarantee a result for every ticket.
 
-The current defaults are **Luna Medium/High/Max** for complexity levels 1–3 and **Sol High/Extra High** for levels 4–5. Luna keeps lighter tickets on lower-cost routes; Sol's stronger benchmark performance is reserved for more demanding work. **Astra** reaches the highest scores in these comparisons, but at a substantially higher cost, so it remains available in `config/model.toml` without being a default route. These scores guide configurable defaults; they do not guarantee a result for every ticket.
+---
 
 ## JEV benchmark
 
 In the latest paired run on September 27, 2026, all seven laboratory-portfolio tasks passed in both variants. JEV used **69.8% fewer total Codex tokens** and **48.4% less elapsed time** than direct Codex. This was one exploratory repetition; see the [full report](docs/benchmark-results/report2.md), [archived results](docs/benchmark-results/), and [benchmark guide](docs/benchmark.md) for measurements and reproduction details.
+
+---
 
 ## Optimisation
 
@@ -38,11 +46,13 @@ Before native Codex compaction, JEV replays the active transcript and pairs comp
 
 Tickets submitted together are analyzed and executed separately in queue order. Launching a sequence drains every pending ticket for that project, including tickets added while it runs. JEV applies the selected model and reasoning level independently to each ticket.
 
+You can launch ticket sequences in several projects at the same time. Each project runs Codex concurrently in its own `CODEX_HOME`, with separate sessions and SQLite state. JEV links the user's existing Codex authentication and settings into each private home and imports that project's earlier sessions when it first creates the home. Codex account limits remain shared across projects.
+
 ---
 
 ## See JEV Codex Pilot in action
 
-![JEV Codex Pilot page1](assets/jev-codex-pilot-demo.gif)
+![JEV Codex Pilot page1](assets/jcp-demo.gif)
 
 ---
 
@@ -87,9 +97,13 @@ cd /path/to/your/project
 jc-pilot
 ```
 
+---
+
 ## Telegram
 
 The optional Telegram bot provides a private progress view, guided ticket creation, and explicit Codex launches. It is disabled by default and pairs one private chat. At the end of a run, its completion notice reports the remaining 5-hour Codex session limit and context window for each ticket, when available. The ticket's Codex Summary also shows the weekly limit; older tickets without a snapshot show unavailable values.
+
+---
 
 ## Feedback and bug reports
 

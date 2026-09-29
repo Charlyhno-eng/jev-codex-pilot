@@ -22,12 +22,12 @@ describe("JEV model policy", () => {
     expect(result.model).toBe("luna");
   });
 
-  it("uses Sol High for level-four UI and UX work", async () => {
+  it("uses Sol Medium for level-four UI and UX work", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-ui-"));
     writeFileSync(join(root, "AGENTS.md"), "Build a browser game");
     const result = await analyze(root, [{ description: "Create a polished laboratory interface with animated flames" }], async () => ({ taskType: "ui_ux", complexity: 4 }));
     expect(result.model).toBe("sol");
-    expect(result.reasoning).toBe("high");
+    expect(result.reasoning).toBe("medium");
   });
 
   it("uses Luna medium for a low-complexity UI adjustment", async () => {
@@ -62,7 +62,7 @@ describe("JEV model policy", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-critical-"));
     const result = await analyze(root, [{ description: "Audit the critical distributed security architecture" }], async () => ({ taskType: "security", complexity: 5 }));
     expect(result.model).toBe("sol");
-    expect(result.reasoning).toBe("xhigh");
+    expect(result.reasoning).toBe("high");
   });
 
   it("uses JEV's decision and recommends Sol for level-four architecture", async () => {
