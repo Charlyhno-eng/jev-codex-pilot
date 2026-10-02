@@ -16,7 +16,7 @@ function branch(root: string): string {
   return name;
 }
 
-/** Reads the current branch, remote, local branches, and recent commits. */
+/** Reads branch controls and all local commits not yet present on the tracked remote. */
 export function readGitWorkspace(root: string): GitWorkspace {
   const current = branch(root);
   let upstream: string | undefined;
@@ -26,7 +26,13 @@ export function readGitWorkspace(root: string): GitWorkspace {
   const branches = git(root, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).split("\n").filter(Boolean);
   if (!branches.includes(current)) branches.unshift(current);
   let commits: GitWorkspace["commits"] = [];
-  try { commits = git(root, ["log", "-12", "--format=%h%x1f%s%x1f%aI%x1f%an"]).split("\n").filter(Boolean).map(line => { const [hash, subject, date, author] = line.split("\x1f"); return { hash, subject, date, author }; }); } catch { /* Empty repository. */ }
+  let pushedRef = upstream;
+  if (!pushedRef && remote) {
+    const candidate = `refs/remotes/${remote}/${current}`;
+    try { git(root, ["rev-parse", "--verify", candidate]); pushedRef = candidate; } catch { /* Branch has not been pushed yet. */ }
+  }
+  const range = pushedRef ? [`${pushedRef}..HEAD`] : ["HEAD", "--not", "--remotes"];
+  try { commits = git(root, ["log", "--format=%h%x1f%s%x1f%aI%x1f%an", ...range]).split("\n").filter(Boolean).map(line => { const [hash, subject, date, author] = line.split("\x1f"); return { hash, subject, date, author }; }); } catch { /* Empty repository. */ }
   return { branch: current, upstream, remote, dirty: Boolean(git(root, ["status", "--porcelain=v1", "--untracked-files=all"])), branches, commits };
 }
 
@@ -40,11 +46,10 @@ export function selectGitBranch(root: string, name: string, create: boolean): Gi
   return readGitWorkspace(root);
 }
 
-/** Captures a clean branch and HEAD before an automatically delivered ticket. */
+/** Captures the branch and HEAD before a ticket, allowing existing local changes. */
 export function prepareGitDelivery(root: string): GitStart {
   if (git(root, ["rev-parse", "--show-toplevel"]) !== resolve(root)) throw new Error("Automatic Git delivery requires the selected project folder to be the Git repository root.");
   const state = readGitWorkspace(root);
-  if (state.dirty) throw new Error("Automatic commit requires a clean worktree before each ticket. Review the current Git changes first.");
   let head = "";
   try { head = git(root, ["rev-parse", "HEAD"]); } catch { /* Initial commit. */ }
   return { branch: state.branch, head };
@@ -57,8 +62,8 @@ export function deliverGitTicket(root: string, start: GitStart, message: string)
   let head = "";
   try { head = git(root, ["rev-parse", "HEAD"]); } catch { /* Initial commit. */ }
   if (head !== start.head) throw new Error("HEAD changed during the ticket. Review the repository before automatic Git delivery.");
-  const subject = message.replace(/[\r\n\t]+/g, " ").trim().slice(0, 120);
-  if (!subject) throw new Error("A commit message is required.");
+  if (!message.trim()) throw new Error("A commit message is required.");
+  const subject = conventionalCommitSubject(message);
   git(root, ["add", "--all"]);
   try { git(root, ["commit", "--allow-empty", "-m", subject]); }
   catch { throw new Error("Git could not create the commit. Check the repository's author identity and hooks."); }
@@ -75,12 +80,19 @@ export function pushGitBranch(root: string): GitWorkspace {
   return readGitWorkspace(root);
 }
 
-/** Extracts Codex's proposed commit subject, with the ticket summary as fallback. */
+function conventionalCommitSubject(message: string): string {
+  const subject = message.replace(/[\r\n\t]+/g, " ").trim();
+  const conventional = subject.match(/^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^()\r\n]+\))?(!)?:\s*(\S.*)$/i);
+  if (conventional) return `${conventional[1].toLowerCase()}${conventional[2] ?? ""}${conventional[3] ?? ""}: ${conventional[4]}`.slice(0, 120);
+  return `chore: ${subject || "complete JEV ticket"}`.slice(0, 120);
+}
+
+/** Extracts a conventional commit subject, falling back to the ticket summary. */
 export function commitMessageFromOutput(output: string, description: string): string {
   let proposed = "";
   for (const line of output.split("\n")) {
     try { const event = JSON.parse(line) as { type?: string; item?: { type?: string; text?: string } }; if (event.type === "item.completed" && event.item?.type === "agent_message") proposed = event.item.text?.match(/(?:^|\n)JEV_COMMIT_MESSAGE=(.+)/)?.[1] ?? proposed; }
     catch { /* Not a JSON event. */ }
   }
-  return proposed || description.split("\n")[0] || "Complete JEV ticket";
+  return conventionalCommitSubject(proposed || description.split("\n")[0] || "Complete JEV ticket");
 }

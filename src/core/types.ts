@@ -2,7 +2,7 @@ export type Complexity = 1 | 2 | 3 | 4 | 5;
 export type CodexModel = string;
 export type Reasoning = string;
 export type JobStatus = "PENDING" | "RUNNING" | "ESCALATING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
-export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "loop" | "quota" | "interruption" | "telegram" | "jev";
+export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "loop" | "quota" | "interruption" | "jev";
 export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";
 
 export interface TaskSpec {
@@ -135,7 +135,6 @@ export interface Job {
   error?: string;
   errorCategory?: JobIssueCategory;
   recoveryNote?: string;
-  notificationError?: string;
   /** Next known Codex quota reset for work paused by a reached session limit. */
   sessionResumeAt?: string;
   attempts: number;

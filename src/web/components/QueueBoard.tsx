@@ -3,7 +3,7 @@ import type { Job } from "../lib/types.js";
 import { reasoningLabel } from "../lib/format.js";
 import { useCodexModels } from "../hooks/use-codex-models.js";
 
-const queueStatuses = ["PENDING", "RUNNING", "ESCALATING", "SUCCESS", "SESSION_PAUSED", "FAILED"] as const;
+const queueStatuses = ["PENDING", "RUNNING", "SUCCESS", "ESCALATING", "SESSION_PAUSED", "FAILED"] as const;
 
 /** Renders a ticket status badge. */
 export function Status({ status }: { status: string }) {
@@ -43,7 +43,6 @@ export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMo
               {job.gitDelivery?.status === "failed" && <em className="queue-verification-note">Git delivery failed: {job.gitDelivery.error}</em>}
               {(job.gitDelivery?.status === "committed" || job.gitDelivery?.status === "pushed") && <em className="queue-verification-note">Committed {job.gitDelivery.commit} on {job.gitDelivery.branch}{job.gitDelivery.message ? ` · ${job.gitDelivery.message}` : ""}</em>}
               {job.execution?.verificationNote && <em className="queue-verification-note">{job.execution.verificationNote}</em>}
-              {job.notificationError && <em className="queue-verification-note">Telegram notification failed: {job.notificationError}</em>}
             </button>
             {status === "PENDING" && <button className="edit-task" title="Edit and re-evaluate this pending task" aria-label={`Edit ${job.tasks[0]?.description ?? "task"}`} onClick={() => onEdit(job)}>✎</button>}
             {status === "SUCCESS" && <button className="archive-task" title="Archive this completed task" aria-label={`Archive ${job.tasks[0]?.description ?? "task"}`} onClick={() => void onArchive(job, "archive")}>✓</button>}

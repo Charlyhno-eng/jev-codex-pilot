@@ -5,11 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Job, ProjectRecord } from "../../src/core/types.js";
 
 const mocks = vi.hoisted(() => ({
-  config: { jevProvider: "vercel-ai-gateway", aiGatewayApiKey: "test-key", telegramBotToken: "test-token", telegramAllowedChatId: "42", telegramEnabled: true },
+  config: { jevProvider: "vercel-ai-gateway", aiGatewayApiKey: "test-key" },
   status: "SUCCESS" as Job["status"],
-  notify: vi.fn(),
-  update: vi.fn(),
-  logError: vi.fn(),
   release: vi.fn(),
   createBatch: vi.fn(),
   runBatch: vi.fn()
@@ -30,7 +27,6 @@ vi.mock("../../src/core/queue.js", () => ({ JobQueue: class {
     return tasks.map((task, index) => ({ id: `ticket-${index + 1}`, projectId, projectPath, tasks: [task], status: "PENDING", createdAt: "", updatedAt: "", attempts: 0 }) as Job);
   }
   get(id: string) { return { id, projectId: "project-1", projectPath: "", tasks: [{ description: "A task" }], status: mocks.status, createdAt: "", updatedAt: "", attempts: 1 } as Job; }
-  update = mocks.update;
 } }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class {
   configureGitDelivery() {}
@@ -38,9 +34,7 @@ vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class {
   async run() { return { id: "ticket-1", projectId: "project-1", projectPath: "", tasks: [{ description: "A task" }], status: mocks.status, createdAt: "", updatedAt: "", attempts: 1 } as Job; }
   async runBatch(id: string) { mocks.runBatch(id); }
 } }));
-vi.mock("../../src/core/telegram-bot.js", () => ({ TelegramBot: class { notifyDevelopmentFinished = mocks.notify; } }));
 vi.mock("../../src/core/single-instance.js", () => ({ acquireApiInstance: async () => mocks.release }));
-vi.mock("../../src/core/jev-logger.js", () => ({ logJevError: mocks.logError }));
 
 import { executeBatch, main } from "../../src/cli/main.js";
 
@@ -48,9 +42,6 @@ const originalExitCode = process.exitCode;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.status = "SUCCESS";
-  mocks.config.telegramEnabled = true;
-  mocks.config.telegramBotToken = "test-token";
-  mocks.config.telegramAllowedChatId = "42";
   process.exitCode = undefined;
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -58,41 +49,28 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); process.exitCode = originalExitCode; });
 
 function projectDirectory() {
-  const directory = mkdtempSync(join(tmpdir(), "jev-cli-notice-"));
+  const directory = mkdtempSync(join(tmpdir(), "jev-cli-run-"));
   writeFileSync(join(directory, "AGENTS.md"), "Project instructions.\n");
   return directory;
 }
 
-describe("CLI completion notice", () => {
+describe("CLI ticket execution", () => {
   it("creates a terminal batch in submitted order and launches it once", async () => {
     await executeBatch(projectDirectory(), ["First", "Second"]);
     expect(mocks.createBatch).toHaveBeenCalledExactlyOnceWith("project-1", expect.any(String), [{ description: "First" }, { description: "Second" }]);
     expect(mocks.runBatch).toHaveBeenCalledExactlyOnceWith("ticket-1");
-    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "project-1" }), [expect.objectContaining({ id: "ticket-1" }), expect.objectContaining({ id: "ticket-2" })]);
   });
-  it.each(["SUCCESS", "FAILED"] as const)("sends the existing Telegram summary for a %s ticket", async status => {
+  it.each(["SUCCESS", "FAILED", "SESSION_PAUSED"] as const)("reports the %s result and releases the execution lock", async status => {
     mocks.status = status;
     await main(["run", "A task"], projectDirectory());
-    expect(mocks.notify).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: "project-1" }), [expect.objectContaining({ id: "ticket-1", status })]);
     expect(process.exitCode).toBe(status === "SUCCESS" ? 0 : 1);
+    expect(process.stdout.write).toHaveBeenCalledWith(expect.stringContaining(status));
     expect(mocks.release).toHaveBeenCalledOnce();
   });
 
-  it("keeps the ticket result and records a failed notice", async () => {
-    mocks.notify.mockRejectedValueOnce(new Error("Telegram unavailable"));
-    await main(["run", "A task"], projectDirectory());
-    expect(mocks.update).toHaveBeenCalledWith("ticket-1", { notificationError: "Telegram unavailable" });
-    expect(mocks.logError).toHaveBeenCalledWith("Telegram completion notice failed: Telegram unavailable");
-    expect(process.exitCode).toBe(0);
-  });
-
-  it("does not notify for a paused ticket or disabled Telegram", async () => {
-    mocks.status = "SESSION_PAUSED";
-    await main(["run", "A task"], projectDirectory());
-    expect(mocks.notify).not.toHaveBeenCalled();
-    mocks.status = "SUCCESS";
-    mocks.config.telegramEnabled = false;
-    await main(["run", "A task"], projectDirectory());
-    expect(mocks.notify).not.toHaveBeenCalled();
+  it("releases the execution lock when the batch fails to start", async () => {
+    mocks.runBatch.mockImplementationOnce(() => { throw new Error("Execution unavailable"); });
+    await expect(executeBatch(projectDirectory(), ["First", "Second"])).rejects.toThrow("Execution unavailable");
+    expect(mocks.release).toHaveBeenCalledOnce();
   });
 });

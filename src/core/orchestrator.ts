@@ -498,7 +498,8 @@ export class Orchestrator {
         : continuingEscalation
           ? `${prompt}\n\nContinue this same ticket after a previous attempt. Inspect the work already made, correct what remains incomplete, and finish the requested task. Use your judgment about any checks needed to verify the final result.`
           : prompt;
-      const args = [...codexExecPrefix(Boolean(resumeThread)), ...common, ...imageArgs, ...(resumeThread ? [resumeThread, resumePrompt] : [prompt])];
+      // --image accepts multiple values; terminate options before the thread and prompt.
+      const args = [...codexExecPrefix(Boolean(resumeThread)), ...common, ...imageArgs, "--", ...(resumeThread ? [resumeThread, resumePrompt] : [prompt])];
       const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...projectCodexEnv(home), JEV_HOOK_TASK: first.tasks.map(task => task.description).join(" ").slice(0, 2_000) } });
       child.stdin.end();
       let currentChild: ReturnType<typeof spawn> = child;

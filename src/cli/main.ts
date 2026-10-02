@@ -7,8 +7,6 @@ import { JobQueue } from "../core/queue.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { ProjectStore } from "../core/projects.js";
 import { acquireApiInstance } from "../core/single-instance.js";
-import { TelegramBot } from "../core/telegram-bot.js";
-import { logJevError } from "../core/jev-logger.js";
 import { interactiveSession } from "./interactive.js";
 import type { Job, ProjectRecord } from "../core/types.js";
 
@@ -132,25 +130,6 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   const singleResult = jobs.length === 1 ? await orchestrator.run(jobs[0].id) : undefined;
   if (jobs.length > 1) await orchestrator.runBatch(jobs[0].id);
   const results = singleResult ? [singleResult] : jobs.map(job => queue.get(job.id) ?? job);
-  if (results.some(result => result.status === "SUCCESS" || result.status === "FAILED")) {
-    const telegramSettings = config.read();
-    if (telegramSettings.telegramEnabled && telegramSettings.telegramBotToken && telegramSettings.telegramAllowedChatId) {
-      try {
-        const telegram = new TelegramBot({
-          config: () => telegramSettings,
-          listProjects: () => projects.list(),
-          listJobs: projectId => queue.list(projectId),
-          createTicket: () => { throw new Error("Ticket creation is unavailable in the CLI"); }
-        }, dataDirectory);
-        await telegram.notifyDevelopmentFinished(project, results.filter(result => result.status === "SUCCESS" || result.status === "FAILED"));
-      }
-      catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        for (const result of results) queue.update(result.id, { notificationError: detail });
-        logJevError(`Telegram completion notice failed: ${detail}`);
-      }
-    }
-  }
   for (const result of results) summary(result);
   process.exitCode = results.every(result => result.status === "SUCCESS" && result.gitDelivery?.status !== "failed") ? 0 : 1;
   } catch (error) { throw persisted(error); }

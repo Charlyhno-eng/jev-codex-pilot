@@ -13,7 +13,6 @@ import { pushGitBranch, readGitWorkspace, selectGitBranch } from "../core/git-wo
 import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
-import { TelegramBot } from "../core/telegram-bot.js";
 import { COMPLEXITY_ROUTES, MODEL_LEVELS, REASONING_LEVELS } from "../core/codex-models.js";
 import { availableCodexModels, selectCodexModelId } from "../core/codex-catalog.js";
 import { logJev, logJevApplied, logJevError, logSession } from "../core/jev-logger.js";
@@ -26,26 +25,6 @@ const orchestrator = new Orchestrator(queue);
 orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
 const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
-const telegram = new TelegramBot({
-  config: () => appConfig.read(),
-  listProjects: () => projects.list(),
-  listJobs: projectId => queue.list(projectId),
-  createTicket: (project, description) => {
-    if (!projects.hasAgents(project.id)) throw new Error("AGENTS.md is required");
-    projects.touch(project.id);
-    const ticket = queue.create(project.id, project.path, [{ description: description.trim() }]);
-    return ticket;
-  },
-  removeTicket: jobId => queue.removePending(jobId),
-  runPending: project => {
-    if (queue.list(project.id).some(job => job.status === "RUNNING" || job.status === "ESCALATING")) return "running";
-    const next = queue.listProjectExecutionOrder(project.id).find(job => !job.archivedAt && job.status === "PENDING");
-    if (!next || orchestrator.isProjectRunning(project.id)) return "empty";
-    void runWithNotification(next.id, true);
-    return "started";
-  },
-  pairChat: chatId => { appConfig.write({ telegramAllowedChatId: chatId, telegramEnabled: true }); }
-}, resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
 const port = Number(process.env.PORT ?? 3000);
 
@@ -63,25 +42,16 @@ function hasGithubRemote(path: string) {
   } catch { return false; }
 }
 
-/** Runs Codex and reports the final project result to the configured private chat. */
-async function runWithNotification(jobId: string, batch: boolean) {
+/** Runs a ticket or sequence and records any startup failure. */
+async function runTicket(jobId: string, batch: boolean) {
   const starting = queue.get(jobId);
   if (!starting) return;
-  const before = new Map(queue.list(starting.projectId).map(job => [job.id, job.attempts]));
   try {
     if (batch) await orchestrator.runBatch(jobId);
     else await orchestrator.run(jobId);
   } catch (error) {
     const current = queue.get(jobId);
     if (current && (current.status === "PENDING" || current.status === "RUNNING" || current.status === "ESCALATING") && !orchestrator.ownsProjectRun(current.projectId)) queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start", errorCategory: current.execution ? "codex" : "jev" });
-  } finally {
-    const project = projects.get(starting.projectId);
-    const finished = queue.list(starting.projectId).filter(job => job.attempts > (before.get(job.id) ?? 0) && (job.status === "SUCCESS" || job.status === "FAILED"));
-    if (project && finished.length) void telegram.notifyDevelopmentFinished(project, finished).catch(error => {
-      const detail = error instanceof Error ? error.message : String(error);
-      for (const job of finished) queue.update(job.id, { notificationError: detail });
-      logJevError(`Telegram completion notice failed: ${detail}`);
-    });
   }
 }
 
@@ -127,7 +97,7 @@ async function resumeSessionPausedWork() {
     const resumed = await orchestrator.resumeSessionPausedJobs();
     for (const job of resumed) {
       logSession(`Codex session reset; automatically resuming task ${job.id.slice(0, 8)}`);
-      void runWithNotification(job.id, true);
+      void runTicket(job.id, true);
     }
   } finally { resumingSessionPausedWork = false; }
 }
@@ -226,45 +196,25 @@ createServer(async (request, response) => {
       const settings = appConfig.read();
       return json(response, 200, {
         configured: Boolean(settings.aiGatewayApiKey),
-        maskedApiKey: maskedApiKey(settings.aiGatewayApiKey),
-        telegram: {
-          configured: Boolean(settings.telegramBotToken),
-          maskedBotToken: maskedApiKey(settings.telegramBotToken),
-          enabled: settings.telegramEnabled && Boolean(settings.telegramBotToken && settings.telegramAllowedChatId),
-          allowedChatId: settings.telegramAllowedChatId
-        }
+        maskedApiKey: maskedApiKey(settings.aiGatewayApiKey)
       });
     }
     if (request.method === "GET" && url.pathname === "/api/settings/secrets") {
       const settings = appConfig.read();
-      return json(response, 200, { apiKey: settings.aiGatewayApiKey, telegramBotToken: settings.telegramBotToken });
+      return json(response, 200, { apiKey: settings.aiGatewayApiKey });
     }
     if (request.method === "PUT" && url.pathname === "/api/settings") {
-      const input = await body(request) as { apiKey?: unknown; telegramBotToken?: unknown; telegramAllowedChatId?: unknown; telegramEnabled?: unknown };
+      const input = await body(request) as { apiKey?: unknown };
       const change: Parameters<AppConfigStore["write"]>[0] = {};
       if (input.apiKey !== undefined) {
         if (typeof input.apiKey !== "string" || !input.apiKey.trim()) return json(response, 400, { error: "A Vercel AI Gateway API key is required." });
         change.aiGatewayApiKey = input.apiKey.trim();
       }
-      if (input.telegramBotToken !== undefined) {
-        if (typeof input.telegramBotToken !== "string" || !input.telegramBotToken.trim()) return json(response, 400, { error: "A Telegram bot token is required when replacing it." });
-        change.telegramBotToken = input.telegramBotToken.trim();
-      }
-      if (input.telegramAllowedChatId !== undefined) {
-        if (typeof input.telegramAllowedChatId !== "string" || !/^-?\d+$/.test(input.telegramAllowedChatId.trim())) return json(response, 400, { error: "The authorized Telegram chat ID must be numeric." });
-        change.telegramAllowedChatId = input.telegramAllowedChatId.trim();
-      }
-      if (input.telegramEnabled !== undefined) {
-        if (typeof input.telegramEnabled !== "boolean") return json(response, 400, { error: "Telegram enabled must be true or false." });
-        change.telegramEnabled = input.telegramEnabled;
-      }
       if (!Object.keys(change).length) return json(response, 400, { error: "Provide at least one setting to update." });
       const settings = appConfig.write(change);
-      telegram.refresh();
       return json(response, 200, {
         configured: Boolean(settings.aiGatewayApiKey),
-        maskedApiKey: maskedApiKey(settings.aiGatewayApiKey),
-        telegram: { configured: Boolean(settings.telegramBotToken), maskedBotToken: maskedApiKey(settings.telegramBotToken), enabled: settings.telegramEnabled && Boolean(settings.telegramBotToken && settings.telegramAllowedChatId), allowedChatId: settings.telegramAllowedChatId }
+        maskedApiKey: maskedApiKey(settings.aiGatewayApiKey)
       });
     }
     if (request.method === "POST" && url.pathname === "/api/system/select-directory") {
@@ -354,12 +304,12 @@ createServer(async (request, response) => {
     }
     if (request.method === "POST" && action === "run") {
       if (job.status !== "PENDING" || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "This task cannot start while another execution is active or it is not pending." });
-      void runWithNotification(id, false);
+      void runTicket(id, false);
       return json(response, 202, queue.get(id));
     }
     if (request.method === "POST" && action === "run-batch") {
       if (job.status !== "PENDING" || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "This task sequence cannot start while another execution is active or it is not pending." });
-      void runWithNotification(id, true);
+      void runTicket(id, true);
       return json(response, 202, queue.get(id));
     }
     return json(response, 405, { error: "Method not allowed" });
@@ -369,7 +319,6 @@ createServer(async (request, response) => {
     return json(response, 500, { error: message });
   }
 }).listen(port, "127.0.0.1", () => {
-  telegram.start();
   recoverInterruptedWork();
   void resumeSessionPausedWork();
   setInterval(recoverInterruptedWork, 60_000);

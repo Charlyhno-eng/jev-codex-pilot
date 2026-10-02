@@ -1,8 +1,8 @@
 # JEV Codex Pilot
 
-JEV Codex Pilot turns software requests into traceable Codex tickets. The API lives in `src/api`, the ticket engine in `src/core`, and the web app in `src/web`. The project also includes an optional private Telegram bot, a headless `jc-pilot` CLI, and a paired benchmark runner documented in the README and `docs/benchmark.md`.
+JEV Codex Pilot turns software requests into traceable Codex tickets. The API lives in `src/api`, the ticket engine in `src/core`, and the web app in `src/web`. The project also includes a headless `jc-pilot` CLI and a paired benchmark runner documented in the README and `docs/benchmark.md`.
 
-JEV scores and routes tickets by complexity, keeps project history in `.jev/`, and lets Codex choose and run task checks. It preserves related work in a Codex thread, clears unrelated work, compacts long context at 100,000 tokens, and stops repeated failed actions when the project has not changed. The optional private Telegram bot supports progress updates and guided ticket creation. The headless CLI runs tickets through the same engine, one command at a time in queue order. The paired benchmark runner compares JEV with direct Codex runs.
+JEV scores and routes tickets by complexity, keeps project history in `.jev/`, and lets Codex choose and run task checks. It preserves related work in a Codex thread, clears unrelated work, compacts long context at 100,000 tokens, and stops repeated failed actions when the project has not changed. The headless CLI runs tickets through the same engine, one command at a time in queue order. The paired benchmark runner compares JEV with direct Codex runs.
 
 Do not change target project code or run its tests as part of JEV. Create or edit a target project's `AGENTS.md` only through the user flow, and run Codex only after an explicit API or Run action. Never expose secrets in code, logs, documentation, or the UI. Keep project instructions short and task focused, and record durable product behavior in `README.md`.
 
@@ -41,3 +41,11 @@ This update replaces the README's model benchmark charts with a DeepSWE-inspired
 This update routes complexity levels 1–2 to GPT-6 Luna Medium/High and levels 3–5 to GPT-6.1 Sol Low/Medium/High, aligning configuration, fallback models, failure escalation, and documentation.
 
 This update fixes the saved-ticket migration test to expect Sol Medium for complexity level 4 under the new routing policy.
+
+This update fixes image argument parsing by separating Codex options from positional prompts and session IDs, allows automatic Git tickets to start with uncommitted local changes, and enforces Conventional Commit subjects with a chore fallback. Existing local changes are included in the next successful ticket commit.
+
+This update limits Git workspace review to all unpushed commits, clears stale commit selections after a push or refresh, and explains the empty state. Branches without upstream tracking use a matching remote branch or exclude commits already on known remote branches.
+
+This update removes the private messaging integration, its configuration, completion notifications, interface controls, and dedicated tests. Provider settings and ticket execution remain available through the web app and CLI.
+
+This update swaps the Done and Escalating Kanban columns and simplifies draft controls by removing the ready button and placing removal below the right-aligned reorder arrows.

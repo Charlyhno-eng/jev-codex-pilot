@@ -128,7 +128,7 @@ function ProjectWorkspace() {
               {task.attachments?.map(image => <figure className="draft-image" key={image.id}><img src={image.previewUrl} alt="Task visual reference"/><figcaption>{image.name}</figcaption><button type="button" onClick={() => setTasks(items => items.map(item => item.id === task.id ? { ...item, attachments: item.attachments?.filter(candidate => candidate.id !== image.id) } : item))} aria-label={`Remove ${image.name}`}>×</button></figure>)}
             </div>
           </div>
-          <div className="task-controls"><div className="task-move-controls"><button type="button" disabled={index === 0} onClick={() => moveTask(index, index - 1)} title="Move task up">↑</button><button type="button" disabled={index === tasks.length - 1} onClick={() => moveTask(index, index + 1)} title="Move task down">↓</button></div><button type="button" className={task.confirmed ? "task-confirm confirmed" : "task-confirm"} disabled={!task.description.trim()} onClick={() => validateTask(task)} title={task.confirmed ? "Unmark draft as ready" : "Mark draft as ready"}>✓</button><button type="button" onClick={() => setTasks(items => items.length === 1 ? [makeTask()] : items.filter(item => item.id !== task.id))} title="Remove task">×</button></div>
+          <div className="task-controls"><div className="task-move-controls"><button type="button" disabled={index === 0} onClick={() => moveTask(index, index - 1)} title="Move task up">↑</button><button type="button" disabled={index === tasks.length - 1} onClick={() => moveTask(index, index + 1)} title="Move task down">↓</button></div><button type="button" onClick={() => setTasks(items => items.length === 1 ? [makeTask()] : items.filter(item => item.id !== task.id))} title="Remove task">×</button></div>
         </div>)}</div>
         {error && <div className="alert"><b>Something needs attention</b><span>{error}</span></div>}
         <div className="queue-compose-actions"><button className="add-task" type="button" onClick={() => setTasks(items => [...items, makeTask()])}><span>＋</span>Add another task</button><button className="analyze-button" disabled={!tasks.some(task => task.description.trim()) || busy === "analysis"}>{busy === "analysis" ? "JEV is evaluating…" : "Add to Kanban"}<span>→</span></button></div>
@@ -166,45 +166,31 @@ function ProjectAgentsModal({ projectId, onClose }: { projectId: string; onClose
 function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<Settings>();
   const [apiKey, setApiKey] = useState("");
-  const [telegramToken, setTelegramToken] = useState("");
   const [apiKeyVisible, setApiKeyVisible] = useState(false);
-  const [telegramTokenVisible, setTelegramTokenVisible] = useState(false);
-  const [chatId, setChatId] = useState("");
-  const [telegramEnabled, setTelegramEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { void Promise.all([api<Settings>("/settings"), api<{ apiKey: string; telegramBotToken: string }>("/settings/secrets")]).then(([value, secrets]) => { setSettings(value); setApiKey(secrets.apiKey); setTelegramToken(secrets.telegramBotToken); setChatId(value.telegram.allowedChatId); setTelegramEnabled(value.telegram.enabled); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); }, []);
-  const reveal = async (kind: "api" | "telegram") => {
-    const visible = kind === "api" ? apiKeyVisible : telegramTokenVisible;
-    if (visible) {
-      if (kind === "api") setApiKeyVisible(false);
-      else setTelegramTokenVisible(false);
-      return;
-    }
+  useEffect(() => { void Promise.all([api<Settings>("/settings"), api<{ apiKey: string }>("/settings/secrets")]).then(([value, secrets]) => { setSettings(value); setApiKey(secrets.apiKey); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); }, []);
+  const reveal = async () => {
+    if (apiKeyVisible) { setApiKeyVisible(false); return; }
     setBusy(true); setError("");
     try {
-      const secrets = await api<{ apiKey: string; telegramBotToken: string }>("/settings/secrets");
-      if (kind === "api") { setApiKey(secrets.apiKey); setApiKeyVisible(true); }
-      else { setTelegramToken(secrets.telegramBotToken); setTelegramTokenVisible(true); }
+      const secrets = await api<{ apiKey: string }>("/settings/secrets");
+      setApiKey(secrets.apiKey); setApiKeyVisible(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); }
   };
   const save = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const payload: Record<string, unknown> = { telegramEnabled };
+      const payload: Record<string, unknown> = {};
       if (apiKey.trim()) payload.apiKey = apiKey.trim();
-      if (telegramToken.trim()) payload.telegramBotToken = telegramToken.trim();
-      if (chatId.trim()) payload.telegramAllowedChatId = chatId.trim();
       const result = await api<Settings>("/settings", { method: "PUT", body: JSON.stringify(payload) });
-      setSettings(result); setApiKeyVisible(false); setTelegramTokenVisible(false); setChatId(result.telegram.allowedChatId); setTelegramEnabled(result.telegram.enabled);
+      setSettings(result); setApiKeyVisible(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setBusy(false); }
   };
-  const canEnable = Boolean((telegramToken.trim() || settings?.telegram.configured) && chatId.trim());
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><form className="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" onMouseDown={event => event.stopPropagation()} onSubmit={save}>
     <header><div><p className="eyebrow">SETTINGS</p><h2>Local integrations</h2><span>Private credentials remain on this computer in <code>config/config.toml</code>.</span></div><button type="button" onClick={onClose} aria-label="Close settings">×</button></header>
-    <section className="settings-section"><b>Vercel AI Gateway</b><label>API key for JEV <span>{settings?.configured ? `Configured: ${settings.maskedApiKey}.` : "Paste a key to enable JEV analysis."}</span><div className="secret-field"><input type={apiKeyVisible ? "text" : "password"} value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={settings?.configured ? settings.maskedApiKey : "Paste your Vercel AI Gateway key"} autoComplete="off"/><button type="button" onClick={() => void reveal("api")} disabled={busy || !settings?.configured} aria-label={apiKeyVisible ? "Hide API key" : "Reveal API key"}>{apiKeyVisible ? "◉" : "◌"}</button></div></label></section>
-    <section className="settings-section telegram-settings"><b>Telegram bot <small>OPTIONAL</small></b><label>Bot token <span>{settings?.telegram.configured ? `Configured: ${settings.telegram.maskedBotToken}.` : "Paste the token supplied by BotFather."}</span><div className="secret-field"><input type={telegramTokenVisible ? "text" : "password"} value={telegramToken} onChange={event => setTelegramToken(event.target.value)} placeholder={settings?.telegram.configured ? settings.telegram.maskedBotToken : "Paste your Telegram bot token"} autoComplete="off"/><button type="button" onClick={() => void reveal("telegram")} disabled={busy || !settings?.telegram.configured} aria-label={telegramTokenVisible ? "Hide bot token" : "Reveal bot token"}>{telegramTokenVisible ? "◉" : "◌"}</button></div></label><label>Authorized private chat ID <span>Only this numeric chat can see project status or create tickets.</span><input value={chatId} onChange={event => setChatId(event.target.value)} inputMode="numeric" placeholder="Filled automatically on first /start or /projects" autoComplete="off"/></label><label className="telegram-toggle"><input type="checkbox" checked={telegramEnabled} disabled={!canEnable} onChange={event => setTelegramEnabled(event.target.checked)}/><span>Enable this Telegram bot</span></label><p className="settings-note">After saving a token, the first private chat to send <code>/start</code> or <code>/projects</code> to <a href="https://t.me/JevCodexPilotBot" target="_blank" rel="noreferrer">@JevCodexPilotBot</a> is paired and activated automatically. Other chats are then ignored.</p></section>
-    {error && <p className="agents-error">{error}</p>}<footer><button type="button" className="modal-secondary" onClick={onClose}>Close</button><button className="modal-primary" disabled={busy}>{busy ? "Saving…" : "Save settings"}</button></footer>
+    <section className="settings-section"><b>Vercel AI Gateway</b><label>API key for JEV <span>{settings?.configured ? `Configured: ${settings.maskedApiKey}.` : "Paste a key to enable JEV analysis."}</span><div className="secret-field"><input type={apiKeyVisible ? "text" : "password"} value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={settings?.configured ? settings.maskedApiKey : "Paste your Vercel AI Gateway key"} autoComplete="off"/><button type="button" onClick={() => void reveal()} disabled={busy || !settings?.configured} aria-label={apiKeyVisible ? "Hide API key" : "Reveal API key"}>{apiKeyVisible ? "◉" : "◌"}</button></div></label></section>
+    {error && <p className="agents-error">{error}</p>}<footer><button type="button" className="modal-secondary" onClick={onClose}>Close</button><button className="modal-primary" disabled={busy || !apiKey.trim()}>{busy ? "Saving…" : "Save settings"}</button></footer>
   </form></div>;
 }
 createRoot(document.getElementById("root")!).render(<BrowserRouter><Routes><Route path="/" element={<ProjectsHome/>}/><Route path="/projects/:id" element={<ProjectWorkspaceRoute/>}/><Route path="/projects/:id/diff" element={<Shell><GitPage/></Shell>}/><Route path="/projects/:id/console" element={<ConsolePage/>}/><Route path="/projects/:id/console/:jobId" element={<ConsolePage/>}/><Route path="*" element={<ProjectsHome/>}/></Routes></BrowserRouter>);

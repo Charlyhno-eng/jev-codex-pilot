@@ -288,6 +288,10 @@ printf '%s\\n' '{"type":"turn.completed"}'
     expect(completed.execution?.events.some(event => event.title === "Codex /compact started")).toBe(false);
     expect(readFileSync(args, "utf8")).toContain("--image");
     expect(readFileSync(args, "utf8")).toContain(image);
+    const invocation = readFileSync(args, "utf8").split("\n");
+    expect(invocation[invocation.indexOf("--image") + 1]).toBe(image);
+    expect(invocation[invocation.indexOf("--image") + 2]).toBe("--");
+    expect(invocation[invocation.indexOf("--") + 1]).toContain("You are executing one task");
   }, 3000);
 
   it("pauses a ticket when Codex reaches its session limit and resumes it after reset", async () => {
