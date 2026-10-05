@@ -240,11 +240,28 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
 export class Orchestrator {
   private runningProjects = new Set<string>();
   private continuityDecisions = new Map<string, "related" | "unrelated" | "uncertain">();
+  private humanReviewEnabled: (projectId: string) => boolean = () => false;
   private autoGitEnabled: (projectId: string) => boolean = () => false;
   constructor(private queue: JobQueue, private analyzer = analyze, private compactor: (threadId: string, home: string) => Promise<void> = compactThread, private accountUsageReader: () => Promise<CodexAccountUsage> = readCodexAccountUsage, private archiver: (threadId: string, home: string) => Promise<void> = archiveThread, private rateLimitReader: () => Promise<CodexRateLimit> = readCodexRateLimit, private statusReader: (threadId?: string, home?: string) => Promise<CodexStatusSnapshot> = readCodexStatusSnapshot, private continuityReviewer: (completed: Job[], next: Job) => Promise<"related" | "unrelated" | "uncertain"> = assessTaskContinuity) {}
 
   /** Connects persisted project Git preferences to ticket execution. */
   configureGitDelivery(enabled: (projectId: string) => boolean) { this.autoGitEnabled = enabled; }
+
+  /** Connects the persisted human review preference to execution. */
+  configureHumanReview(enabled: (projectId: string) => boolean) { this.humanReviewEnabled = enabled; }
+
+  /** Reports whether a project is waiting for explicit user approval. */
+  needsHumanReview(projectId: string) {
+    return this.humanReviewEnabled(projectId) && this.queue.list(projectId).some(job => job.awaitingHumanReview);
+  }
+
+  /** Approves the previous ticket before the next explicit launch. */
+  approveHumanReview(projectId: string) {
+    if (this.isProjectRunning(projectId)) throw new Error("Wait for the active ticket to finish");
+    for (const job of this.queue.list(projectId)) {
+      if (job.awaitingHumanReview) this.queue.update(job.id, { awaitingHumanReview: false });
+    }
+  }
 
   async prepare(job: Job) {
     if (!existsSync(job.projectPath)) throw new Error(`Project not found: ${job.projectPath}`);
@@ -299,6 +316,7 @@ export class Orchestrator {
     const first = this.queue.get(id);
     if (!first) throw new Error("Job not found");
     if (this.isProjectRunning(first.projectId)) throw new Error("A Codex execution is already running for this project");
+    if (this.needsHumanReview(first.projectId)) throw new Error("Approve the previous ticket before continuing");
     this.runningProjects.add(first.projectId);
     try {
       const retried = new Set<string>();
@@ -309,7 +327,11 @@ export class Orchestrator {
         try {
           const completed = await this.runWithEscalation(current);
           if (completed.status === "SESSION_PAUSED") break;
-          if (completed.gitDelivery?.status === "failed") break;
+          if (this.humanReviewEnabled(first.projectId)) {
+            this.queue.update(completed.id, { awaitingHumanReview: true });
+            break;
+          }
+          if (completed.gitDelivery?.status === "failed") logJevError(`[codex:${completed.id.slice(0, 8)}] Automatic Git delivery failed: ${completed.gitDelivery.error ?? "unknown error"}. Continuing pending tickets.`);
           const lastOrder = completed.status === "SUCCESS" ? completed.order ?? Number.MAX_SAFE_INTEGER : -1;
           if (lastOrder < 0) continue;
           const failures = this.queue.listBatch(first.batchId ?? first.id).filter(job => job.status === "FAILED" && job.errorCategory !== "loop" && job.analysis && nextEscalationRoute(job.analysis.model, job.execution?.reasoning ?? job.analysis.reasoning) && (job.order ?? Number.MAX_SAFE_INTEGER) < lastOrder && !retried.has(job.id));
@@ -321,7 +343,12 @@ export class Orchestrator {
         } catch (error) {
           const latest = this.queue.get(current.id);
           if (latest && latest.status !== "SUCCESS" && latest.status !== "SESSION_PAUSED") this.queue.transition(current.id, "FAILED", { error: messageOf(error), errorCategory: "codex" });
-          break;
+          if (this.humanReviewEnabled(first.projectId)) {
+            this.queue.update(current.id, { awaitingHumanReview: true });
+            break;
+          }
+          if (latest?.status === "SESSION_PAUSED") break;
+          logJevError(`[codex:${current.id.slice(0, 8)}] Ticket failed: ${messageOf(error)}. Continuing pending tickets.`);
         }
       }
     } finally { this.runningProjects.delete(first.projectId); }
@@ -331,8 +358,16 @@ export class Orchestrator {
     const job = this.queue.get(id);
     if (!job) throw new Error("Job not found");
     if (this.isProjectRunning(job.projectId)) throw new Error("A Codex execution is already running for this project");
+    if (this.needsHumanReview(job.projectId)) throw new Error("Approve the previous ticket before continuing");
     this.runningProjects.add(job.projectId);
-    try { return await this.runWithEscalation(job); }
+    try {
+      const completed = await this.runWithEscalation(job);
+      if (this.humanReviewEnabled(job.projectId) && completed.status !== "SESSION_PAUSED") this.queue.update(job.id, { awaitingHumanReview: true });
+      return this.queue.get(job.id)!;
+    } catch (error) {
+      if (this.humanReviewEnabled(job.projectId)) this.queue.update(job.id, { awaitingHumanReview: true });
+      throw error;
+    }
     finally { this.runningProjects.delete(job.projectId); }
   }
 
@@ -460,7 +495,8 @@ export class Orchestrator {
     const routeIndex = previousMetrics?.routes.length ?? 0;
     const attemptNumber = first.attempts + 1;
     const initialEvent = { id: randomUUID(), timestamp: startedAt, kind: "system" as const, title: "Starting Codex", detail: first.projectPath, status: "active" as const };
-    this.queue.transition(first.id, continuingEscalation ? "ESCALATING" : "RUNNING", {
+    // Recovered pending tickets run normally while keeping their escalation context.
+    this.queue.transition(first.id, current.status === "ESCALATING" ? "ESCALATING" : "RUNNING", {
       attempts: attemptNumber,
       output: preserveExecution ? first.output ?? "" : "",
       error: undefined,

@@ -20,6 +20,53 @@ const analyzerFor = (taskType: TaskType, complexity: Complexity = 1) =>
   (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity }));
 const accountUsage = async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", todayTokens: 42, lifetimeTokens: 420 });
 describe("Codex orchestration", () => {
+  it.each([false, true])("runs a recovered escalation in Running and continues the queue (legacy recovery: %s)", async legacy => {
+    const root = mkdtempSync(join(tmpdir(), "jev-escalation-recovery-"));
+    const project = join(root, "project");
+    const bin = join(root, "bin");
+    const calls = join(root, "calls");
+    mkdirSync(project); mkdirSync(bin);
+    const fakeCodex = join(bin, "codex");
+    writeFileSync(fakeCodex, `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+printf '%s\\n' CALL_START "$@" >> '${calls}'
+sleep 0.15
+printf '%s\\n' '{"type":"thread.started","thread_id":"recovered-thread"}' '{"type":"turn.completed"}'
+`);
+    chmodSync(fakeCodex, 0o755);
+    process.env.PATH = `${bin}:${originalPath}`;
+    const data = join(root, "queue");
+    const queue = new JobQueue(data);
+    const [job, next] = queue.createBatch("project", project, [{ description: "Inspect partial work" }, { description: "Inspect next task" }]);
+    const analysis: JevAnalysis = { complexity: 1, task_types: ["research"], model: "sol", reasoning: "high", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
+    const now = new Date().toISOString();
+    const oldOutput = JSON.stringify({ type: "error", message: "401 Unauthorized" });
+    queue.transition(job.id, legacy ? "PENDING" : "ESCALATING", {
+      analysis, attempts: 4, output: oldOutput,
+      errorCategory: "interruption",
+      recoveryNote: legacy ? "JEV was interrupted during model escalation. Review the partial work before resuming at the selected route." : undefined,
+      execution: { phase: "QUEUED", model: codexModelId("sol"), reasoning: "high", startedAt: now, lastActivityAt: now, threadId: "interrupted-thread", escalationPending: true, verification: "not_run", events: [] }
+    });
+    queue.update(next.id, { analysis });
+    queue.recoverInterrupted(() => false);
+    const restored = new JobQueue(data);
+    const orchestrator = new Orchestrator(restored, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related");
+    const running = orchestrator.runBatch(job.id);
+    await vi.waitFor(() => expect(restored.get(job.id)).toMatchObject({ status: "RUNNING", attempts: 5 }));
+    expect(restored.get(job.id)?.recoveryNote).toBeUndefined();
+    await running;
+    expect(restored.get(job.id)).toMatchObject({ status: "SUCCESS", attempts: 5, execution: { escalationPending: false } });
+    expect(restored.get(job.id)?.output).toContain(oldOutput);
+    expect(restored.get(next.id)?.status).toBe("SUCCESS");
+    const invocations = readFileSync(calls, "utf8").split("CALL_START\n").slice(1);
+    expect(invocations).toHaveLength(2);
+    expect(invocations[0]).toContain("resume\n");
+    expect(invocations[0]).toContain("interrupted-thread\n");
+    expect(invocations[0]).toContain(`${codexModelId("sol")}\n`);
+    expect(invocations[0]).toContain('model_reasoning_effort="high"');
+    expect(invocations[0]).toContain("Inspect the work already made");
+  });
+
   it.each([
     "Implementation complete.",
     "Je ne peux pas l’implémenter dans ce tour : l’espace de travail est toujours en lecture seule. Aucun fichier n’a été modifié."
@@ -548,7 +595,7 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(queue.get(jobs[1].id)?.execution?.threadId).toBe("thread-2");
   }, 3000);
 
-  it("keeps a related thread and compacts it at 100,000 context tokens", async () => {
+  it("continues the queue with a related thread after compaction at 100,000 context tokens", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-related-compact-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
@@ -558,12 +605,15 @@ printf '%s\n' '{"type":"turn.completed"}'
     process.env.PATH = `${bin}:${originalPath}`;
     const queue = new JobQueue(join(root, "queue"));
     const completed = queue.create("project-1", project, [{ description: "Add a login screen" }]);
-    queue.create("project-1", project, [{ description: "Add validation to the login screen" }]);
+    const next = queue.create("project-1", project, [{ description: "Add validation to the login screen" }]);
     const compactor = vi.fn(async () => undefined);
     const archiver = vi.fn(async () => undefined);
     const orchestrator = new Orchestrator(queue, analyzerFor("research"), compactor, accountUsage, archiver, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 258_000 } }), async () => "related");
-    expect((await orchestrator.run(completed.id)).status).toBe("SUCCESS");
+    await orchestrator.runBatch(completed.id);
+    expect(queue.get(completed.id)?.status).toBe("SUCCESS");
+    expect(queue.get(next.id)?.status).toBe("SUCCESS");
     expect(compactor).toHaveBeenCalledWith("related-thread", expect.any(String));
+    expect(compactor).toHaveBeenCalledTimes(1);
     expect(archiver).not.toHaveBeenCalled();
   }, 3000);
 });

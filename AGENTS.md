@@ -49,3 +49,19 @@ This update limits Git workspace review to all unpushed commits, clears stale co
 This update removes the private messaging integration, its configuration, completion notifications, interface controls, and dedicated tests. Provider settings and ticket execution remain available through the web app and CLI.
 
 This update swaps the Done and Escalating Kanban columns and simplifies draft controls by removing the ready button and placing removal below the right-aligned reorder arrows.
+
+This update adds distinct Kanban alerts for completed, failed, and escalated tickets, with louder multi-note audio signals, browser interaction audio activation, dismissible ticket descriptions, and project-scoped transition tracking.
+
+This update adds a persisted per-project Human in the loop option that pauses after each ticket for explicit approval, provides Continue and final approval actions, and exposes pending-ticket re-evaluation alongside existing model and reasoning level adjustments. Automatic batch behavior remains unchanged when the option is disabled.
+
+This update adds visible return-to-Pending actions for completed and failed tickets, hides Project files from the web workspace, and reduces the height of the Human in the loop project settings panel.
+
+This update removes the Project settings heading and replaces return-to-Pending buttons with mouse drag and drop using native data transfer, draggable card containers, and highlights restricted to eligible destination columns.
+
+This update enables mouse drag and drop to reorder Pending tickets with insertion markers, persists project-wide queue positions across batches and reloads, and uses the same order for the board and ticket execution without launching Codex when tickets are rearranged.
+
+This update stretches the four sidebar controls to match the task composer height on desktop and allows Human in the loop to be changed during execution, applying the current setting when each ticket finishes.
+
+This update resumes interrupted model escalations as Running tickets on the next explicit launch, preserves the selected route and partial-work thread across recovery and reload, and verifies that legacy recovery notices and earlier attempt errors do not block queue continuation.
+
+This update keeps pending tickets running after automatic Git delivery or ticket startup failures, preserves visible error history and explicit human-review and session-limit pauses, and verifies queue continuation after related-thread compaction.

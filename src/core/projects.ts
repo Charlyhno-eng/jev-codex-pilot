@@ -108,6 +108,16 @@ export class ProjectStore {
     return project;
   }
 
+  /** Persists the project's between-ticket human review preference. */
+  setHumanInTheLoop(id: string, enabled: boolean): ProjectRecord {
+    const project = this.get(id);
+    if (!project) throw new Error("Project not found");
+    project.humanInTheLoop = enabled;
+    project.updatedAt = new Date().toISOString();
+    this.persist();
+    return project;
+  }
+
   unregister(id: string) {
     const project = this.get(id);
     if (!project) throw new Error("Project not found");

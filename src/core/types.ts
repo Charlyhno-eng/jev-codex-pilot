@@ -124,10 +124,12 @@ export interface Job {
   projectId: string;
   batchId?: string;
   order?: number;
+  queuePosition?: number;
   projectPath: string;
   tasks: TaskSpec[];
   attachments?: JobAttachment[];
   status: JobStatus;
+  awaitingHumanReview?: boolean;
   analysis?: JevAnalysis;
   createdAt: string;
   updatedAt: string;
@@ -148,7 +150,7 @@ export interface ProjectRecord {
   id: string;
   name: string;
   path: string;
-  autoCommitPush?: boolean;
+  autoCommitPush?: boolean; humanInTheLoop?: boolean;
   /** True only when JEV created the project's initial AGENTS.md file. */
   agentsCreatedByJev?: boolean;
   /** Hidden from the JEV workspace list, but retained locally so history can be restored by re-adding the same folder. */

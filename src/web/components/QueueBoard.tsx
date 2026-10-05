@@ -12,15 +12,23 @@ export function Status({ status }: { status: string }) {
 }
 
 /** Renders the active queue and completed ticket history. */
-export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMove }: { jobs: Job[]; selectedId?: string; onSelect: (job: Job) => void; onArchive: (job: Job, action: "archive" | "unarchive") => Promise<void>; onEdit: (job: Job) => void; onMove: (job: Job, status: "PENDING" | "SUCCESS") => Promise<void> }) {
+export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMove, onReorder }: { jobs: Job[]; selectedId?: string; onSelect: (job: Job) => void; onArchive: (job: Job, action: "archive" | "unarchive") => Promise<void>; onEdit: (job: Job) => void; onReorder: (job: Job, beforeId: string | null) => Promise<void>; onMove: (job: Job, status: "PENDING" | "SUCCESS") => Promise<void> }) {
   const { models } = useCodexModels();
   const modelName = (tier: string) => models[tier] ?? tier;
   const visible = jobs.filter(job => !job.archivedAt && job.status !== "SKIPPED");
   const history = jobs.filter(job => job.archivedAt || job.status === "SKIPPED");
   const [draggedJobId, setDraggedJobId] = useState<string>();
-  const moveTo = (status: string) => {
-    const job = visible.find(candidate => candidate.id === draggedJobId);
-    setDraggedJobId(undefined);
+  const [insertionId, setInsertionId] = useState<string | null>();
+  const pending = visible.filter(job => job.status === "PENDING");
+  const draggedJob = visible.find(job => job.id === draggedJobId);
+  const clearDrag = () => { setDraggedJobId(undefined); setInsertionId(undefined); };
+  const insertBefore = (event: React.DragEvent<HTMLDivElement>, job: Job) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientY < bounds.top + bounds.height / 2 ? job.id : pending[pending.findIndex(item => item.id === job.id) + 1]?.id ?? null;
+  };
+  const moveTo = (status: string, jobId: string) => {
+    const job = visible.find(candidate => candidate.id === jobId);
+    clearDrag();
     const allowed = job && ((job.status === "FAILED" && (status === "PENDING" || status === "SUCCESS")) || (job.status === "SUCCESS" && status === "PENDING"));
     if (allowed) void onMove(job, status as "PENDING" | "SUCCESS");
   };
@@ -30,12 +38,12 @@ export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMo
     <div className="section-heading"><span className="step">02</span><div><h2>Task queue</h2><p>Failed attempts automatically escalate through stronger routes before entering Failed.</p></div></div>
     <div className="queue-columns">
       {queueStatuses.map(status => {
-        const canDrop = status !== "RUNNING" && status !== "ESCALATING" && status !== "SESSION_PAUSED";
-        return <div className={`queue-column ${draggedJobId && canDrop ? "drop-target" : ""}`} key={status} onDragOver={event => { if (draggedJobId && canDrop) event.preventDefault(); }} onDrop={() => moveTo(status)}>
+        const canDrop = Boolean(draggedJob && ((status === "PENDING" && (draggedJob.status === "FAILED" || draggedJob.status === "SUCCESS" || draggedJob.status === "PENDING")) || (status === "SUCCESS" && draggedJob.status === "FAILED")));
+        return <div className={`queue-column ${draggedJobId && canDrop ? "drop-target" : ""}`} key={status} onDragOver={event => { if (canDrop) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; if (status === "PENDING" && draggedJob?.status === "PENDING") setInsertionId(null); } }} onDrop={event => { event.preventDefault(); const jobId = event.dataTransfer.getData("text/plain") || draggedJobId || ""; const job = visible.find(item => item.id === jobId); if (status === "PENDING" && job?.status === "PENDING") { clearDrag(); void onReorder(job, null); } else moveTo(status, jobId); }}>
           <header><Status status={status}/><b>{visible.filter(job => job.status === status).length}</b></header>
-          {visible.filter(job => job.status === status).map(job => <div key={job.id} className="queue-card-wrap">
-            <button className={job.id === selectedId ? "queue-card active" : "queue-card"} draggable={job.status === "FAILED" || job.status === "SUCCESS"} onDragStart={() => (job.status === "FAILED" || job.status === "SUCCESS") && setDraggedJobId(job.id)} onDragEnd={() => setDraggedJobId(undefined)} onClick={() => onSelect(job)}>
-              <small>TASK {(job.order ?? 0) + 1}</small>
+          {visible.filter(job => job.status === status).map(job => <div key={job.id} className={`queue-card-wrap ${status === "PENDING" && insertionId === job.id ? "insert-before" : ""}`} draggable={job.status === "PENDING" || job.status === "FAILED" || job.status === "SUCCESS"} onDragStart={event => { event.dataTransfer.setData("text/plain", job.id); event.dataTransfer.effectAllowed = "move"; setDraggedJobId(job.id); }} onDragEnd={clearDrag} onDragOver={event => { if (status === "PENDING" && draggedJob?.status === "PENDING") { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setInsertionId(insertBefore(event, job)); } }} onDrop={event => { if (status === "PENDING") { const source = visible.find(item => item.id === (event.dataTransfer.getData("text/plain") || draggedJobId)); if (source?.status === "PENDING") { event.preventDefault(); event.stopPropagation(); const beforeId = insertBefore(event, job); clearDrag(); if (beforeId !== source.id) void onReorder(source, beforeId); } } }}>
+            <button className={job.id === selectedId ? "queue-card active" : "queue-card"} onClick={() => onSelect(job)}>
+              <small>TASK {status === "PENDING" ? pending.findIndex(item => item.id === job.id) + 1 : (job.order ?? 0) + 1}</small>
               <b>{job.tasks[0]?.description}</b>
               <span>{job.status === "SESSION_PAUSED" ? `Waiting for Codex session${job.sessionResumeAt ? ` · resumes after ${new Date(job.sessionResumeAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}` : job.status === "ESCALATING" ? `Escalating to ${job.analysis ? `${modelName(job.analysis.model)} · ${reasoningLabel(job.analysis.reasoning)}` : "next route"}` : job.analysis ? `${modelName(job.analysis.model)} · ${reasoningLabel(job.analysis.reasoning)}` : "Waiting for JEV"}{job.attachments?.length ? ` · ${job.attachments.length} image${job.attachments.length === 1 ? "" : "s"}` : ""}</span>
               {job.recoveryNote && <em className="queue-verification-note">{job.recoveryNote}</em>}
@@ -48,6 +56,7 @@ export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMo
             {status === "SUCCESS" && <button className="archive-task" title="Archive this completed task" aria-label={`Archive ${job.tasks[0]?.description ?? "task"}`} onClick={() => void onArchive(job, "archive")}>✓</button>}
             {status === "FAILED" && <button className="failed-success" title="Move this failed task to Success" aria-label={`Validate ${job.tasks[0]?.description ?? "task"}`} onClick={() => void onMove(job, "SUCCESS")}>✓ Validate</button>}
           </div>)}
+          {status === "PENDING" && insertionId === null && draggedJob?.status === "PENDING" && <div className="queue-insertion-end"/>}
         </div>;
       })}
     </div>

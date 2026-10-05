@@ -57,12 +57,33 @@ export class JobQueue {
     writeDurableJson(this.file, this.jobs);
   }
   list(projectId?: string): Job[] { return this.jobs.filter(job => !projectId || job.projectId === projectId).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || (a.order ?? 0) - (b.order ?? 0)); }
+  /** Lists project tickets in their persisted execution order, preserving legacy submission order. */
   listProjectExecutionOrder(projectId: string): Job[] {
-    return this.jobs
+    const submitted = this.jobs
       .map((job, index) => ({ job, index }))
       .filter(entry => entry.job.projectId === projectId)
       .sort((a, b) => a.job.createdAt.localeCompare(b.job.createdAt) || (a.job.batchId === b.job.batchId ? (a.job.order ?? a.index) - (b.job.order ?? b.index) : a.index - b.index))
       .map(entry => entry.job);
+    return submitted.map((job, index) => ({ job, position: job.queuePosition ?? index }))
+      .sort((a, b) => a.position - b.position).map(entry => entry.job);
+  }
+  /** Reorders pending tickets within a project and persists the order without launching execution. */
+  reorderPending(id: string, beforeId: string | null) {
+    const job = this.get(id);
+    if (!job) throw new Error("Job not found");
+    if (job.status !== "PENDING" || job.archivedAt) throw new Error("Only visible pending tasks can be reordered");
+    const ordered = this.listProjectExecutionOrder(job.projectId);
+    const pending = ordered.filter(item => item.status === "PENDING" && !item.archivedAt);
+    if (beforeId !== null && !pending.some(item => item.id === beforeId)) throw new Error("The destination must be a pending task in the same project");
+    if (beforeId === id) return job;
+    const remaining = pending.filter(item => item.id !== id);
+    remaining.splice(beforeId === null ? remaining.length : remaining.findIndex(item => item.id === beforeId), 0, job);
+    let cursor = 0;
+    const positions = new Map(ordered.map((item, index) => [item.status === "PENDING" && !item.archivedAt ? remaining[cursor++].id : item.id, index]));
+    const now = new Date().toISOString();
+    this.jobs = this.jobs.map(item => positions.has(item.id) ? { ...item, queuePosition: positions.get(item.id), updatedAt: now } : item);
+    this.persist();
+    return this.get(id)!;
   }
   get(id: string) { return this.jobs.find(j => j.id === id); }
   listBatch(batchId: string): Job[] { return this.jobs.filter(job => job.batchId === batchId).sort((a, b) => (a.order ?? 0) - (b.order ?? 0)); }
@@ -73,7 +94,8 @@ export class JobQueue {
   createBatch(projectId: string, projectPath: string, tasks: TaskSpec[]): Job[] {
     const now = new Date().toISOString();
     const batchId = randomUUID();
-    const jobs = tasks.map((task, order): Job => ({ id: randomUUID(), projectId, batchId, order, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
+    const nextPosition = this.listProjectExecutionOrder(projectId).reduce((next, job, index) => Math.max(next, (job.queuePosition ?? index) + 1), 0);
+    const jobs = tasks.map((task, order): Job => ({ queuePosition: nextPosition + order, id: randomUUID(), projectId, batchId, order, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
     this.jobs.push(...jobs); this.persist(); return jobs;
   }
   update(id: string, change: Partial<Job>): Job | undefined {
@@ -122,9 +144,9 @@ export class JobQueue {
       const now = new Date().toISOString();
       const wasEscalating = job.status === "ESCALATING" || job.execution?.escalationPending;
       const note = wasEscalating
-        ? "JEV was interrupted during model escalation. Review the partial work before resuming at the selected route."
+        ? "JEV was interrupted during model escalation. This ticket is ready to run again at the selected route, continuing the partial work."
         : "Server execution was interrupted. Codex is no longer running; review the project before restarting this ticket.";
-      const updated = this.update(job.id, { status: "PENDING", error: undefined, errorCategory: "interruption", recoveryNote: note, execution: job.execution ? { ...job.execution, phase: "QUEUED", pid: undefined, lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: wasEscalating ? "Escalation interrupted" : "Execution interrupted", detail: note, status: "active" }] } : undefined });
+      const updated = this.update(job.id, { status: "PENDING", error: undefined, errorCategory: "interruption", recoveryNote: note, execution: job.execution ? { ...job.execution, phase: "QUEUED", escalationPending: Boolean(wasEscalating), pid: undefined, lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: wasEscalating ? "Escalation interrupted" : "Execution interrupted", detail: note, status: "active" }] } : undefined });
       if (updated) recovered.push(updated);
     }
     return recovered;

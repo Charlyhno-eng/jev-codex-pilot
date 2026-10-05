@@ -124,6 +124,24 @@ describe("automatic retry scheduling", () => {
 });
 
 describe("interrupted execution recovery", () => {
+  it("preserves an interrupted escalation route and thread across recovery and reload", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-recover-escalation-"));
+    const queue = new JobQueue(root);
+    const job = queue.create("project", root, [{ description: "Finish partial work" }]);
+    const now = new Date().toISOString();
+    queue.transition(job.id, "ESCALATING", {
+      analysis: { complexity: 1, task_types: ["feature"], model: "sol", reasoning: "high", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" },
+      attempts: 4, output: "Partial work",
+      execution: { phase: "QUEUED", model: "gpt-6.1-sol", reasoning: "high", startedAt: now, lastActivityAt: now, threadId: "partial-thread", verification: "not_run", events: [] }
+    });
+    expect(queue.recoverInterrupted(() => false, () => true)).toEqual([]);
+    expect(queue.recoverInterrupted(() => false)).toHaveLength(1);
+    const restored = new JobQueue(root);
+    expect(restored.get(job.id)).toMatchObject({ status: "PENDING", attempts: 4, output: "Partial work", analysis: { model: "sol", reasoning: "high" }, execution: { phase: "QUEUED", threadId: "partial-thread", escalationPending: true } });
+    expect(restored.get(job.id)?.recoveryNote).toContain("ready to run again");
+    expect(restored.recoverInterrupted(() => false)).toEqual([]);
+  });
+
   it("waits for a live Codex process and preserves the ticket until it exits", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-recover-"));
     const project = join(root, "project");
@@ -141,5 +159,57 @@ describe("interrupted execution recovery", () => {
     expect(restarted.recoverInterrupted(() => false)).toHaveLength(1);
     expect(restarted.get(job.id)).toMatchObject({ status: "PENDING", errorCategory: "interruption", execution: { phase: "QUEUED" } });
     expect(restarted.get(job.id)?.execution?.events.at(-1)?.title).toBe("Execution interrupted");
+  });
+});
+
+
+describe("pending execution order", () => {
+  it("persists moves across batches, leaves completed work in place, and appends new tickets", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-reorder-"));
+    const queue = new JobQueue(root);
+    const [first, done, second] = queue.createBatch("project", root, [
+      { description: "First" }, { description: "Completed" }, { description: "Second" }
+    ]);
+    queue.transition(done.id, "SUCCESS");
+    const last = queue.create("project", root, [{ description: "Later batch" }]);
+    queue.update(last.id, { createdAt: "2099-01-01T00:00:00.000Z" });
+    const other = queue.create("other", root, [{ description: "Other project" }]);
+    queue.reorderPending(last.id, first.id);
+    expect(queue.listProjectExecutionOrder("project").map(job => job.id)).toEqual([last.id, done.id, first.id, second.id]);
+    queue.reorderPending(last.id, null);
+    expect(queue.listProjectExecutionOrder("project").map(job => job.id)).toEqual([first.id, done.id, second.id, last.id]);
+    queue.reorderPending(second.id, first.id);
+    const restored = new JobQueue(root);
+    const added = restored.create("project", root, [{ description: "New arrival" }]);
+    expect(restored.listProjectExecutionOrder("project").map(job => job.id)).toEqual([second.id, done.id, first.id, last.id, added.id]);
+    expect(restored.get(done.id)?.status).toBe("SUCCESS");
+    expect(restored.get(second.id)).toMatchObject({ order: second.order, batchId: second.batchId, status: "PENDING", attempts: 0 });
+    expect(restored.get(other.id)).toEqual(other);
+  });
+
+  it("rejects non-pending and foreign destinations without changing order", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-reorder-invalid-"));
+    const queue = new JobQueue(root);
+    const [pending, running] = queue.createBatch("project", root, [{ description: "Pending" }, { description: "Running" }]);
+    queue.transition(running.id, "RUNNING");
+    const foreign = queue.create("other", root, [{ description: "Other" }]);
+    const before = queue.listProjectExecutionOrder("project");
+    expect(() => queue.reorderPending(running.id, pending.id)).toThrow("Only visible pending");
+    expect(() => queue.reorderPending(pending.id, running.id)).toThrow("destination");
+    expect(() => queue.reorderPending(pending.id, foreign.id)).toThrow("same project");
+    expect(() => queue.reorderPending(pending.id, "missing")).toThrow("destination");
+    expect(queue.reorderPending(pending.id, pending.id)).toEqual(pending);
+    expect(queue.listProjectExecutionOrder("project")).toEqual(before);
+  });
+
+  it("keeps legacy tickets in submitted order until manually reordered", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-reorder-legacy-"));
+    const queue = new JobQueue(root);
+    const jobs = queue.createBatch("project", root, [{ description: "First" }, { description: "Second" }]);
+    for (const job of jobs) queue.update(job.id, { queuePosition: undefined });
+    const restored = new JobQueue(root);
+    expect(restored.listProjectExecutionOrder("project").map(job => job.id)).toEqual(jobs.map(job => job.id));
+    restored.reorderPending(jobs[1].id, jobs[0].id);
+    expect(new JobQueue(root).listProjectExecutionOrder("project").map(job => job.id)).toEqual([jobs[1].id, jobs[0].id]);
   });
 });

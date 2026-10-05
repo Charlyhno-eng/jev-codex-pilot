@@ -23,6 +23,7 @@ const queue = new JobQueue(resolve(process.cwd(), ".jev"));
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
 const orchestrator = new Orchestrator(queue);
 orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
+orchestrator.configureHumanReview(projectId => Boolean(projects.get(projectId)?.humanInTheLoop));
 const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
@@ -126,7 +127,7 @@ createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/jobs") {
       const projectId = url.searchParams.get("projectId") ?? undefined;
-      return json(response, 200, queue.list(projectId).filter(job => Boolean(projects.get(job.projectId))));
+      return json(response, 200, (projectId ? queue.listProjectExecutionOrder(projectId) : queue.list()).filter(job => Boolean(projects.get(job.projectId))));
     }
     if (request.method === "GET" && url.pathname === "/api/usage") {
       const jobs = [...sessionJevJobIds].map(id => queue.get(id)).filter((job): job is NonNullable<typeof job> => Boolean(job));
@@ -148,6 +149,14 @@ createServer(async (request, response) => {
     if (request.method === "GET" && projectMatch) {
       const project = projects.get(projectMatch[1]);
       return project ? json(response, 200, project) : json(response, 404, { error: "Project not found" });
+    }
+    if (request.method === "PUT" && projectMatch) {
+      const project = projects.get(projectMatch[1]);
+      if (!project) return json(response, 404, { error: "Project not found" });
+      const input = await body(request) as { humanInTheLoop?: unknown };
+      if (typeof input.humanInTheLoop !== "boolean") return json(response, 400, { error: "humanInTheLoop must be true or false." });
+      if (!input.humanInTheLoop) orchestrator.approveHumanReview(project.id);
+      return json(response, 200, projects.setHumanInTheLoop(project.id, input.humanInTheLoop));
     }
     if (request.method === "DELETE" && projectMatch) {
       const project = projects.get(projectMatch[1]);
@@ -260,7 +269,7 @@ createServer(async (request, response) => {
       response.writeHead(200, { "Content-Type": attachment.mimeType, "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
       return response.end(readFileSync(attachment.path));
     }
-    const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|skip|archive|unarchive|remove|move|adjust|edit))?$/);
+    const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|continue|skip|archive|unarchive|remove|move|reorder|adjust|edit))?$/);
     if (!match) return json(response, 404, { error: "Route not found" });
     const [, id, action] = match; const job = queue.get(id);
     if (!job) return json(response, 404, { error: "Job not found" });
@@ -274,6 +283,11 @@ createServer(async (request, response) => {
       const removed = queue.removePending(id);
       if (removed) attachments.removeForJob(removed.id);
       return json(response, 200, { id: removed?.id, removed: true });
+    }
+    if (request.method === "POST" && action === "reorder") {
+      const input = await body(request) as { beforeId?: unknown };
+      if (input.beforeId !== null && typeof input.beforeId !== "string") return json(response, 400, { error: "Choose a pending destination ticket or null for the end of the queue." });
+      return json(response, 200, queue.reorderPending(id, input.beforeId));
     }
     if (request.method === "POST" && action === "move") {
       const input = await body(request) as { status?: unknown };
@@ -302,6 +316,15 @@ createServer(async (request, response) => {
       else logJevApplied(`${before.toUpperCase()} → ${after.toUpperCase()}`, `task ${id.slice(0, 8)}`);
       return json(response, 200, adjusted);
     }
+    if (request.method === "POST" && action === "continue") {
+      if (!orchestrator.needsHumanReview(job.projectId) || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "This project is not waiting for human review." });
+      const next = queue.listProjectExecutionOrder(job.projectId).find(item => item.status === "PENDING" || item.status === "SESSION_PAUSED");
+      if (next?.status === "SESSION_PAUSED") return json(response, 409, { error: "Wait for the Codex session to become available." });
+      orchestrator.approveHumanReview(job.projectId);
+      if (next) void runTicket(next.id, true);
+      return json(response, 202, { continued: Boolean(next) });
+    }
+    if (request.method === "POST" && (action === "run" || action === "run-batch") && orchestrator.needsHumanReview(job.projectId)) return json(response, 409, { error: "Approve the previous ticket with Continue before running more work." });
     if (request.method === "POST" && action === "run") {
       if (job.status !== "PENDING" || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "This task cannot start while another execution is active or it is not pending." });
       void runTicket(id, false);
