@@ -17,6 +17,8 @@ import { COMPLEXITY_ROUTES, MODEL_LEVELS, REASONING_LEVELS } from "../core/codex
 import { availableCodexModels, selectCodexModelId } from "../core/codex-catalog.js";
 import { logJev, logJevApplied, logJevError, logSession } from "../core/jev-logger.js";
 import { acquireApiInstance } from "../core/single-instance.js";
+import { listIdeFiles, readIdeFile } from "../core/ide-files.js";
+import { ProjectTerminals } from "../core/project-terminal.js";
 
 await acquireApiInstance(resolve(process.cwd(), ".jev"));
 const queue = new JobQueue(resolve(process.cwd(), ".jev"));
@@ -28,6 +30,22 @@ const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
 const port = Number(process.env.PORT ?? 3000);
+const terminals = new ProjectTerminals();
+process.once("exit", () => terminals.dispose());
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { terminals.dispose(); process.exit(0); });
+
+/** Requires same-origin browser requests before granting local file or shell access. */
+function trustedWorkspaceRequest(request: IncomingMessage) {
+  const host = request.headers.host?.split(":")[0];
+  if (host !== "localhost" && host !== "127.0.0.1") return false;
+  if (request.headers["sec-fetch-site"] === "cross-site") return false;
+  const source = request.headers.origin ?? request.headers.referer;
+  if (!source) return false;
+  try {
+    const origin = new URL(source);
+    return origin.protocol === "http:" && (origin.hostname === "localhost" || origin.hostname === "127.0.0.1") && (origin.host === request.headers.host || origin.port === String(port) || origin.port === "5173");
+  } catch { return false; }
+}
 
 /** Checks whether the folder belongs to a Git worktree. */
 function isGitRepository(path: string) {
@@ -106,7 +124,7 @@ let resumingSessionPausedWork = false;
 
 /** Sends a JSON API response. */
 function json(response: ServerResponse, status: number, data: unknown) {
-  response.writeHead(status, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+  response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
   response.end(JSON.stringify(data));
 }
 /** Reads a JSON API request body. */
@@ -162,7 +180,28 @@ createServer(async (request, response) => {
       const project = projects.get(projectMatch[1]);
       if (!project) return json(response, 404, { error: "Project not found" });
       if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active Codex execution to finish before removing this project." });
+      terminals.dispose(project.id);
       return json(response, 200, projects.unregister(project.id));
+    }
+    const ideMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/(files|terminal)(?:\/([^/]+))?$/);
+    if (ideMatch) {
+      if (!trustedWorkspaceRequest(request)) return json(response, 403, { error: "Open this workspace from the local JEV application." });
+      const project = projects.get(ideMatch[1]);
+      if (!project) return json(response, 404, { error: "Project not found" });
+      const [, , resource, sessionId] = ideMatch;
+      try {
+        if (resource === "files" && request.method === "GET" && !sessionId) {
+          const path = url.searchParams.get("path");
+          return json(response, 200, path === null ? { files: listIdeFiles(project.path) } : readIdeFile(project.path, path));
+        }
+        if (resource === "terminal") {
+          if (request.method === "GET") return json(response, 200, sessionId ? terminals.read(project.id, sessionId, Number(url.searchParams.get("cursor") ?? 0)) : terminals.list(project.id));
+          if (request.method === "POST" && !sessionId) return json(response, 201, terminals.start(project.id, project.path));
+          if (request.method === "POST" && sessionId) { terminals.write(project.id, sessionId, await body(request) as { data?: unknown; cols?: unknown; rows?: unknown }); return json(response, 200, { ok: true }); }
+          if (request.method === "DELETE" && sessionId) { terminals.close(project.id, sessionId); return json(response, 200, { closed: true }); }
+        }
+        return json(response, 405, { error: "Method not allowed" });
+      } catch { return json(response, 400, { error: resource === "files" ? "File unavailable: select a text file up to 1 MB within this project. Private files are hidden." : "Terminal operation failed. Check the session, input size, dimensions, and the four-terminal limit." }); }
     }
     const diffMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/diff$/);
     if (request.method === "GET" && diffMatch) {

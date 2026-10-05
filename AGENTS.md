@@ -65,3 +65,7 @@ This update stretches the four sidebar controls to match the task composer heigh
 This update resumes interrupted model escalations as Running tickets on the next explicit launch, preserves the selected route and partial-work thread across recovery and reload, and verifies that legacy recovery notices and earlier attempt errors do not block queue continuation.
 
 This update keeps pending tickets running after automatic Git delivery or ticket startup failures, preserves visible error history and explicit human-review and session-limit pauses, and verifies queue continuation after related-thread compaction.
+
+This update replaces the sidebar Git entry with an IDE & Git workspace containing a read-only source explorer and the existing Git tools in separate tabs. Explicitly opened project terminals use a local POSIX shell through Python 3, retain bounded in-memory output across navigation, support command interruption and local application links, and close on project removal or API shutdown. File access excludes common credentials and refuses external paths, while terminal routes require a local browser origin.
+
+This update collapses IDE folders by default and refreshes the browser terminal with a clearer session header, status badge, styled actions, prompt input, keyboard shortcut hints, and application-link chips.

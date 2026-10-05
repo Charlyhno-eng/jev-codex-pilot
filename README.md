@@ -80,6 +80,14 @@ GitHub Actions runs `.github/workflows/ci.yml` on pushes and pull requests. It i
 
 ---
 
+## Browser IDE and terminal
+
+Open **IDE & Git** in a project's sidebar to access two tabs. **IDE** provides a searchable file tree with folders collapsed by default, syntax-colored source with line numbers, and a read-only viewer: there are no file creation, editing, or deletion controls. **Refresh** reloads the tree and selected file after ticket changes. Generated folders and common credential files are hidden; credential assignments in displayed source are masked. The viewer accepts text files up to 1 MB and rejects paths outside the project, including external symbolic links. **Git** keeps branch selection, automatic local commits, manual push, and unpushed-commit review. Projects without Git can still use the IDE and terminal.
+
+Click **New terminal** to start your local interactive shell in the project directory. Commands use your installed tools and user permissions, so terminal commands can change files even though the source viewer is read-only. Use it for commands such as `npm install`, `npm run dev`, or your project's equivalent. Tab completion, shell history arrows, interactive prompts, and Ctrl+C are supported; **Stop command** also sends Ctrl+C. Local `http://localhost:PORT` and `http://127.0.0.1:PORT` addresses in the output appear as links to open the running application. The terminal displays plain text with common shell cursor handling; full-screen terminal editors and rich terminal applications are not supported.
+
+Up to four terminals per project remain active across tab changes, navigation, and browser reloads while the JEV API stays running. **Close terminal** stops the shell and its foreground command. Project removal and API shutdown close that project's terminals; API restarts start with no terminals. Output is kept only in bounded memory, without durable terminal logs. Opening the IDE never starts a shell, project command, or Codex execution. Terminal access requires a local JEV browser origin. The POSIX terminal bridge requires **Python 3** and uses `$SHELL` (or `/bin/bash`); it supports Linux and macOS. Commands run on the machine hosting JEV, and application links use the browser's localhost.
+
 ## Terminal interface
 
 Install the terminal command once from the JEV repository:

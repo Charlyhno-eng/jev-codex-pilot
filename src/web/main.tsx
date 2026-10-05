@@ -14,7 +14,7 @@ document.head.appendChild(favicon);
 import { api } from "./lib/api.js";
 import type { DraftAttachment, DraftTask, Job, ProjectIndex, ProjectRecord, Settings } from "./lib/types.js";
 import { QueueBoard, Status } from "./components/QueueBoard.js";
-import { GitPage } from "./components/GitPage.js";
+import { IdePage } from "./components/IdePage.js";
 import { Plan } from "./components/Plan.js";
 import { ExecutionPanel } from "./components/ExecutionPanel.js";
 import { useTaskCompletionPing } from "./hooks/use-task-completion-ping.js";
@@ -29,7 +29,7 @@ function Shell({ children, project }: { children: React.ReactNode; project?: Pro
 
 function GitStatusCard({ project, projectId }: { project: ProjectIndex; projectId: string }) {
   const notice = project.isGithubLinked ? undefined : project.isGitRepository ? "This project has no GitHub remote. Local Git review remains available." : "This project is not a Git repository. JEV can still analyze its tasks.";
-  return <div className={notice ? "git-status-card has-notice" : "git-status-card"}>{project.isGitRepository ? <Link className="open-diff" to={`/projects/${projectId}/diff`}><span>Δ</span><div><b>Git workspace</b><small>Branches, delivery &amp; history</small></div><i>→</i></Link> : <div className="open-diff unavailable"><span>Δ</span><div><b>Git changes</b><small>Requires a Git repository</small></div></div>}{notice && <p className="github-notice">{notice}</p>}</div>;
+  return <div className={notice ? "git-status-card has-notice" : "git-status-card"}><Link className="open-diff" to={`/projects/${projectId}/ide`}><span>⌘</span><div><b>IDE &amp; Git</b><small>Source, terminal &amp; branches</small></div><i>→</i></Link>{notice && <p className="github-notice">{notice}</p>}</div>;
 }
 
 function ProjectsHome() {
@@ -194,4 +194,4 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     {error && <p className="agents-error">{error}</p>}<footer><button type="button" className="modal-secondary" onClick={onClose}>Close</button><button className="modal-primary" disabled={busy || !apiKey.trim()}>{busy ? "Saving…" : "Save settings"}</button></footer>
   </form></div>;
 }
-createRoot(document.getElementById("root")!).render(<BrowserRouter><Routes><Route path="/" element={<ProjectsHome/>}/><Route path="/projects/:id" element={<ProjectWorkspaceRoute/>}/><Route path="/projects/:id/diff" element={<Shell><GitPage/></Shell>}/><Route path="/projects/:id/console" element={<ConsolePage/>}/><Route path="/projects/:id/console/:jobId" element={<ConsolePage/>}/><Route path="*" element={<ProjectsHome/>}/></Routes></BrowserRouter>);
+createRoot(document.getElementById("root")!).render(<BrowserRouter><Routes><Route path="/" element={<ProjectsHome/>}/><Route path="/projects/:id" element={<ProjectWorkspaceRoute/>}/><Route path="/projects/:id/ide" element={<Shell><IdePage/></Shell>}/><Route path="/projects/:id/diff" element={<Shell><IdePage/></Shell>}/><Route path="/projects/:id/console" element={<ConsolePage/>}/><Route path="/projects/:id/console/:jobId" element={<ConsolePage/>}/><Route path="*" element={<ProjectsHome/>}/></Routes></BrowserRouter>);
