@@ -8,6 +8,7 @@ coverage/
 .jev/
 
 # Local secrets and environment overrides
+config/config.toml
 .env
 .env.*
 !.env.example

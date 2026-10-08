@@ -14,6 +14,7 @@ const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && va
 export class JobQueue {
   private jobs: Job[] = [];
   private readonly file: string;
+  private persistenceTimer?: ReturnType<typeof setTimeout>;
   constructor(dataDirectory = ".jev") {
     mkdirSync(dataDirectory, { recursive: true });
     this.file = join(dataDirectory, "jobs.json");
@@ -54,8 +55,12 @@ export class JobQueue {
     this.persist();
   }
   private persist() {
+    clearTimeout(this.persistenceTimer);
+    this.persistenceTimer = undefined;
     writeDurableJson(this.file, this.jobs);
   }
+  /** Flushes any buffered live telemetry before a controlled shutdown. */
+  flush() { if (this.persistenceTimer) this.persist(); }
   list(projectId?: string): Job[] { return this.jobs.filter(job => !projectId || job.projectId === projectId).sort((a,b) => b.createdAt.localeCompare(a.createdAt) || (a.order ?? 0) - (b.order ?? 0)); }
   /** Lists project tickets in their persisted execution order, preserving legacy submission order. */
   listProjectExecutionOrder(projectId: string): Job[] {
@@ -98,9 +103,19 @@ export class JobQueue {
     const jobs = tasks.map((task, order): Job => ({ queuePosition: nextPosition + order, id: randomUUID(), projectId, batchId, order, projectPath: resolve(projectPath), tasks: [task], status: "PENDING", createdAt: now, updatedAt: now, attempts: 0 }));
     this.jobs.push(...jobs); this.persist(); return jobs;
   }
-  update(id: string, change: Partial<Job>): Job | undefined {
+  /** Returns a private telemetry file alongside the queue, outside the target project. */
+  jevUsageFile(id: string): string {
+    const directory = join(resolve(this.file, ".."), "jev-usage");
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+    return join(directory, `${id}.jsonl`);
+  }
+  /** Updates a ticket immediately, optionally grouping live telemetry writes into one snapshot. */
+  update(id: string, change: Partial<Job>, deferPersistence = false): Job | undefined {
     const index = this.jobs.findIndex(j => j.id === id); if (index < 0) return undefined;
-    this.jobs[index] = { ...this.jobs[index], ...change, updatedAt: new Date().toISOString() }; this.persist(); return this.jobs[index];
+    this.jobs[index] = { ...this.jobs[index], ...change, updatedAt: new Date().toISOString() };
+    if (!deferPersistence) this.persist();
+    else if (!this.persistenceTimer) this.persistenceTimer = setTimeout(() => this.persist(), 250);
+    return this.jobs[index];
   }
   /** Archives every saved ticket entry that belongs to a cleared Codex thread. */
   clearProjectThread(projectId: string, threadId: string, detail = "JEV cleared this project thread; the next task starts a fresh Codex conversation.") {

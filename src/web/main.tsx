@@ -19,6 +19,7 @@ import { Plan } from "./components/Plan.js";
 import { ExecutionPanel } from "./components/ExecutionPanel.js";
 import { useTaskCompletionPing } from "./hooks/use-task-completion-ping.js";
 import { useBilling } from "./hooks/use-jev-data.js";
+import { useJobs } from "./hooks/use-jobs.js";
 import { useBrowserTabIndicator } from "./hooks/use-browser-tab-indicator.js";
 
 function Shell({ children, project }: { children: React.ReactNode; project?: ProjectRecord }) {
@@ -44,7 +45,7 @@ function ProjectsHome() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const refreshProjects = async () => { const [nextProjects, nextJobs] = await Promise.all([api<ProjectRecord[]>("/projects"), api<Job[]>("/jobs")]); setProjects(nextProjects); setJobs(nextJobs); };
+  const refreshProjects = async () => { const [nextProjects, nextJobs] = await Promise.all([api<ProjectRecord[]>("/projects"), api<Job[]>("/jobs?view=summary")]); setProjects(nextProjects); setJobs(nextJobs); };
   useEffect(() => { void refreshProjects(); }, []);
   const inspect = async () => { if (!path.trim()) return; try { const result = await api<ProjectIndex>(`/project?path=${encodeURIComponent(path.trim())}`); setProjectIndex(result); } catch { setProjectIndex(undefined); } };
   const browse = async () => { setError(""); try { const result = await api<{ path: string }>("/system/select-directory", { method: "POST" }); setPath(result.path); if (!name) setName(result.path.split("/").pop() ?? ""); const inspected = await api<ProjectIndex>(`/project?path=${encodeURIComponent(result.path)}`); setProjectIndex(inspected); } catch (reason) { if (!/cancelled/i.test(String(reason))) setError(reason instanceof Error ? reason.message : String(reason)); } };
@@ -72,7 +73,7 @@ function ProjectWorkspace() {
   const [record, setRecord] = useState<ProjectRecord>();
   const [project, setProject] = useState<ProjectIndex>();
   const [tasks, setTasks] = useState<DraftTask[]>([makeTask()]);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const { jobs, refresh, error: pollingError } = useJobs(id);
   const [selectedId, setSelectedId] = useState<string>();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -86,8 +87,8 @@ function ProjectWorkspace() {
   const selected = jobs.find(job => job.id === selectedId);
   const { notices, dismissNotice } = useTaskCompletionPing(jobs, id);
 
-  const refresh = async () => { const next = await api<Job[]>(`/jobs?projectId=${encodeURIComponent(id)}`); setJobs(next); setSelectedId(current => { const currentJob = next.find(job => job.id === current); const active = next.find(job => job.status === "RUNNING" || job.status === "ESCALATING"); const visible = next.filter(job => !job.archivedAt && job.status !== "SKIPPED"); return currentJob?.id ?? active?.id ?? visible[0]?.id; }); };
-  useEffect(() => { void api<ProjectRecord>(`/projects/${id}`).then(async next => { setRecord(next); setProject(await api<ProjectIndex>(`/project?path=${encodeURIComponent(next.path)}`)); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); void refresh(); const timer = window.setInterval(() => void refresh().catch(() => undefined), 900); return () => clearInterval(timer); }, [id]);
+  useEffect(() => { setSelectedId(current => jobs.find(job => job.id === current)?.id ?? jobs.find(job => job.status === "RUNNING" || job.status === "ESCALATING")?.id ?? jobs.find(job => !job.archivedAt && job.status !== "SKIPPED")?.id); }, [jobs]);
+  useEffect(() => { void api<ProjectRecord>(`/projects/${id}`).then(async next => { setRecord(next); setProject(await api<ProjectIndex>(`/project?path=${encodeURIComponent(next.path)}`)); }).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); }, [id]);
 
   const moveTask = (from: number, to: number) => setTasks(items => { if (to < 0 || to >= items.length) return items; const copy = [...items]; const [item] = copy.splice(from, 1); copy.splice(to, 0, item); return copy; });
   const addImages = async (taskId: string, files: FileList | null) => { const additions = Array.from(files ?? []); if (!additions.length) return; if (additions.some(file => !["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type))) { setError("Only PNG, JPEG, GIF, and WebP images can be attached."); return; } if (additions.some(file => file.size > 5 * 1024 * 1024)) { setError("Each attached image must be 5 MB or smaller."); return; } const current = tasks.find(task => task.id === taskId); if ((current?.attachments?.length ?? 0) + additions.length > 4) { setError("Attach at most four images to one task."); return; } try { const images = await Promise.all(additions.map(readDraftImage)); setTasks(items => items.map(item => item.id === taskId ? { ...item, attachments: [...(item.attachments ?? []), ...images] } : item)); setError(""); } catch { setError("The selected image could not be read."); } };
@@ -130,7 +131,7 @@ function ProjectWorkspace() {
           </div>
           <div className="task-controls"><div className="task-move-controls"><button type="button" disabled={index === 0} onClick={() => moveTask(index, index - 1)} title="Move task up">↑</button><button type="button" disabled={index === tasks.length - 1} onClick={() => moveTask(index, index + 1)} title="Move task down">↓</button></div><button type="button" onClick={() => setTasks(items => items.length === 1 ? [makeTask()] : items.filter(item => item.id !== task.id))} title="Remove task">×</button></div>
         </div>)}</div>
-        {error && <div className="alert"><b>Something needs attention</b><span>{error}</span></div>}
+        {(error || pollingError) && <div className="alert"><b>Something needs attention</b><span>{error || pollingError}</span></div>}
         <div className="queue-compose-actions"><button className="add-task" type="button" onClick={() => setTasks(items => [...items, makeTask()])}><span>＋</span>Add another task</button><button className="analyze-button" disabled={!tasks.some(task => task.description.trim()) || busy === "analysis"}>{busy === "analysis" ? "JEV is evaluating…" : "Add to Kanban"}<span>→</span></button></div>
       </form>
     </section>
@@ -147,13 +148,13 @@ function InitialAgentsModal({ context, onChange, onClose, onCreate, busy, error 
 function ConsolePage() {
   const { id = "", jobId } = useParams();
   const [record, setRecord] = useState<ProjectRecord>();
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const { jobs, error: pollingError } = useJobs(id, jobId ?? "latest");
   const [error, setError] = useState("");
-  useEffect(() => { void api<ProjectRecord>(`/projects/${id}`).then(setRecord).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); const load = () => void api<Job[]>(`/jobs?projectId=${encodeURIComponent(id)}`).then(setJobs).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); load(); const timer = window.setInterval(load, 900); return () => window.clearInterval(timer); }, [id]);
+  useEffect(() => { void api<ProjectRecord>(`/projects/${id}`).then(setRecord).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))); }, [id]);
   const available = jobs.filter(job => job.execution || job.error).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const selected = available.find(job => job.id === jobId) ?? available.find(job => job.status === "RUNNING" || job.status === "ESCALATING") ?? available[0];
   if (!record) return <Shell><main><div className="loading-state">{error || "Opening console…"}</div></main></Shell>;
-  return <Shell project={record}><main className="workspace-main console-page"><section className="workspace-hero"><div><Link to={`/projects/${id}`} className="back-link">← Project workspace</Link><p className="eyebrow">CODEX EXECUTION</p><h1>Console</h1><p>{record.name}</p></div></section>{selected ? <div className="console-workbench"><aside className="console-history"><header><div><p className="panel-label">TICKET HISTORY</p><h2>{available.length} execution{available.length === 1 ? "" : "s"}</h2></div></header><nav aria-label="Ticket history">{available.map(job => <Link key={job.id} to={`/projects/${id}/console/${job.id}`} className={selected.id === job.id ? "active" : ""}><span className={`console-history-state ${job.status.toLowerCase()}`}/><div><b>{job.tasks[0]?.description || "Untitled task"}</b><small>{new Date(job.createdAt).toLocaleDateString()} · {consoleStatusLabel(job.status)}</small></div><i>→</i></Link>)}</nav></aside><section className="console-result"><header><div><p className="panel-label">TICKET ACTIVITY</p><h2>{selected.tasks[0]?.description}</h2></div><Status status={selected.status}/></header><ExecutionPanel job={selected}/></section></div> : <div className="loading-state">No Codex execution yet. Launch a task to see its console here.</div>}{error && <div className="alert">{error}</div>}</main></Shell>;
+  return <Shell project={record}><main className="workspace-main console-page"><section className="workspace-hero"><div><Link to={`/projects/${id}`} className="back-link">← Project workspace</Link><p className="eyebrow">CODEX EXECUTION</p><h1>Console</h1><p>{record.name}</p></div></section>{selected ? <div className="console-workbench"><aside className="console-history"><header><div><p className="panel-label">TICKET HISTORY</p><h2>{available.length} execution{available.length === 1 ? "" : "s"}</h2></div></header><nav aria-label="Ticket history">{available.map(job => <Link key={job.id} to={`/projects/${id}/console/${job.id}`} className={selected.id === job.id ? "active" : ""}><span className={`console-history-state ${job.status.toLowerCase()}`}/><div><b>{job.tasks[0]?.description || "Untitled task"}</b><small>{new Date(job.createdAt).toLocaleDateString()} · {consoleStatusLabel(job.status)}</small></div><i>→</i></Link>)}</nav></aside><section className="console-result"><header><div><p className="panel-label">TICKET ACTIVITY</p><h2>{selected.tasks[0]?.description}</h2></div><Status status={selected.status}/></header><ExecutionPanel job={selected}/></section></div> : <div className="loading-state">No Codex execution yet. Launch a task to see its console here.</div>}{(error || pollingError) && <div className="alert">{error || pollingError}</div>}</main></Shell>;
 }
 
 function consoleStatusLabel(status: string) { return status === "SUCCESS" ? "Done" : status === "SESSION_PAUSED" ? "Paused" : status === "FAILED" ? "Needs attention" : status === "RUNNING" ? "Running" : status === "ESCALATING" ? "Escalating" : status; }

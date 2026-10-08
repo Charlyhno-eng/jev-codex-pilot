@@ -19,7 +19,7 @@ vi.mock("../../src/core/app-config.js", async importOriginal => {
   } };
 });
 vi.mock("../../src/core/single-instance.js", () => ({ acquireApiInstance: vi.fn() }));
-vi.mock("../../src/core/queue.js", () => ({ JobQueue: class {} }));
+vi.mock("../../src/core/queue.js", () => ({ JobQueue: class { flush() {} } }));
 vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class {} }));
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class {} }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} } }));

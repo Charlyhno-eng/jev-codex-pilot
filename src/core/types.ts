@@ -131,6 +131,8 @@ export interface Job {
   status: JobStatus;
   awaitingHumanReview?: boolean;
   analysis?: JevAnalysis;
+  /** Cumulative JEV calls for this ticket, including evaluation and native hooks. */
+  jevUsage?: import("./jev-usage.js").JevTokenUsage & { estimatedCostUsd?: number };
   createdAt: string;
   updatedAt: string;
   output?: string;

@@ -1,13 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { Job } from "../../src/core/types.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ root: "", handler: undefined as unknown as (req: IncomingMessage, res: ServerResponse) => Promise<void> }));
+const state = vi.hoisted(() => ({ root: "", jobs: [] as Job[], handler: undefined as unknown as (req: IncomingMessage, res: ServerResponse) => Promise<void> }));
 vi.mock("node:http", () => ({ createServer: (handler: typeof state.handler) => { state.handler = handler; return { listen: vi.fn() }; } }));
 vi.mock("../../src/core/single-instance.js", () => ({ acquireApiInstance: vi.fn() }));
-vi.mock("../../src/core/queue.js", () => ({ JobQueue: class {} }));
+vi.mock("../../src/core/queue.js", () => ({ JobQueue: class { flush() {} list() { return state.jobs; } listProjectExecutionOrder(id: string) { return state.jobs.filter(job => job.projectId === id); } } }));
 vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class { get(id: string) { return id === "project" ? { id, path: state.root } : undefined; } } }));
 vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class {}, maskedApiKey: vi.fn() }));
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class {} }));
@@ -51,5 +52,47 @@ describe("workspace API", () => {
   });
   it("accepts browser GET requests with a local Referer without starting a shell", async () => {
     expect(await request("GET", "/api/projects/project/terminal", { host: "127.0.0.1:3000", referer: "http://localhost:5173/projects/project/ide" })).toEqual({ status: 200, body: [] });
+  });
+});
+
+
+describe("lightweight ticket API", () => {
+  beforeAll(() => {
+    state.jobs = ["older", "live", "foreign"].map((id, index): Job => ({
+      id, projectId: id === "foreign" ? "removed-project" : "project", projectPath: state.root,
+      tasks: [{ description: id }], createdAt: `2026-10-08T12:00:0${index}.000Z`,
+      updatedAt: "2026-10-08T12:00:05.000Z", status: id === "live" ? "RUNNING" : "SUCCESS", attempts: 1,
+      output: `private logs for ${id}`,
+      execution: { phase: "IMPLEMENTING", model: "sol", reasoning: "low", startedAt: "2026-10-08T12:00:00.000Z", lastActivityAt: "2026-10-08T12:00:05.000Z", verification: "not_run", events: [{ id: `event-${id}`, kind: "command", title: "Command", detail: "Long command output", timestamp: "2026-10-08T12:00:05.000Z", status: "success" }] }
+    }));
+  });
+  it("omits all logs from summaries while preserving full default responses", async () => {
+    const full = (await request("GET", "/api/jobs")).body as Job[];
+    const summary = (await request("GET", "/api/jobs?view=summary&projectId=project")).body as Job[];
+    expect(full).toHaveLength(2);
+    expect(full[0].output).toContain("private logs");
+    expect(summary).toHaveLength(2);
+    for (const job of summary) {
+      expect(job).not.toHaveProperty("output");
+      expect(job.execution?.events).toEqual([]);
+      expect(job.tasks).toHaveLength(1);
+    }
+    expect(state.jobs[0].execution?.events).toHaveLength(1);
+  });
+  it("includes logs only for the selected console ticket and resolves the active fallback", async () => {
+    for (const detailId of ["latest", "missing", "live"]) {
+      const jobs = (await request("GET", `/api/jobs?view=summary&projectId=project&detailId=${detailId}`)).body as Job[];
+      expect(jobs.find(job => job.id === "live")?.output).toBe("private logs for live");
+      expect(jobs.find(job => job.id === "older")).not.toHaveProperty("output");
+    }
+    const jobs = (await request("GET", "/api/jobs?view=summary&detailId=older")).body as Job[];
+    expect(jobs.find(job => job.id === "older")?.execution?.events).toHaveLength(1);
+    expect(jobs.find(job => job.id === "live")).not.toHaveProperty("output");
+  });
+  it("sends only the fields needed by the favicon", async () => {
+    expect((await request("GET", "/api/jobs?view=status")).body).toEqual([
+      { id: "older", projectId: "project", status: "SUCCESS" },
+      { id: "live", projectId: "project", status: "RUNNING" }
+    ]);
   });
 });

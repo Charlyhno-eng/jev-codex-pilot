@@ -31,7 +31,7 @@ const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
 const port = Number(process.env.PORT ?? 3000);
 const terminals = new ProjectTerminals();
-process.once("exit", () => terminals.dispose());
+process.once("exit", () => { queue.flush(); terminals.dispose(); });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { terminals.dispose(); process.exit(0); });
 
 /** Requires same-origin browser requests before granting local file or shell access. */
@@ -145,7 +145,17 @@ createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/jobs") {
       const projectId = url.searchParams.get("projectId") ?? undefined;
-      return json(response, 200, (projectId ? queue.listProjectExecutionOrder(projectId) : queue.list()).filter(job => Boolean(projects.get(job.projectId))));
+      const jobs = (projectId ? queue.listProjectExecutionOrder(projectId) : queue.list()).filter(job => Boolean(projects.get(job.projectId)));
+      if (url.searchParams.get("view") === "status") return json(response, 200, jobs.map(({ id, projectId, status }) => ({ id, projectId, status })));
+      if (url.searchParams.get("view") !== "summary") return json(response, 200, jobs);
+      const detailId = url.searchParams.get("detailId");
+      const history = detailId ? jobs.filter(job => job.execution || job.error).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
+      const selectedId = history.find(job => job.id === detailId)?.id ?? (history.find(job => job.status === "RUNNING" || job.status === "ESCALATING") ?? history[0])?.id;
+      return json(response, 200, jobs.map(job => {
+        if (job.id === selectedId) return job;
+        const { output: _output, ...summary } = job;
+        return { ...summary, execution: job.execution ? { ...job.execution, events: [] } : undefined };
+      }));
     }
     if (request.method === "GET" && url.pathname === "/api/usage") {
       const jobs = [...sessionJevJobIds].map(id => queue.get(id)).filter((job): job is NonNullable<typeof job> => Boolean(job));

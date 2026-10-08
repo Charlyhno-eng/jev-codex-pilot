@@ -36,8 +36,8 @@ const TASK_TYPE_CRITERIA: Record<TaskType, string> = {
 };
 
 export const COMPLEXITY_CRITERIA = [
-  "1 — Documentation, running tests, installation commands, and other straightforward or mechanical work; also very light UI/UX polish with a tiny, clearly bounded visual adjustment.",
-  "2 — Simple or semi-structured work: small refactor, small feature, technical Q&A, short script, or extraction; also conventional, relatively simple UI/UX changes such as a straightforward layout or styling adjustment.",
+  "1 — Read-only requests: reading or explaining documentation, project information, or code; also limited edits to README.md or AGENTS.md. No implementation work.",
+  "2 — Simple or semi-structured implementation work: small refactor, small feature, short script, extraction, running tests, installation commands, or a tiny cosmetic-only visual tweak that does not change layout, accessibility, or interaction. Any UI/UX change starts at level 3, and technical questions belong at level 1.",
   "3 — Medium feature, standard debugging, limited multi-file work, or simple business workflow; also medium UI/UX work, including interface work involving 3D.",
   "4 — Complex multi-step feature, non-trivial refactor, architecture, or hard debugging; also complex UI/UX work, including substantial or technically demanding 3D interface work.",
   "5 — Critical or long-horizon work: major architecture, security, science, or demanding computer use; also critical or long-horizon UI/UX work with unusually broad or technically demanding requirements."
@@ -79,7 +79,7 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
           complexity: {
             type: "score",
             criteria: COMPLEXITY_CRITERIA,
-            instructions: "Score this task alone from 1 to 5. Judge the actual reasoning and implementation difficulty, not repository size, language, or other queued tasks. Use 1 for documentation, running tests, installation commands, and clearly bounded routine changes."
+            instructions: "Score this task alone from 1 to 5. Judge the actual reasoning and implementation difficulty, not repository size, language, or other queued tasks. Use 1 only for reading or explaining documentation, project information, or code, or for limited README.md/AGENTS.md edits. Technical questions are level 1. Running tests, installation commands, implementation work, and tiny cosmetic-only visual tweaks that do not change layout, accessibility, or interaction are at least level 2. Any UI/UX change is at least level 3."
           },
           outcomeClarity: {
             type: "score",

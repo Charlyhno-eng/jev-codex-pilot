@@ -6,7 +6,7 @@ import { readCodexStatusSnapshot } from "./codex-status.js";
 import { projectCodexEnv, projectCodexHome, projectCodexStateArgs } from "./codex-home.js";
 import { CodexLoopDetector } from "./codex-loop-detector.js";
 import { codexExecPrefix, implementationBlocked } from "./codex-execution.js";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { analyze, assessTaskContinuity } from "./analyzer.js";
 import { logJev, logJevApplied, logJevError, logSession } from "./jev-logger.js";
@@ -16,6 +16,9 @@ import { codexHookArgs } from "./hooks/codex-config.js";
 import { commitMessageFromOutput, deliverGitTicket, prepareGitDelivery } from "./git-workspace.js";
 import type { JobQueue } from "./queue.js";
 import type { CodexAccountUsage, CodexModel, CodexStatusSnapshot, CodexUsage, ExecutionEvent, ExecutionPhase, Job, Reasoning } from "./types.js";
+
+import { readJevUsageFile, ticketJevUsageEnv, withTicketJevUsage } from "./jev-usage.js";
+import { estimateJevInputCost } from "./jev-pricing.js";
 
 type JsonEvent = Record<string, unknown> & { type?: string; item?: Record<string, unknown> };
 type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
@@ -104,7 +107,7 @@ function describe(event: JsonEvent): { phase: ExecutionPhase; item?: Omit<Execut
 
 function compactThread(threadId: string, home: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", [...projectCodexStateArgs(home), ...codexHookArgs(), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: projectCodexEnv(home) });
+    const child = spawn("codex", [...projectCodexStateArgs(home), ...codexHookArgs(), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: { ...projectCodexEnv(home), ...ticketJevUsageEnv() } });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex compaction timed out after 5 minutes")), 300_000);
@@ -129,7 +132,7 @@ function compactThread(threadId: string, home: string): Promise<void> {
 
 function archiveThread(threadId: string, home: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("codex", [...projectCodexStateArgs(home), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: projectCodexEnv(home) });
+    const child = spawn("codex", [...projectCodexStateArgs(home), "app-server", "--stdio"], { shell: false, stdio: ["pipe", "pipe", "pipe"], env: { ...projectCodexEnv(home), ...ticketJevUsageEnv() } });
     const lines = createInterface({ input: child.stdout });
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex thread clear timed out")), 30_000);
@@ -158,7 +161,7 @@ function logTicketCompleted(tag: string, title: string) {
 function resumeCodexTurn(projectPath: string, home: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
   return new Promise(resolve => {
     const args = [...codexExecPrefix(true), "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...projectCodexStateArgs(home), ...codexHookArgs(), threadId, prompt];
-    const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...projectCodexEnv(home), JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
+    const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...projectCodexEnv(home), ...ticketJevUsageEnv(), JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
     onStart(child);
     let buffer = ""; let settled = false;
     child.stdin.end();
@@ -263,7 +266,28 @@ export class Orchestrator {
     }
   }
 
+  private refreshJevUsage(id: string) {
+    const usage = readJevUsageFile(this.queue.jevUsageFile(id));
+    this.queue.update(id, { jevUsage: { ...usage, estimatedCostUsd: usage.missingCalls ? undefined : estimateJevInputCost(usage.inputTokens) } });
+  }
+
+  private async trackJevUsage<T>(job: Job, run: () => Promise<T>): Promise<T> {
+    const file = this.queue.jevUsageFile(job.id);
+    if (!existsSync(file)) {
+      // Older tickets have no complete telemetry; preserve that uncertainty.
+      writeFileSync(file, job.analysis ? "{}\n" : "", { mode: 0o600 });
+    }
+    try { return await withTicketJevUsage(file, run); }
+    finally { this.refreshJevUsage(job.id); }
+  }
+
+  /** Evaluates a pending ticket and persists its JEV consumption. */
   async prepare(job: Job) {
+    await this.trackJevUsage(job, () => this.prepareTicket(job));
+    return this.queue.get(job.id);
+  }
+
+  private async prepareTicket(job: Job) {
     if (!existsSync(job.projectPath)) throw new Error(`Project not found: ${job.projectPath}`);
     if (job.analysis) return job;
     try {
@@ -372,6 +396,11 @@ export class Orchestrator {
   }
 
   private async runWithEscalation(input: Job): Promise<Job> {
+    await this.trackJevUsage(input, () => this.runTrackedWithEscalation(input));
+    return this.queue.get(input.id)!;
+  }
+
+  private async runTrackedWithEscalation(input: Job): Promise<Job> {
     let current = this.queue.get(input.id) ?? input;
     const autoGit = this.autoGitEnabled(current.projectId);
     const resumed = current.gitDelivery?.status === "pending" && current.gitDelivery.branch !== undefined && current.gitDelivery.startHead !== undefined ? { branch: current.gitDelivery.branch, head: current.gitDelivery.startHead } : undefined;
@@ -536,7 +565,7 @@ export class Orchestrator {
           : prompt;
       // --image accepts multiple values; terminate options before the thread and prompt.
       const args = [...codexExecPrefix(Boolean(resumeThread)), ...common, ...imageArgs, "--", ...(resumeThread ? [resumeThread, resumePrompt] : [prompt])];
-      const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...projectCodexEnv(home), JEV_HOOK_TASK: first.tasks.map(task => task.description).join(" ").slice(0, 2_000) } });
+      const child = spawn("codex", args, { cwd: first.projectPath, shell: false, env: { ...projectCodexEnv(home), ...ticketJevUsageEnv(), JEV_HOOK_TASK: first.tasks.map(task => task.description).join(" ").slice(0, 2_000) } });
       child.stdin.end();
       let currentChild: ReturnType<typeof spawn> = child;
       let stalled = false;
@@ -548,6 +577,7 @@ export class Orchestrator {
           logJevError(`[codex:${first.id.slice(0, 8)}] No Codex activity for 30 minutes; stopping the stalled process.`);
           currentChild.kill("SIGTERM");
         }
+        this.refreshJevUsage(first.id);
         this.updateTicketExecution(first, execution => ({ ...execution, heartbeatAt: at }));
       }, 10_000);
       heartbeat.unref();
@@ -738,6 +768,6 @@ export class Orchestrator {
     });
   }
 
-  private updateTicketExecution(job: Job, mutate: (execution: NonNullable<Job["execution"]>) => NonNullable<Job["execution"]>) { const current = this.queue.get(job.id); if (current?.execution) this.queue.update(job.id, { execution: mutate(current.execution) }); }
-  private updateTicketOutput(job: Job, output: string) { this.queue.update(job.id, { output }); }
+  private updateTicketExecution(job: Job, mutate: (execution: NonNullable<Job["execution"]>) => NonNullable<Job["execution"]>) { const current = this.queue.get(job.id); if (current?.execution) this.queue.update(job.id, { execution: mutate(current.execution) }, true); }
+  private updateTicketOutput(job: Job, output: string) { this.queue.update(job.id, { output }, true); }
 }

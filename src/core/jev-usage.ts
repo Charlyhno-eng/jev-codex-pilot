@@ -10,6 +10,7 @@ export interface JevTokenUsage {
 }
 
 const collector = new AsyncLocalStorage<JevTokenUsage>();
+const ticketCollector = new AsyncLocalStorage<string>();
 const benchmarkUsageFile = "JEV_BENCHMARK_USAGE_FILE";
 
 function addUsage(active: JevTokenUsage, usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }): void {
@@ -30,6 +31,11 @@ export async function collectJevUsage<T>(run: () => Promise<T>): Promise<{ resul
 /** Records one JEV provider response in the active usage collector. */
 export function recordJevUsage(usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }): void {
   const active = collector.getStore();
+  const ticketFile = ticketCollector.getStore() ?? process.env.JEV_TICKET_USAGE_FILE;
+  if (ticketFile) {
+    try { appendFileSync(ticketFile, `${JSON.stringify(usage ?? {})}\n`, { encoding: "utf8", mode: 0o600 }); }
+    catch { /* Telemetry never changes a JEV decision. */ }
+  }
   if (active) { addUsage(active, usage); return; }
   const file = process.env[benchmarkUsageFile];
   if (!file) return;
@@ -47,4 +53,15 @@ export function readJevUsageFile(file: string): JevTokenUsage {
     catch { usage.calls += 1; usage.missingCalls += 1; }
   }
   return usage;
+}
+
+/** Associates provider calls and inherited hook telemetry with one ticket. */
+export async function withTicketJevUsage<T>(file: string, run: () => Promise<T>): Promise<T> {
+  return ticketCollector.run(file, run);
+}
+
+/** Supplies the current ticket telemetry path to a Codex child process. */
+export function ticketJevUsageEnv(): Record<string, string> {
+  const file = ticketCollector.getStore();
+  return file ? { JEV_TICKET_USAGE_FILE: file } : {};
 }

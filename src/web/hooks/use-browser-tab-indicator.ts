@@ -43,7 +43,7 @@ function renderFavicon(states: TicketState[]) {
 export function useBrowserTabIndicator() {
   useEffect(() => {
     let previous = "";
-    const update = () => void api<Job[]>("/jobs").then(jobs => {
+    const update = () => void api<Pick<Job, "id" | "projectId" | "status">[]>("/jobs?view=status").then(jobs => {
       const states = (["RUNNING", "ESCALATING", "SUCCESS", "FAILED"] as TicketState[]).filter(state => jobs.some(job => job.status === state));
       const next = states.join(",");
       if (next === previous) return;

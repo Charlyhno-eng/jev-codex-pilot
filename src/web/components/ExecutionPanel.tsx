@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ExecutionEvent, Job } from "../lib/types.js";
-import { formatNumber, reasoningLabel, verificationLabel } from "../lib/format.js";
+import { formatNumber, reasoningLabel } from "../lib/format.js";
 import { CodexStatusPanel } from "./CodexStatusPanel.js";
 
 type Activity = { id: string; timestamp?: string; title: string; detail?: string; tone: "jev" | "route" | "command" | "complete" | "error" };
@@ -21,7 +21,7 @@ export function ExecutionPanel({ job }: { job: Job }) {
       {execution && <div className="execution-facts">
         <span><small>MODEL</small><b>{job.status === "ESCALATING" ? execution.model : latestRoute?.model ?? execution.model}</b></span>
         <span><small>REASONING</small><b>{reasoningLabel(job.status === "ESCALATING" ? execution.reasoning : latestRoute?.reasoning ?? execution.reasoning)}</b></span>
-        <span><small>VALIDATION</small><b>{verificationLabel(execution.verification)}</b></span>
+        <span title={job.jevUsage ? `${job.jevUsage.calls} JEV calls · ${formatNumber(job.jevUsage.inputTokens)} input tokens. Includes evaluation, continuity reviews and compaction hooks. Estimated from reported usage at $0.04 per million input tokens.` : "Complete JEV usage was not recorded for this ticket."}><small>JEV CREDITS</small><b>{job.jevUsage?.estimatedCostUsd !== undefined ? `≈ $${job.jevUsage.estimatedCostUsd.toFixed(6)}` : job.jevUsage?.missingCalls ? "Incomplete usage" : "Unavailable"}</b></span>
         <span><small>ACTUAL TOKENS</small><b>{formatNumber(execution.metrics?.actualTokens ?? execution.usage?.input_tokens)}</b></span>
       </div>}
     </section>

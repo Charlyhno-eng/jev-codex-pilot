@@ -1,7 +1,0 @@
-[jev]
-# Provider adapter selected by the application. Add a new adapter in src/core/jev-provider.ts when this changes.
-provider = "vercel-ai-gateway"
-
-[vercel_ai_gateway]
-# API key used by JEV through Vercel AI Gateway.
-api_key = ""

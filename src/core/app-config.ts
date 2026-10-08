@@ -9,6 +9,9 @@ export type AppConfig = {
 const defaults = (): AppConfig => ({ jevProvider: "vercel-ai-gateway", aiGatewayApiKey: "" });
 
 function tomlString(value: string): string { return JSON.stringify(value); }
+function serialize(config: AppConfig): string {
+  return `# Local-only JEV Codex Pilot settings. Do not commit this file.\n\n[jev]\nprovider = ${tomlString(config.jevProvider)}\n\n[vercel_ai_gateway]\n# API key used by JEV through Vercel AI Gateway.\napi_key = ${tomlString(config.aiGatewayApiKey)}\n`;
+}
 function valueFor(content: string, section: string, key: string): string | undefined {
   const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -23,7 +26,12 @@ function quoted(value: string | undefined): string {
 /** Reads and writes the application configuration. */
 export class AppConfigStore {
   readonly file: string;
-  constructor(file = resolve(process.cwd(), "config/config.toml")) { this.file = file; }
+  constructor(file = resolve(process.cwd(), "config/config.toml")) {
+    this.file = file;
+    mkdirSync(dirname(this.file), { recursive: true });
+    try { writeFileSync(this.file, serialize(defaults()), { encoding: "utf8", flag: "wx", mode: 0o600 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+  }
   read(): AppConfig {
     if (!existsSync(this.file)) return defaults();
     const content = readFileSync(this.file, "utf8");
@@ -36,7 +44,7 @@ export class AppConfigStore {
   write(change: Partial<AppConfig>): AppConfig {
     const next = { ...this.read(), ...change };
     mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file, `# Local-only JEV Codex Pilot settings. Do not commit this file.\n\n[jev]\n# Provider adapter selected by the application. Add a new adapter in src/core/jev-provider.ts when this changes.\nprovider = ${tomlString(next.jevProvider)}\n\n[vercel_ai_gateway]\n# API key used by JEV through Vercel AI Gateway.\napi_key = ${tomlString(next.aiGatewayApiKey)}\n`, "utf8");
+    writeFileSync(this.file, serialize(next), { encoding: "utf8", mode: 0o600 });
     return next;
   }
 }
