@@ -1,0 +1,20 @@
+/* Dialog close actions share the AGENTS.md control, including a fixed hit area. */
+.modal-backdrop [role="dialog"]>header>button {
+  display:grid;
+  place-items:center;
+  flex:0 0 34px;
+  width:34px;
+  min-width:34px;
+  height:34px;
+  padding:0;
+  border:1px solid #494453;
+  border-radius:9px;
+  background:#17161f;
+  color:#c9c3d4;
+  font-family:inherit;
+  font-size:22px;
+  line-height:1;
+  cursor:pointer;
+}
+.modal-backdrop [role="dialog"]>header>button:hover{border-color:#8374c0;background:#28233a;color:#fff}
+.modal-backdrop [role="dialog"]>header>button:focus-visible{outline:2px solid #91beff;outline-offset:3px}

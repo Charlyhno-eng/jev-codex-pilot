@@ -93,12 +93,21 @@ async function runViaApi(base: string, projectDirectory: string, descriptions: s
   say("Codex started. Waiting for JEV validation…");
   let lastPhase = "";
   while (true) {
-    const jobs = await Promise.all(created.map(job => request<Job>(base, `/jobs/${job.id}`)));
-    const job = jobs.find(item => item.status === "RUNNING" || item.status === "ESCALATING") ?? jobs.find(item => !done(item)) ?? jobs.at(-1)!;
+    const projectJobs = await request<Job[]>(base, `/jobs?projectId=${encodeURIComponent(project.id)}&view=summary`);
+    const jobs = created.map(job => projectJobs.find(item => item.id === job.id) ?? job);
+    const setup = projectJobs.find(item => item.kind === "linter_setup" && !item.archivedAt && (["PENDING", "RUNNING", "ESCALATING", "SESSION_PAUSED", "FAILED"].includes(item.status) || item.awaitingHumanReview));
+    const observed = setup ? [setup, ...jobs] : jobs;
+    const job = observed.find(item => item.status === "RUNNING" || item.status === "ESCALATING") ?? observed.find(item => !done(item)) ?? observed.at(-1)!;
     const phase = `${job.id}:${job.status}:${job.execution?.phase ?? ""}`;
     if (phase !== lastPhase && job.status === "RUNNING") say(`Codex ${job.id.slice(0, 8)}: ${job.execution?.phase.toLowerCase() ?? "working"}`);
     if (phase !== lastPhase && job.status === "ESCALATING") say(`JEV ${job.id.slice(0, 8)} escalation: ${job.analysis?.model ?? "Codex"}/${job.analysis?.reasoning ?? "next route"}`);
     lastPhase = phase;
+    if (setup && (done(setup) && setup.status !== "SUCCESS" || setup.awaitingHumanReview) && observed.every(item => item.status !== "RUNNING" && item.status !== "ESCALATING")) {
+      summary(setup);
+      say("Project linter setup needs attention; implementation tickets remain pending.");
+      process.exitCode = 1;
+      return;
+    }
     if (jobs.every(done) || jobs.some(item => item.status === "SESSION_PAUSED" || item.gitDelivery?.status === "failed") && jobs.every(item => item.status !== "RUNNING" && item.status !== "ESCALATING")) {
       for (const item of jobs) summary(item);
       process.exitCode = jobs.every(item => item.status === "SUCCESS" && item.gitDelivery?.status !== "failed") ? 0 : 1;

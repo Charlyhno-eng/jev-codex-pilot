@@ -1,0 +1,27 @@
+/* Shared page identity keeps the back action alongside the title. */
+.workspace-main{padding-top:28px}
+.workspace-header{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:22px;padding:16px 24px;border:1px solid #283b56;border-radius:16px;background:linear-gradient(115deg,#132139,#0c1422);box-shadow:0 12px 36px rgba(0,0,0,.12)}
+.workspace-header-identity{display:flex;align-items:center;gap:18px;min-width:0;flex:1}
+.workspace-header-back{display:grid;place-items:center;flex:none;width:44px;height:44px;border:1px solid #365578;border-radius:12px;background:#142b47;color:#c7e6ff;text-decoration:none;font-size:23px;transition:background .15s,border-color .15s}
+.workspace-header-back:hover{background:#204574;border-color:#75b9ff;color:#fff}
+.workspace-header-back:focus-visible{outline:2px solid #92c7ff;outline-offset:3px}
+.workspace-header-copy{min-width:0}
+.workspace-header-copy .eyebrow{margin:0 0 5px;font-size:9px;letter-spacing:.16em}
+.workspace-header h1{margin:0;font-size:clamp(24px,2.5vw,32px);line-height:1.15;letter-spacing:-.045em;overflow-wrap:anywhere}
+.workspace-header-description{margin:6px 0 0;color:#94a3bb;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.workspace-header-details{display:flex;align-items:center;flex:none;max-width:100%}
+.workspace-header .project-overview{background:#0d1726;border-color:#2d425e;border-radius:12px}
+.workspace-header .project-overview span{min-width:76px;padding:13px 15px;color:#92a8c4}
+.workspace-header .project-overview b{font-size:23px;color:#e1efff}
+.ide-page .ide-tabs{margin-top:0}
+.git-workspace-toolbar{display:flex;justify-content:flex-end;margin:0 0 18px}
+.git-workspace-toolbar .project-overview{background:#0d1726;border-color:#2d425e}
+@media(max-width:1000px){.workspace-header{align-items:flex-start;flex-direction:column;gap:14px}.workspace-header-details{align-self:stretch}.workspace-header .project-overview{width:100%}.workspace-header .project-overview span{flex:1;min-width:0}}
+@media(max-width:600px){.workspace-main{padding-top:20px}.workspace-header{padding:14px 16px;margin-bottom:20px;border-radius:13px}.workspace-header-identity{gap:12px;width:100%}.workspace-header-back{width:38px;height:38px;border-radius:10px}.workspace-header h1{font-size:24px}.workspace-header .project-overview span{padding:11px 10px}.workspace-header .project-overview b{font-size:20px}.git-workspace-toolbar .project-overview{width:100%}.git-workspace-toolbar .project-overview span{min-width:0;flex:1}}
+
+.project-languages{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0;color:#b8d8fa;font-size:10px;line-height:1.5}
+.project-languages>span{padding:2px 7px;border:1px solid #304967;border-radius:6px;background:#14243a}
+.project-languages .project-languages-empty{border-color:transparent;background:transparent;padding-left:0;color:#94a3bb}
+
+.workspace-header-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-width:0}
+.workspace-header-title .project-languages{margin:0}

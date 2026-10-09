@@ -25,10 +25,13 @@ describe("project Git delivery", () => {
     expect(readGitWorkspace(root).commits.map(commit => commit.hash)).toContain(delivered.commit);
     expect(git(root, "branch", "--show-current")).toBe("test-1");
     expect(() => git(remote, "show-ref", "--verify", "refs/heads/test-1")).toThrow();
-    pushGitBranch(root);
+    expect(pushGitBranch(root).pushStatus).toBe("pushed");
     expect(readGitWorkspace(root).commits).toEqual([]);
     expect(git(remote, "show-ref", "--verify", "refs/heads/test-1")).toContain("refs/heads/test-1");
     expect(readGitWorkspace(root).dirty).toBe(false);
+    expect(pushGitBranch(root).pushStatus).toBe("up_to_date");
+    writeFileSync(join(root, "uncommitted.txt"), "Local changes are not pushed\n");
+    expect(pushGitBranch(root).pushStatus).toBe("up_to_date");
     expect(readProjectDiff(root, delivered.commit).files[0].diff).toContain("+after");
     expect(deliverGitTicket(root, { branch: "test-1", head: git(root, "rev-parse", "HEAD") }, "No change").status).toBe("committed");
   });

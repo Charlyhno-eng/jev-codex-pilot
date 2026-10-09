@@ -42,3 +42,8 @@
 @media(max-width:1100px){.git-push-panel{grid-template-columns:1fr}.git-push-panel button{width:100%}}
 @media(max-width:900px){.git-control-grid{grid-template-columns:1fr}.git-push-panel{grid-template-columns:minmax(0,1fr) auto}.git-push-panel button{width:auto}}
 @media(max-width:620px){.git-control-card{padding:20px}.git-push-panel{grid-template-columns:1fr}.git-push-panel button{width:100%}}
+
+.git-history>.git-hint{margin:0;padding:14px 15px;font-size:11px;line-height:1.5;color:#8ea5bf}
+
+.git-push-info{border-color:#66588e;background:#241d38;color:#ded0ff!important}
+.git-push-info span{background:#b79aef;color:#241d38;font-size:12px;font-family:serif}

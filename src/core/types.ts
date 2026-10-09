@@ -120,6 +120,9 @@ export interface JevAnalysis {
 }
 
 export interface Job {
+  /** Identifies automatic project preparation tickets. */
+  kind?: "linter_setup";
+  linterLanguages?: string[];
   id: string;
   projectId: string;
   batchId?: string;
@@ -128,6 +131,7 @@ export interface Job {
   projectPath: string;
   tasks: TaskSpec[];
   attachments?: JobAttachment[];
+  skills?: import("./skills.js").TicketSkill[];
   status: JobStatus;
   awaitingHumanReview?: boolean;
   analysis?: JevAnalysis;

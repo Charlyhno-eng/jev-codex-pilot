@@ -36,7 +36,8 @@ export class JobQueue {
             ? Math.max(1, Math.min(5, Math.round(rawComplexity))) as Complexity
             : 2;
         if (complexity !== rawComplexity || old.independent_delivery_score !== undefined) {
-          const { independent_delivery_score: _removed, ...analysis } = old;
+          const analysis = { ...old };
+          delete analysis.independent_delivery_score;
           job = { ...job, analysis: { ...analysis, complexity } as unknown as typeof job.analysis };
         }
       }

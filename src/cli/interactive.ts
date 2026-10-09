@@ -64,10 +64,9 @@ export async function interactiveSession(projectDirectory: string, run: (tasks: 
   try {
     render();
     while (true) {
-      let answer: string;
       const next = await ask(`${cyan("›")} `);
       if (next === undefined) break;
-      answer = next.trim();
+      const answer = next.trim();
       if (!answer) continue;
       if (answer === "/quit" || answer === "/exit") break;
       if (answer === "/help" || answer === "/tickets") { render(); continue; }

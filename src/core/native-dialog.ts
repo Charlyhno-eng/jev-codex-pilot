@@ -16,7 +16,7 @@ function execute(command: string, args: string[]): Promise<string> {
 
 /** Opens the operating system folder picker and returns its selection. */
 export async function selectDirectory(): Promise<string> {
-  let selected = "";
+  let selected: string;
   if (platform() === "linux") {
     const kde = existsSync("/usr/bin/kdialog");
     selected = kde

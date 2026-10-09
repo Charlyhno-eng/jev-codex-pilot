@@ -5,3 +5,6 @@
 @import "./theme.css";
 @import "./git.css";
 @import "./ide.css";
+@import "./workspace-header.css";
+@import "./board-layout.css";
+@import "./modal-controls.css";

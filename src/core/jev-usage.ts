@@ -9,9 +9,7 @@ export interface JevTokenUsage {
   missingCalls: number;
 }
 
-const collector = new AsyncLocalStorage<JevTokenUsage>();
 const ticketCollector = new AsyncLocalStorage<string>();
-const benchmarkUsageFile = "JEV_BENCHMARK_USAGE_FILE";
 
 function addUsage(active: JevTokenUsage, usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }): void {
   active.calls += 1;
@@ -21,29 +19,16 @@ function addUsage(active: JevTokenUsage, usage?: { inputTokens?: number; outputT
   active.totalTokens += usage.totalTokens ?? usage.inputTokens + usage.outputTokens;
 }
 
-/** Collects JEV provider token usage during one asynchronous execution. */
-export async function collectJevUsage<T>(run: () => Promise<T>): Promise<{ result: T; usage: JevTokenUsage }> {
-  const usage: JevTokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0, missingCalls: 0 };
-  const result = await collector.run(usage, run);
-  return { result, usage };
-}
-
-/** Records one JEV provider response in the active usage collector. */
+/** Records one JEV provider response in the current ticket telemetry file. */
 export function recordJevUsage(usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }): void {
-  const active = collector.getStore();
   const ticketFile = ticketCollector.getStore() ?? process.env.JEV_TICKET_USAGE_FILE;
   if (ticketFile) {
     try { appendFileSync(ticketFile, `${JSON.stringify(usage ?? {})}\n`, { encoding: "utf8", mode: 0o600 }); }
     catch { /* Telemetry never changes a JEV decision. */ }
   }
-  if (active) { addUsage(active, usage); return; }
-  const file = process.env[benchmarkUsageFile];
-  if (!file) return;
-  try { appendFileSync(file, `${JSON.stringify(usage ?? {})}\n`, "utf8"); }
-  catch { /* Benchmark telemetry never changes a JEV decision. */ }
 }
 
-/** Reads token-only records written by separate benchmark hook processes. */
+/** Reads token-only records written by ticket evaluation and Codex hook processes. */
 export function readJevUsageFile(file: string): JevTokenUsage {
   const usage: JevTokenUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0, missingCalls: 0 };
   if (!existsSync(file)) return usage;

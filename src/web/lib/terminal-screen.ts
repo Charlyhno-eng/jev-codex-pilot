@@ -18,6 +18,8 @@ export class TerminalScreen {
         const rest = this.pending.slice(i);
         if (rest.length < 2) break;
         if (rest[1] === "[") {
+          // ANSI cursor sequences contain control characters by design.
+          // eslint-disable-next-line no-control-regex -- This parser must recognize terminal ESC sequences.
           const match = rest.match(/^\x1b\[([0-9;?]*)([ -/]*)([@-~])/);
           if (!match) { if (rest.length < 100) break; i++; continue; }
           const values = match[1].replace("?", "").split(";").map(Number);
@@ -44,6 +46,8 @@ export class TerminalScreen {
           i += match[0].length; continue;
         }
         if (rest[1] === "]") {
+          // OSC sequences terminate at BEL or ESC-backslash.
+          // eslint-disable-next-line no-control-regex -- BEL and ESC are terminal control characters.
           const end = rest.match(/^\x1b\][\s\S]*?(?:\x07|\x1b\\)/);
           if (!end) { if (rest.length > 4096) i = this.pending.length; break; }
           i += end[0].length; continue;

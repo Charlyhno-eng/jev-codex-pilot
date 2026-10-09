@@ -34,7 +34,7 @@ export async function analyze(projectPath: string, tasks: TaskSpec[], evaluator:
     }));
   } catch (error) {
     logJevError(`Task evaluation failed · ${describeError(error)}`);
-    throw new Error(`JEV analysis failed: ${describeError(error)}`);
+    throw new Error(`JEV analysis failed: ${describeError(error)}`, { cause: error });
   }
 
   const complexity = Math.max(1, Math.min(5, Math.round(decision.complexity))) as Complexity;

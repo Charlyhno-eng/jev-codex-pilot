@@ -19,6 +19,7 @@ import type { CodexAccountUsage, CodexModel, CodexStatusSnapshot, CodexUsage, Ex
 
 import { readJevUsageFile, ticketJevUsageEnv, withTicketJevUsage } from "./jev-usage.js";
 import { estimateJevInputCost } from "./jev-pricing.js";
+import { ensureProjectLinterTicket, missingProjectLinters } from "./project-linter.js";
 
 type JsonEvent = Record<string, unknown> & { type?: string; item?: Record<string, unknown> };
 type Verification = "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
@@ -60,6 +61,9 @@ function text(value: unknown): string | undefined {
   return JSON.stringify(value).slice(0, 4000);
 }
 function messageOf(error: unknown) { return error instanceof Error ? error.message : String(error); }
+function objectValue(value: unknown): Record<string, unknown> | undefined { return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined; }
+function parseObject(line: string): Record<string, unknown> | undefined { try { return objectValue(JSON.parse(line)); } catch { return undefined; } }
+function protocolError(value: unknown, fallback: string): string { const error = objectValue(value)?.message; return typeof error === "string" ? error : fallback; }
 function sessionLimitReported(output: string) { return /(?:5[- ]?hour|session|usage|rate)[_ -]?(?:limit|quota).{0,100}(?:reached|exceeded)|(?:reached|exceeded|hit|exhausted).{0,100}(?:5[- ]?hour|session|usage|rate)[_ -]?(?:limit|quota)|rate_limit_exceeded/i.test(output); }
 
 function retryTimeReported(output: string) {
@@ -112,15 +116,15 @@ function compactThread(threadId: string, home: string): Promise<void> {
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex compaction timed out after 5 minutes")), 300_000);
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
-    const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill(); error ? reject(error) : resolve(); };
+    const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill(); if (error) reject(error); else resolve(); };
     lines.on("line", line => {
-      let message: Record<string, any>;
-      try { message = JSON.parse(line); } catch { return; }
-      if (message.id === 0 && message.error) return finish(new Error(message.error.message ?? "Could not initialize Codex app server"));
-      if (message.id === 0 && message.result) { send({ method: "initialized", params: {} }); send({ method: "thread/resume", id: 1, params: { threadId } }); }
-      if (message.id === 1 && message.result?.thread) send({ method: "thread/compact/start", id: 2, params: { threadId } });
-      if (message.id === 1 && message.error) return finish(new Error(message.error.message ?? "Could not resume Codex thread"));
-      if (message.id === 2 && message.error) return finish(new Error(message.error.message ?? "Could not compact Codex thread"));
+      const message = parseObject(line);
+      if (!message) return;
+      if (message.id === 0 && message.error) return finish(new Error(protocolError(message.error, "Could not initialize Codex app server")));
+      if (message.id === 0 && objectValue(message.result)) { send({ method: "initialized", params: {} }); send({ method: "thread/resume", id: 1, params: { threadId } }); }
+      if (message.id === 1 && objectValue(objectValue(message.result)?.thread)) send({ method: "thread/compact/start", id: 2, params: { threadId } });
+      if (message.id === 1 && message.error) return finish(new Error(protocolError(message.error, "Could not resume Codex thread")));
+      if (message.id === 2 && message.error) return finish(new Error(protocolError(message.error, "Could not compact Codex thread")));
       if (isCompactionComplete(message)) finish();
       if (isCompactionFailure(message)) finish(new Error("Codex compaction failed"));
     });
@@ -137,13 +141,13 @@ function archiveThread(threadId: string, home: string): Promise<void> {
     let settled = false;
     const timer = setTimeout(() => finish(new Error("Codex thread clear timed out")), 30_000);
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
-    const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill(); error ? reject(error) : resolve(); };
+    const finish = (error?: Error) => { if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill(); if (error) reject(error); else resolve(); };
     lines.on("line", line => {
-      let message: Record<string, any>;
-      try { message = JSON.parse(line); } catch { return; }
-      if (message.id === 0 && message.error) return finish(new Error(message.error.message ?? "Could not initialize Codex app server"));
-      if (message.id === 0 && message.result) { send({ method: "initialized", params: {} }); send({ method: "thread/archive", id: 1, params: { threadId } }); }
-      if (message.id === 1 && message.error) return finish(new Error(message.error.message ?? "Could not clear Codex thread"));
+      const message = parseObject(line);
+      if (!message) return;
+      if (message.id === 0 && message.error) return finish(new Error(protocolError(message.error, "Could not initialize Codex app server")));
+      if (message.id === 0 && objectValue(message.result)) { send({ method: "initialized", params: {} }); send({ method: "thread/archive", id: 1, params: { threadId } }); }
+      if (message.id === 1 && message.error) return finish(new Error(protocolError(message.error, "Could not clear Codex thread")));
       if (message.id === 1 && message.result) finish();
     });
     child.on("error", finish);
@@ -160,7 +164,7 @@ function logTicketCompleted(tag: string, title: string) {
 /** Resumes one Codex turn in the existing thread. */
 function resumeCodexTurn(projectPath: string, home: string, threadId: string, modelId: string, reasoning: Reasoning, prompt: string, tag: string, record: (line: string) => void, onStart: (child: ReturnType<typeof spawn>) => void): Promise<{ code: number | null; error?: string }> {
   return new Promise(resolve => {
-    const args = [...codexExecPrefix(true), "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...projectCodexStateArgs(home), ...codexHookArgs(), threadId, prompt];
+    const args = [...codexExecPrefix(true), "--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort="${reasoning}"`, ...projectCodexStateArgs(home), ...codexHookArgs(), threadId, prompt];
     const child = spawn("codex", args, { cwd: projectPath, shell: false, env: { ...projectCodexEnv(home), ...ticketJevUsageEnv(), JEV_HOOK_TASK: prompt.slice(0, 2_000) } });
     onStart(child);
     let buffer = ""; let settled = false;
@@ -189,15 +193,16 @@ function readCodexAccountUsage(): Promise<CodexAccountUsage> {
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
     const asNumber = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
     lines.on("line", line => {
-      let message: Record<string, any>;
-      try { message = JSON.parse(line); } catch { return; }
-      if (message.id === 0 && message.error) return finish({ capturedAt, unavailableReason: message.error.message ?? "Codex account usage is unavailable." });
-      if (message.id === 0 && message.result) { send({ method: "initialized", params: {} }); send({ method: "account/usage/read", id: 1, params: {} }); }
-      if (message.id === 1 && message.error) return finish({ capturedAt, unavailableReason: message.error.message ?? "Codex account usage is unavailable." });
-      if (message.id === 1 && message.result) {
-        const summary = message.result.summary ?? {};
+      const message = parseObject(line);
+      if (!message) return;
+      if (message.id === 0 && message.error) return finish({ capturedAt, unavailableReason: protocolError(message.error, "Codex account usage is unavailable.") });
+      if (message.id === 0 && objectValue(message.result)) { send({ method: "initialized", params: {} }); send({ method: "account/usage/read", id: 1, params: {} }); }
+      if (message.id === 1 && message.error) return finish({ capturedAt, unavailableReason: protocolError(message.error, "Codex account usage is unavailable.") });
+      const result = objectValue(message.result);
+      if (message.id === 1 && result) {
+        const summary = objectValue(result.summary) ?? {};
         const today = new Date().toISOString().slice(0, 10);
-        const bucket = Array.isArray(message.result.dailyUsageBuckets) ? message.result.dailyUsageBuckets.find((entry: Record<string, unknown>) => entry.startDate === today) : undefined;
+        const bucket = Array.isArray(result.dailyUsageBuckets) ? result.dailyUsageBuckets.map(objectValue).find(entry => entry?.startDate === today) : undefined;
         finish({ capturedAt, lifetimeTokens: asNumber(summary.lifetimeTokens), peakDailyTokens: asNumber(summary.peakDailyTokens), todayTokens: asNumber(bucket?.tokens) });
       }
     });
@@ -217,17 +222,21 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
     const asDate = (value: unknown) => typeof value === "number" ? new Date(value * 1_000).toISOString() : undefined;
     lines.on("line", line => {
-      let message: Record<string, any>; try { message = JSON.parse(line); } catch { return; }
-      if (message.id === 0 && message.error) return finish({ available: false, reached: false, unavailableReason: message.error.message ?? "Codex rate limits are unavailable." });
-      if (message.id === 0 && message.result) { send({ method: "initialized", params: {} }); send({ method: "account/rateLimits/read", id: 1, params: {} }); }
-      if (message.id === 1 && message.error) return finish({ available: false, reached: false, unavailableReason: message.error.message ?? "Codex rate limits are unavailable." });
-      if (message.id === 1 && message.result) {
-        const values = Object.values(message.result.rateLimitsByLimitId ?? { codex: message.result.rateLimits ?? {} }) as Array<Record<string, any>>;
-        const windows = values.flatMap(limit => [limit.primary, limit.secondary].filter(Boolean) as Array<Record<string, unknown>>);
+      const message = parseObject(line);
+      if (!message) return;
+      if (message.id === 0 && message.error) return finish({ available: false, reached: false, unavailableReason: protocolError(message.error, "Codex rate limits are unavailable.") });
+      if (message.id === 0 && objectValue(message.result)) { send({ method: "initialized", params: {} }); send({ method: "account/rateLimits/read", id: 1, params: {} }); }
+      if (message.id === 1 && message.error) return finish({ available: false, reached: false, unavailableReason: protocolError(message.error, "Codex rate limits are unavailable.") });
+      const result = objectValue(message.result);
+      if (message.id === 1 && result) {
+        const rateLimits = objectValue(result.rateLimitsByLimitId) ?? { codex: result.rateLimits };
+        const values = Object.values(rateLimits).map(objectValue).filter((limit): limit is Record<string, unknown> => Boolean(limit));
+        const windows = values.flatMap(limit => [objectValue(limit.primary), objectValue(limit.secondary)].filter((window): window is Record<string, unknown> => Boolean(window)));
         const reached = values.some(limit => Boolean(limit.rateLimitReachedType)) || windows.some(window => Number(window.usedPercent) >= 100);
         const reachedWindows = values.flatMap(limit => {
-          const named = limit.rateLimitReachedType === "primary" ? limit.primary : limit.rateLimitReachedType === "secondary" ? limit.secondary : undefined;
-          return named ? [named] : [limit.primary, limit.secondary].filter(window => Number(window?.usedPercent) >= 100);
+          const named = limit.rateLimitReachedType === "primary" ? objectValue(limit.primary) : limit.rateLimitReachedType === "secondary" ? objectValue(limit.secondary) : undefined;
+          const exhausted = [objectValue(limit.primary), objectValue(limit.secondary)].filter((window): window is Record<string, unknown> => Boolean(window && Number(window.usedPercent) >= 100));
+          return named ? [named] : exhausted;
         });
         const resets = (reachedWindows.length ? reachedWindows : windows).map(window => asDate(window.resetsAt)).filter((value): value is string => Boolean(value)).sort();
         finish({ available: true, reached, resetsAt: resets.at(-1) });
@@ -242,6 +251,7 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
 /** Prepares queued tickets and runs each task through Codex. */
 export class Orchestrator {
   private runningProjects = new Set<string>();
+  private gitActions = new Set<string>();
   private continuityDecisions = new Map<string, "related" | "unrelated" | "uncertain">();
   private humanReviewEnabled: (projectId: string) => boolean = () => false;
   private autoGitEnabled: (projectId: string) => boolean = () => false;
@@ -252,6 +262,14 @@ export class Orchestrator {
 
   /** Connects the persisted human review preference to execution. */
   configureHumanReview(enabled: (projectId: string) => boolean) { this.humanReviewEnabled = enabled; }
+
+  /** Reserves a project's execution slot for an explicit Git action. */
+  async withProjectGitAction<T>(projectId: string, run: () => Promise<T>): Promise<T> {
+    if (this.isProjectRunning(projectId)) throw new Error("A Codex execution or Git action is already running for this project");
+    this.gitActions.add(projectId);
+    try { return await run(); }
+    finally { this.gitActions.delete(projectId); }
+  }
 
   /** Reports whether a project is waiting for explicit user approval. */
   needsHumanReview(projectId: string) {
@@ -301,7 +319,9 @@ export class Orchestrator {
     }
   }
 
-  isProjectRunning(projectId: string) { return this.runningProjects.has(projectId) || this.queue.list(projectId).some(job => job.status === "RUNNING" || job.status === "ESCALATING"); }
+  isProjectRunning(projectId: string) { return this.runningProjects.has(projectId) || this.gitActions.has(projectId) || this.queue.list(projectId).some(job => job.status === "RUNNING" || job.status === "ESCALATING"); }
+  /** Reports an active manual Git operation separately from ticket execution. */
+  isProjectGitActionRunning(projectId: string) { return this.gitActions.has(projectId); }
   ownsProjectRun(projectId: string) { return this.runningProjects.has(projectId); }
 
   private async taskContinuity(completed: Job[], next: Job) {
@@ -333,7 +353,7 @@ export class Orchestrator {
       .filter((job): job is Job => Boolean(job));
   }
 
-  async command(job: Job) { const prepared = job.analysis ? job : (await this.prepare(job))!; return buildCodexCommand(prepared.tasks, prepared.analysis!, await activeCodexModelId(prepared.analysis!.model)); }
+  async command(job: Job) { const prepared = job.analysis ? job : (await this.prepare(job))!; return buildCodexCommand(prepared.tasks, prepared.analysis!, await activeCodexModelId(prepared.analysis!.model), prepared.skills); }
 
   /** Drains the project's pending tickets in queue order, including arrivals during the run. */
   async runBatch(id: string): Promise<void> {
@@ -343,10 +363,13 @@ export class Orchestrator {
     if (this.needsHumanReview(first.projectId)) throw new Error("Approve the previous ticket before continuing");
     this.runningProjects.add(first.projectId);
     try {
+      ensureProjectLinterTicket(this.queue, first.projectId, first.projectPath);
       const retried = new Set<string>();
       while (true) {
         const current = this.queue.listProjectExecutionOrder(first.projectId)
-          .find(job => job.status === "PENDING" || job.status === "SESSION_PAUSED");
+          .find(job => job.kind === "linter_setup" && !job.archivedAt && ["PENDING", "SESSION_PAUSED", "FAILED"].includes(job.status))
+          ?? this.queue.listProjectExecutionOrder(first.projectId).find(job => job.status === "PENDING" || job.status === "SESSION_PAUSED");
+        if (current?.kind === "linter_setup" && current.status === "FAILED") this.queue.moveManually(current.id, "PENDING");
         if (!current || current.status === "SESSION_PAUSED") break;
         try {
           const completed = await this.runWithEscalation(current);
@@ -355,6 +378,7 @@ export class Orchestrator {
             this.queue.update(completed.id, { awaitingHumanReview: true });
             break;
           }
+          if (completed.kind === "linter_setup" && completed.status !== "SUCCESS") break;
           if (completed.gitDelivery?.status === "failed") logJevError(`[codex:${completed.id.slice(0, 8)}] Automatic Git delivery failed: ${completed.gitDelivery.error ?? "unknown error"}. Continuing pending tickets.`);
           const lastOrder = completed.status === "SUCCESS" ? completed.order ?? Number.MAX_SAFE_INTEGER : -1;
           if (lastOrder < 0) continue;
@@ -372,6 +396,7 @@ export class Orchestrator {
             break;
           }
           if (latest?.status === "SESSION_PAUSED") break;
+          if (current.kind === "linter_setup") break;
           logJevError(`[codex:${current.id.slice(0, 8)}] Ticket failed: ${messageOf(error)}. Continuing pending tickets.`);
         }
       }
@@ -385,6 +410,19 @@ export class Orchestrator {
     if (this.needsHumanReview(job.projectId)) throw new Error("Approve the previous ticket before continuing");
     this.runningProjects.add(job.projectId);
     try {
+      const setup = ensureProjectLinterTicket(this.queue, job.projectId, job.projectPath);
+      if (setup && setup.id !== job.id) {
+        if (setup.status === "FAILED") this.queue.moveManually(setup.id, "PENDING");
+        if (setup.status === "SESSION_PAUSED") throw new Error("Wait for the project linter setup session to become available");
+        let prepared: Job;
+        try { prepared = await this.runWithEscalation(this.queue.get(setup.id)!); }
+        catch (error) {
+          const latest = this.queue.get(setup.id)!;
+          prepared = latest.status === "SESSION_PAUSED" ? latest : this.queue.transition(setup.id, "FAILED", { error: messageOf(error), errorCategory: latest.errorCategory ?? "codex" })!;
+        }
+        if (this.humanReviewEnabled(job.projectId) && prepared.status !== "SESSION_PAUSED") this.queue.update(prepared.id, { awaitingHumanReview: true });
+        if (prepared.status !== "SUCCESS" || this.needsHumanReview(job.projectId)) return this.queue.get(prepared.id)!;
+      }
       const completed = await this.runWithEscalation(job);
       if (this.humanReviewEnabled(job.projectId) && completed.status !== "SESSION_PAUSED") this.queue.update(job.id, { awaitingHumanReview: true });
       return this.queue.get(job.id)!;
@@ -516,7 +554,7 @@ export class Orchestrator {
         resumeThread = undefined;
       }
     }
-    const prompt = buildCodexPrompt(first.tasks, first.analysis!, first.attachments);
+    const prompt = buildCodexPrompt(first.tasks, first.analysis!, first.attachments, first.skills);
     const projectBefore = snapshotProject(first.projectPath);
     const startedAt = new Date().toISOString();
     const estimate = estimateExecutionTokens(prompt, first, reasoning, this.queue.list(first.projectId));
@@ -556,7 +594,7 @@ export class Orchestrator {
       }
     });
     return new Promise(resolve => {
-      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort=\"${reasoning}\"`, ...projectCodexStateArgs(home), ...codexHookArgs()];
+      const common = ["--json", "--skip-git-repo-check", "--model", modelId, "-c", `model_reasoning_effort="${reasoning}"`, ...projectCodexStateArgs(home), ...codexHookArgs()];
       const imageArgs = (first.attachments ?? []).flatMap(attachment => ["--image", attachment.path]);
       const resumePrompt = pausedThread
         ? `${prompt}\n\nContinue the interrupted ticket in this thread. Review the work already made and finish the task. Use your judgment about any checks needed to verify the final result.`
@@ -703,7 +741,11 @@ export class Orchestrator {
         }
         const projectChangesDetected = Boolean(previousExecution?.projectChangesDetected || changedProjectFiles(projectBefore, snapshotProject(first.projectPath)).length);
         const expectsProjectChanges = first.analysis!.task_types.some(type => type !== "research" && type !== "architecture");
-        if (success && expectsProjectChanges && !projectChangesDetected) {
+        if (success && first.kind === "linter_setup" && missingProjectLinters(first.projectPath, first.linterLanguages).length) {
+          success = false;
+          failureMessage = "Project linter setup is still missing. Review Codex output before retrying.";
+        }
+        if (success && first.kind !== "linter_setup" && expectsProjectChanges && !projectChangesDetected) {
           success = false;
           failureMessage = "No project file changes were detected for this implementation task. Review Codex output before retrying.";
           logJevError(`[codex:${tag}] ${failureMessage}`);

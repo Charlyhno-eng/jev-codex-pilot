@@ -13,6 +13,11 @@ export class ProjectStore {
     mkdirSync(dataDirectory, { recursive: true });
     this.file = join(dataDirectory, "projects.json");
     this.projects = readDurableJson(this.file, (value): value is ProjectRecord[] => Array.isArray(value) && value.every(project => project && typeof project === "object" && typeof project.id === "string" && typeof project.path === "string" && typeof project.name === "string" && typeof project.updatedAt === "string"), () => []);
+    this.projects = this.projects.map(project => {
+      const migrated = { ...project } as ProjectRecord & { linterEnabled?: boolean };
+      delete migrated.linterEnabled;
+      return migrated;
+    });
     this.persist();
   }
 

@@ -12,13 +12,13 @@
     "dev:api": "tsx watch src/api/server.ts",
     "dev:web": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
+    "lint": "eslint . --ext .js,.mjs,.cjs,.ts,.tsx",
     "start": "tsx src/api/server.ts",
-    "benchmark": "node --import tsx scripts/benchmark.ts",
     "test": "vitest run"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
     "@ai-sdk/gateway": "4.0.87",
+    "@vitejs/plugin-react": "latest",
     "ai": "^7.0.107",
     "react": "latest",
     "react-dom": "latest",
@@ -27,11 +27,16 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "concurrently": "latest",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "typescript": "latest",
+    "typescript-eslint": "^8.71.1",
     "vitest": "latest"
   }
 }

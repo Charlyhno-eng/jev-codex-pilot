@@ -4,12 +4,15 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { JobQueue } from "../core/queue.js";
 import { Orchestrator } from "../core/orchestrator.js";
+import { ProjectLanguages } from "../core/project-languages.js";
 import { ProjectStore } from "../core/projects.js";
 import { fetchVercelGatewayCredits, VERCEL_AI_GATEWAY_DASHBOARD_URL } from "../core/vercel-ai-gateway.js";
 import { AppConfigStore, maskedApiKey } from "../core/app-config.js";
 import { listProjectFiles } from "../core/project-reader.js";
 import { readProjectDiff } from "../core/git-diff.js";
 import { pushGitBranch, readGitWorkspace, selectGitBranch } from "../core/git-workspace.js";
+import { ensureProjectLinterTicket } from "../core/project-linter.js";
+import { SkillStore, SkillValidationError } from "../core/skills.js";
 import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
@@ -22,12 +25,15 @@ import { ProjectTerminals } from "../core/project-terminal.js";
 
 await acquireApiInstance(resolve(process.cwd(), ".jev"));
 const queue = new JobQueue(resolve(process.cwd(), ".jev"));
+const projectLanguages = new ProjectLanguages();
+const withLanguages = (project: ReturnType<ProjectStore["create"]>) => ({ ...project, languages: projectLanguages.get(project.path) });
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
 const orchestrator = new Orchestrator(queue);
 orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
 orchestrator.configureHumanReview(projectId => Boolean(projects.get(projectId)?.humanInTheLoop));
 const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
+const skills = new SkillStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
 const port = Number(process.env.PORT ?? 3000);
 const terminals = new ProjectTerminals();
@@ -138,6 +144,23 @@ createServer(async (request, response) => {
   try {
     if (request.method === "OPTIONS") return json(response, 204, {});
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    if (url.pathname === "/api/skills" && request.method === "GET") return json(response, 200, skills.list());
+    if (url.pathname === "/api/skills" && request.method === "POST") {
+      if (!trustedWorkspaceRequest(request)) return json(response, 403, { error: "Skill imports require a local browser origin." });
+      const input = await body(request) as { files?: unknown };
+      const imported = skills.import(input.files);
+      return json(response, 201, skills.list().find(skill => skill.id === imported.id));
+    }
+    const skillMatch = url.pathname.match(/^\/api\/skills\/([a-zA-Z0-9-]+)$/);
+    if (skillMatch && request.method === "GET") {
+      const skill = skills.preview(skillMatch[1]);
+      return json(response, skill ? 200 : 404, skill ?? { error: "Skill not found." });
+    }
+    if (skillMatch && request.method === "DELETE") {
+      if (!trustedWorkspaceRequest(request)) return json(response, 403, { error: "Skill changes require a local browser origin." });
+      skills.remove(skillMatch[1]);
+      return json(response, 200, { removed: true });
+    }
     if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true, app: "jev-codex-pilot" });
     if (request.method === "GET" && url.pathname === "/api/codex-models") {
       const available = await availableCodexModels();
@@ -153,8 +176,10 @@ createServer(async (request, response) => {
       const selectedId = history.find(job => job.id === detailId)?.id ?? (history.find(job => job.status === "RUNNING" || job.status === "ESCALATING") ?? history[0])?.id;
       return json(response, 200, jobs.map(job => {
         if (job.id === selectedId) return job;
-        const { output: _output, ...summary } = job;
-        return { ...summary, execution: job.execution ? { ...job.execution, events: [] } : undefined };
+        const summary = { ...job };
+        delete summary.output;
+        const skills = job.skills?.map(skill => Object.fromEntries(Object.entries(skill).filter(([key]) => key !== "content" && key !== "path")));
+        return { ...summary, skills, execution: job.execution ? { ...job.execution, events: [] } : undefined };
       }));
     }
     if (request.method === "GET" && url.pathname === "/api/usage") {
@@ -167,24 +192,30 @@ createServer(async (request, response) => {
         estimatedCostUsd
       });
     }
-    if (request.method === "GET" && url.pathname === "/api/projects") return json(response, 200, projects.list());
+    if (request.method === "GET" && url.pathname === "/api/projects") return json(response, 200, projects.list().map(withLanguages));
     if (request.method === "POST" && url.pathname === "/api/projects") {
       const input = await body(request) as { path?: string; name?: string; context?: string };
       if (!input.path) return json(response, 400, { error: "A project directory is required" });
-      return json(response, 201, projects.create(input.path, input.name, input.context));
+      const project = projects.create(input.path, input.name, input.context);
+      if (!orchestrator.isProjectRunning(project.id)) ensureProjectLinterTicket(queue, project.id, project.path);
+      return json(response, 201, withLanguages(project));
     }
     const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
     if (request.method === "GET" && projectMatch) {
       const project = projects.get(projectMatch[1]);
-      return project ? json(response, 200, project) : json(response, 404, { error: "Project not found" });
+      if (project && !orchestrator.isProjectRunning(project.id)) ensureProjectLinterTicket(queue, project.id, project.path, false);
+      return project ? json(response, 200, withLanguages(project)) : json(response, 404, { error: "Project not found" });
     }
     if (request.method === "PUT" && projectMatch) {
       const project = projects.get(projectMatch[1]);
       if (!project) return json(response, 404, { error: "Project not found" });
       const input = await body(request) as { humanInTheLoop?: unknown };
       if (typeof input.humanInTheLoop !== "boolean") return json(response, 400, { error: "humanInTheLoop must be true or false." });
-      if (!input.humanInTheLoop) orchestrator.approveHumanReview(project.id);
-      return json(response, 200, projects.setHumanInTheLoop(project.id, input.humanInTheLoop));
+      if (typeof input.humanInTheLoop === "boolean") {
+        if (!input.humanInTheLoop) orchestrator.approveHumanReview(project.id);
+        projects.setHumanInTheLoop(project.id, input.humanInTheLoop);
+      }
+      return json(response, 200, withLanguages(projects.get(project.id)!));
     }
     if (request.method === "DELETE" && projectMatch) {
       const project = projects.get(projectMatch[1]);
@@ -222,7 +253,7 @@ createServer(async (request, response) => {
     if (gitMatch) {
       const project = projects.get(gitMatch[1]);
       if (!project) return json(response, 404, { error: "Project not found" });
-      if (request.method === "GET" && !gitMatch[2]) return json(response, 200, readGitWorkspace(project.path));
+      if (request.method === "GET" && !gitMatch[2]) return json(response, 200, { ...readGitWorkspace(project.path), busy: orchestrator.isProjectRunning(project.id) });
       if (request.method === "POST" && gitMatch[2] === "branch") {
         if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before changing branches." });
         const input = await body(request) as { name?: unknown; create?: unknown };
@@ -230,8 +261,8 @@ createServer(async (request, response) => {
         return json(response, 200, selectGitBranch(project.path, input.name, input.create));
       }
       if (request.method === "POST" && gitMatch[2] === "push") {
-        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before pushing." });
-        return json(response, 200, pushGitBranch(project.path));
+        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: orchestrator.isProjectGitActionRunning(project.id) ? "A Git action is already running for this project. Wait for it to finish." : "Wait for the active ticket to finish before pushing." });
+        return json(response, 200, await orchestrator.withProjectGitAction(project.id, async () => pushGitBranch(project.path)));
       }
       if (request.method === "PUT" && gitMatch[2] === "settings") {
         if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before changing Git automation." });
@@ -288,16 +319,17 @@ createServer(async (request, response) => {
       return json(response, 200, { path: absolute, files, count: files.length, truncated: files.length >= 5000, hasAgents: existsSync(resolve(absolute, "AGENTS.md")), isGitRepository: hasGit, isGithubLinked: hasGit && hasGithubRemote(absolute) });
     }
     if (request.method === "POST" && url.pathname === "/api/jobs") {
-      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[] }> };
+      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[]; skillIds?: unknown }> };
       const taskInputs = Array.isArray(input.tasks) ? input.tasks.filter(task => task?.description?.trim()) : [];
       for (const task of taskInputs) attachments.validate(task.attachments);
+      const selections = taskInputs.map(task => skills.select(task.skillIds));
       const tasks = taskInputs.map(task => ({ description: task.description.trim() }));
       const project = input.projectId ? projects.get(input.projectId) : undefined;
       if (!project || !tasks.length) return json(response, 400, { error: "A saved project and at least one task are required" });
       if (!projects.hasAgents(project.id)) return json(response, 400, { error: "Describe the application and create AGENTS.md before analyzing tasks." });
       projects.touch(project.id);
       const created = queue.createBatch(project.id, project.path, tasks);
-      const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments) })!);
+      const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments), skills: skills.freeze(job.id, selections[index]) })!);
       return json(response, 201, withAttachments);
     }
     const agentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/agents$/);
@@ -330,7 +362,7 @@ createServer(async (request, response) => {
     if (request.method === "POST" && action === "unarchive") return json(response, 200, queue.unarchive(id));
     if (request.method === "POST" && action === "remove") {
       const removed = queue.removePending(id);
-      if (removed) attachments.removeForJob(removed.id);
+      if (removed) { attachments.removeForJob(removed.id); skills.removeForJob(removed.id); }
       return json(response, 200, { id: removed?.id, removed: true });
     }
     if (request.method === "POST" && action === "reorder") {
@@ -344,10 +376,13 @@ createServer(async (request, response) => {
       return json(response, 200, queue.moveManually(id, input.status));
     }
     if (request.method === "POST" && action === "edit") {
-      const input = await body(request) as { description?: unknown; attachments?: ImageAttachmentInput[] };
+      const input = await body(request) as { description?: unknown; attachments?: ImageAttachmentInput[]; skillIds?: unknown };
       if (typeof input.description !== "string") return json(response, 400, { error: "A task description is required." });
       attachments.validate(input.attachments);
+      if (job.status !== "PENDING" || job.archivedAt) return json(response, 400, { error: "Only pending tickets can be edited." });
+      const selectedSkills = input.skillIds === undefined ? undefined : skills.updateSelection(id, input.skillIds, job.skills);
       const updated = queue.updatePendingTask(id, input.description)!;
+      if (selectedSkills) queue.update(id, { skills: selectedSkills });
       const nextAttachments = input.attachments === undefined ? updated.attachments : [...(updated.attachments ?? []), ...attachments.saveForJob(updated.id, input.attachments)];
       if (nextAttachments !== updated.attachments) queue.update(updated.id, { attachments: nextAttachments });
       const prepared = await orchestrator.prepare(queue.get(updated.id)!);
@@ -388,7 +423,7 @@ createServer(async (request, response) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     if (/\bJEV\b|precision|recommendation|analy(?:sis|z)/i.test(message)) logJevError(message);
-    return json(response, 500, { error: message });
+    return json(response, error instanceof SkillValidationError ? 400 : 500, { error: message });
   }
 }).listen(port, "127.0.0.1", () => {
   recoverInterruptedWork();

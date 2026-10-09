@@ -1,8 +1,8 @@
 # JEV Codex Pilot
 
-JEV Codex Pilot turns software requests into traceable Codex tickets. The API lives in `src/api`, the ticket engine in `src/core`, and the web app in `src/web`. The project also includes a headless `jc-pilot` CLI and a paired benchmark runner documented in the README and `docs/benchmark.md`.
+JEV Codex Pilot turns software requests into traceable Codex tickets. The API lives in `src/api`, the ticket engine in `src/core`, and the web app in `src/web`. The project also includes a headless `jc-pilot` CLI documented in the README.
 
-JEV scores and routes tickets by complexity, keeps project history in `.jev/`, and lets Codex choose and run task checks. It preserves related work in a Codex thread, clears unrelated work, compacts long context at 100,000 tokens, and stops repeated failed actions when the project has not changed. The headless CLI runs tickets through the same engine, one command at a time in queue order. The paired benchmark runner compares JEV with direct Codex runs.
+JEV scores and routes tickets by complexity, keeps project history in `.jev/`, and lets Codex choose and run task checks. It preserves related work in a Codex thread, clears unrelated work, compacts long context at 100,000 tokens, and stops repeated failed actions when the project has not changed. The headless CLI runs tickets through the same engine, one command at a time in queue order.
 
 Do not change target project code or run its tests as part of JEV. Create or edit a target project's `AGENTS.md` only through the user flow, and run Codex only after an explicit API or Run action. Never expose secrets in code, logs, documentation, or the UI. Keep project instructions short and task focused, and record durable product behavior in `README.md`.
 
@@ -11,12 +11,6 @@ Give every exported function a concise adjacent JSDoc comment explaining its pur
 This update documents the project overview and replaces the README's CLI loop example with sequential commands joined by `&&`.
 
 This update replaces advisory context review with Jev-scored tool-pair compaction. Pre-compaction processing now preserves user and assistant text, classifies paired calls and results as `keep`, `drop_result`, or `drop_call`, stores a redacted private checkpoint, and restores missing critical context through Codex's post-compaction `SessionStart` lifecycle.
-
-This update replaces the demo benchmark's recipe manager scenario with seven sequential English tasks for a frontend-only Three.js, TypeScript, and Tailwind laboratory portfolio.
-
-This update refreshes the README's JEV benchmark summary with the September 27, 2026 laboratory-portfolio run results.
-
-This update adds a global ticket counter to benchmark terminal progress and highlights baseline coding in fuchsia.
 
 This update adds an interactive Codex-style terminal workspace to `jc-pilot`. Users can compose multiple tickets, enter multiline requests, review or edit the pending session list, and run the batch in queue order. The existing headless `run` and `status` commands remain available, and the README documents the new flow.
 
@@ -35,8 +29,6 @@ This update gives the task composer a compact action row and shows the six Kanba
 This update coordinates Codex execution fairly across project queues, letting another project run after each ticket instead of waiting for a whole batch or overlapping Codex processes. The web workspace also resets its ticket selection when switching projects, so Run cannot target a ticket from the previous project.
 
 This update replaces the shared Codex execution slot with truly parallel project runs. Each project now has a private Codex home and SQLite state, while existing authentication and settings are linked and prior project sessions are imported for continuity; thread resume, compaction, and archival use the same private home.
-
-This update replaces the README's model benchmark charts with a DeepSWE-inspired table of reasoning effort scores and estimated task costs for five models.
 
 This update routes complexity levels 1–2 to GPT-6 Luna Medium/High and levels 3–5 to GPT-6.1 Sol Low/Medium/High, aligning configuration, fallback models, failure escalation, and documentation.
 
@@ -75,3 +67,39 @@ This update replaces the ticket summary validation field with cumulative estimat
 This update reserves complexity level 1 for reading or explaining documentation, project information, or code and limited README.md or AGENTS.md edits. Running tests, installation commands, implementation work, and tiny cosmetic-only visual tweaks start at level 2; all UI/UX changes start at level 3.
 
 This update reduces parallel-run web overhead with lightweight ticket summaries, status-only favicon requests, selected-ticket console logs, and sequential polling that skips unchanged responses and slows hidden workspaces while preserving ticket alerts. Live Codex telemetry writes are grouped over 250 ms while ticket transitions remain immediately durable, and controlled API shutdown flushes pending telemetry. Local config/config.toml is ignored by Git and automatically initialized with empty credentials without replacing existing settings.
+
+This update adds an empty panel to the project task workspace, closed by default and opened almost full-screen with a small right-edge arrow. The panel supports arrow, Escape, and backdrop dismissal, and the navigation bar is slimmer on desktop and mobile.
+
+This update moves the empty workspace panel to the left with subtle opening and closing animations and reduced-motion support. Project, IDE & Git, setup, and console pages share a redesigned header that places the back arrow beside the page identity and groups optional status details responsively. The Git tab replaces its duplicate page heading with a status toolbar.
+
+This update fixes the project controls at the ticket composer's initial desktop height so additional drafts and growing descriptions no longer stretch the buttons. Project and IDE & Git pages adopt the console's 1,500-pixel content width, and the navigation bar continues the application background with a separating border.
+
+This update redesigns the web workspace around four columns with ticket creation and image attachments in To do, a left read-only file explorer, and toolbar access to Git, application context, human review, and the Codex console. Escalations retain violet ticket outlines and paused sessions appear in Failed with amber outlines while execution statuses remain unchanged. Git becomes a dedicated page, the empty drawer and browser terminal are removed from the interface, and project, Git, and console pages expand to the available width.
+
+This update organizes draft ticket actions in a dedicated footer with image attachment on the left and horizontal reorder and removal controls on the right. Application context moves directly after Board, Git status and refresh move into the shared page header, and source dialogs render through a document-level portal so ticket controls cannot overlap the viewer.
+
+This update adds an application-wide skill library beside Codex console, portable SKILL.md and folder imports, and up to three independently selected skills per ticket. Frozen instructions and resources survive reloads, retries, thread resumes, and library removal without installing skills into target projects. Six built-in skills cover web, PySide6/QML, and GPUI interface design plus React, Python, and Rust performance and code simplification; import validation and credential-masked previews protect the shared library.
+
+This update displays five skill cards per desktop row and opens instructions in an accessible popup with source and license metadata. It replaces the six JEV-authored built-ins with eleven Internet-sourced design, performance, and architecture skills, bundles retrieved reference resources with attribution and local content hashes, and preserves existing ticket snapshots.
+
+This update displays cached, filename-based project language badges on project cards and workspace headers without reading source contents or running target commands. It adds a user-guided README writing skill and Documentation library filter, with verified assets and commands, a concise English description, and a final Quickstart.
+
+This update adds a low-level Rust performance skill covering measured hotspots, SIMD, architecture intrinsics, and inline assembly with portable fallbacks and safety invariants. An orange usage note appears throughout skill browsing and selection, and frozen ticket copies retain the guidance across reloads without adding an approval step.
+
+This update unifies popup close controls with the AGENTS.md dialog, prevents narrow source-viewer buttons, compacts workspace headers by placing language badges beside the title, and reduces the Git unpushed-commit empty-state text.
+
+This update removes the paired benchmark runner, scenarios, reports, local benchmark archives, and benchmark-only telemetry. The README presents JEV as a complete ticket workflow covering planning, Codex execution, human review, Git delivery, and recovery while preserving operational ticket usage tracking.
+
+This update adds a persisted, disabled-by-default Linter before push project checkbox matching Human in the loop. Only explicit manual Push launches isolated Codex lint corrections and post-edit regression checks for JavaScript/TypeScript, Python, Rust, and Go; successful verified local changes are committed before pushing, failures block the push, and the project execution slot prevents concurrent Git or ticket actions. Automatic ticket commits remain unchanged and JEV never runs target linters or tests itself.
+
+This update strengthens pre-push verification with explicit per-language tool coverage, separate formatter and linter checks for Python, Rust, and Go, and successful Codex command-event evidence for every reported check. Mixed-language omissions, unexecuted commands, and checks preceding recorded file edits cannot approve a push; dedicated tests cover all supported source extensions and language/tool mappings.
+
+This update corrects the README workspace overview to match the four visible board columns and six active ticket states.
+
+This update separates top navigation sections with accessible pipe marks, adds ESLint and React Hooks checks to local scripts and CI, fixes existing lint violations, and lets explicit pre-push verification configure missing project lint tools before running checks.
+
+This update moves default linter setup into visible project preparation tickets at registration, reopening, and explicit execution, preserves existing tools, and initializes newly introduced languages during ticket work. Manual pushes only share existing commits, the pre-push Codex gate and checkbox are removed, and separate Git activity with automatic workspace refresh prevents completed tickets from being mislabeled as active during a push.
+
+This update distinguishes successful branch pushes from branches already up to date using Git porcelain output, so the Git workspace reports when there is nothing to push even with uncommitted local changes.
+
+This update gives already-up-to-date push notices a violet information icon and panel, visually distinguishing them from successful push confirmations.

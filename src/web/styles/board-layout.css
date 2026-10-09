@@ -1,0 +1,50 @@
+/* Full-width workspaces keep the existing application palette. */
+main.workspace-main{width:calc(100% - 32px);max-width:1920px;padding-top:24px}
+.topbar{padding-left:16px;padding-right:16px}
+.project-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 20px;padding:8px;border:1px solid var(--line);border-radius:12px}
+.project-toolbar>a,.project-toolbar>button,.board-tab{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);font-family:inherit;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer}
+.project-toolbar>a:hover,.project-toolbar>button:hover{border-color:#365477;color:#e0efff}
+.project-toolbar .board-tab{background:#162b46;border-color:#365477;color:#e0efff;cursor:default}
+.project-toolbar .human-review-settings{margin-left:auto;background:transparent;border:0;padding:4px 12px}
+.project-toolbar .human-review-settings p{font-size:10px}
+.project-board-layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:20px;align-items:start}
+.project-board-content{min-width:0}
+.workspace-explorer{position:sticky;top:88px;min-width:0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.workspace-explorer .ide-explorer{border:0;background:transparent;max-height:calc(100vh - 115px);min-height:420px}
+.workspace-explorer .ide-file-tree{min-height:180px}
+.source-dialog{width:min(1100px,calc(100vw - 32px));height:min(800px,85vh);border:1px solid #355575;border-radius:14px;overflow:hidden;background:#0b1422;box-shadow:0 25px 80px #0008}
+.source-dialog header>button{border:1px solid #355575;border-radius:6px;background:#12243b;color:#cfe6ff;font-size:20px;cursor:pointer}
+.project-board-content .queue-board{padding:0;margin:0;background:transparent;box-shadow:none;border:0}
+.project-board-content .queue-columns{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:0;align-items:start}
+.project-board-content .queue-column{min-height:380px;padding:12px}
+.project-board-content .queue-column>header{padding:4px 2px 12px}
+.project-board-content .queue-card{padding:16px 34px 16px 14px;gap:10px}
+.project-board-content .queue-card>b{font-size:13px;overflow-wrap:anywhere}
+.project-board-content .queue-card>span{font-size:10px;line-height:1.5}
+.queue-card.ticket-escalated,.queue-card.ticket-escalated:hover,.queue-card.ticket-escalated.active{border:2px solid #b183ff}
+.queue-card.ticket-paused,.queue-card.ticket-paused:hover,.queue-card.ticket-paused.active{border:2px solid #ffc56c}
+.project-board-content .todo-composer{padding:0;margin:16px 0 0;border:0;background:transparent;box-shadow:none}
+.todo-composer .task-list{margin:0;gap:10px}
+.todo-composer .task-row{grid-template-columns:16px minmax(0,1fr);gap:6px;padding:10px}
+.todo-composer .task-number{display:none}
+.todo-composer .task-body{min-width:0}
+.todo-composer .task-row textarea{font-size:12px;min-height:84px;padding:6px;line-height:1.6}
+.todo-composer .draft-task-footer{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid var(--line);margin-top:4px;padding-top:10px}
+.todo-composer .task-controls{display:flex;align-items:center;flex-direction:row;gap:10px}
+.todo-composer .task-move-controls{display:flex;align-items:center;gap:4px}
+.todo-composer .task-controls button{display:grid;place-items:center;width:28px;height:28px;border:1px solid var(--line);border-radius:6px;background:transparent;color:#94a3bb}
+.todo-composer .task-controls button:disabled{opacity:.3;cursor:default}
+.todo-composer .task-controls>button:last-child{border-color:#61303a;color:#ffadba}
+.todo-composer .task-controls button:focus-visible,.todo-composer .draft-attach-image:focus-within{outline:2px solid #92c7ff;outline-offset:2px}
+.todo-composer .draft-task-meta{padding:4px 6px 0}
+.todo-composer .draft-task-meta{flex-wrap:wrap}
+.todo-composer .draft-image{max-width:100%}
+.todo-composer .queue-compose-actions{flex-direction:column;align-items:stretch;gap:8px}
+.todo-composer .queue-compose-actions>button{width:100%;justify-content:center;padding:10px 8px;font-size:11px;white-space:normal}
+.git-workspace-page .git-page{max-width:none;padding:0}
+.ticket-notice-escalating{--notice-color:#b183ff}
+@media(max-width:1250px){.project-board-layout{grid-template-columns:200px minmax(0,1fr);gap:14px}.project-board-content .queue-columns{gap:10px}.project-board-content .queue-column{padding:8px}}
+@media(max-width:1050px){.project-board-content .queue-columns{grid-template-columns:repeat(2,minmax(0,1fr))}.project-toolbar .human-review-settings{margin-left:0}}
+@media(max-width:700px){main.workspace-main{width:calc(100% - 24px)}.project-board-layout{grid-template-columns:1fr}.workspace-explorer{position:static}.workspace-explorer .ide-explorer{min-height:0;max-height:260px}.workspace-explorer .ide-file-tree{min-height:70px}.project-toolbar>a,.project-toolbar>button,.board-tab{padding:10px;font-size:11px}}
+@media(max-width:480px){.project-board-content .queue-columns{grid-template-columns:1fr}.project-board-content .queue-column{min-height:160px}}
+

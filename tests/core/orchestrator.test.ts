@@ -8,6 +8,8 @@ import { isCompactionComplete, Orchestrator } from "../../src/core/orchestrator.
 import { analyze } from "../../src/core/analyzer.js";
 import type { Complexity, JevAnalysis, TaskType } from "../../src/core/types.js";
 
+vi.mock("../../src/core/project-linter.js", async importOriginal => ({ ...await importOriginal<typeof import("../../src/core/project-linter.js")>(), ensureProjectLinterTicket: vi.fn(() => undefined) }));
+
 vi.mock("../../src/core/codex-status.js", () => ({ readCodexStatusSnapshot: async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", unavailableReason: "Unavailable in this test." }) }));
 
 const originalPath = process.env.PATH;
@@ -616,4 +618,26 @@ printf '%s\n' '{"type":"turn.completed"}'
     expect(compactor).toHaveBeenCalledTimes(1);
     expect(archiver).not.toHaveBeenCalled();
   }, 3000);
+});
+
+
+describe("Git action project reservation", () => {
+  it("blocks overlapping work, permits other projects, and releases failures", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-git-action-lock-"));
+    try {
+      const orchestrator = new Orchestrator(new JobQueue(root));
+      let release!: () => void;
+      const action = orchestrator.withProjectGitAction("project", () => new Promise<void>(resolve => { release = resolve; }));
+      expect(orchestrator.isProjectRunning("project")).toBe(true);
+      expect(orchestrator.isProjectGitActionRunning("project")).toBe(true);
+      expect(orchestrator.ownsProjectRun("project")).toBe(false);
+      await expect(orchestrator.withProjectGitAction("project", async () => {})).rejects.toThrow("already running");
+      await expect(orchestrator.withProjectGitAction("other", async () => "done")).resolves.toBe("done");
+      release(); await action;
+      expect(orchestrator.isProjectRunning("project")).toBe(false);
+      expect(orchestrator.isProjectGitActionRunning("project")).toBe(false);
+      await expect(orchestrator.withProjectGitAction("project", async () => { throw new Error("Push failed"); })).rejects.toThrow("Push failed");
+      expect(orchestrator.isProjectRunning("project")).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
 });

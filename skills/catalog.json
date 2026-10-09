@@ -1,0 +1,200 @@
+[
+  {
+    "directory": "frontend-design",
+    "category": "design",
+    "provenance": {
+      "repository": "anthropics/skills",
+      "url": "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
+      "license": "Apache-2.0",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE.txt": "e4a4e5181833a8562fc94b5df9e7faa4e58d7cc4782dea4217edd062c741d87c",
+      "SKILL.md": "9dad2a0a1107a047b3d03fb41794d9676873e7724b25a4f8f764cb300377f5ec"
+    }
+  },
+  {
+    "directory": "qt-qml",
+    "category": "design",
+    "provenance": {
+      "repository": "TheQtCompanyRnD/agent-skills",
+      "url": "https://github.com/TheQtCompanyRnD/agent-skills/blob/main/skills/qt-qml/SKILL.md",
+      "license": "BSD-3-Clause",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE": "d50f9c4b504974212047cc9cb45920f28a79d7bf5591c0ac5f4cc9bab3132425",
+      "SKILL.md": "1654b893d584cc660d14043ed0b2716b2e08a9f10734bc13aa34a1dfbf1f87b2"
+    }
+  },
+  {
+    "directory": "py-side6-gui-design",
+    "category": "design",
+    "provenance": {
+      "repository": "Joey-1123/opencode-v2-skills",
+      "url": "https://github.com/Joey-1123/opencode-v2-skills/blob/main/skills/py-side6-gui-design/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "SKILL.md": "9aebf690fb14ee3d983a8debedd5b90cb128a33cfa507022f7bc7de21eb0a3b0"
+    }
+  },
+  {
+    "directory": "gpui-kit-design-guides",
+    "category": "design",
+    "provenance": {
+      "repository": "longbridge/gpui-kit",
+      "url": "https://github.com/longbridge/gpui-kit/blob/main/skills/gpui-kit-design-guides/SKILL.md",
+      "license": "Apache-2.0",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE-APACHE": "4393547797060d439361135b28bf2d30f304c98304365c4c55526272d942d1e1",
+      "SKILL.md": "4fee86a7ecff0375a1bf331238f6f37f00af231d6c8081cd7cb620b170f0c4cc",
+      "references/coding-guides.md": "a31ff82047a56f99c2dde0d6d7fafc3f447133054cdf897f79ca38459c9187ea",
+      "references/design-guides.md": "f0648824af604c710c6aa6d0db48ede0eb62fbf0b5a38233a02fc2cc74442887"
+    }
+  },
+  {
+    "directory": "vercel-react-best-practices",
+    "category": "performance",
+    "provenance": {
+      "repository": "vercel-labs/agent-skills",
+      "url": "https://github.com/vercel-labs/agent-skills/blob/main/skills/react-best-practices/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "AGENTS.md": "a08cff108b1e525f26e459dd60f6d180de693846e5b3f028c6a5272e52956267",
+      "SKILL.md": "1fb799446d4cc600f2ddbf8dc9054a1eae6a7d3c5c4d4d6628c9b81a65b38af9",
+      "rules/async-parallel.md": "5b8dec0b93eb60b5038559cbe69fa9803e053c8888228c37515e60ae51ec0300",
+      "rules/bundle-barrel-imports.md": "8597179435a4dcecc50b2d304ed211cd34dd894ebfa93c4ce9492efe34c87e2e"
+    }
+  },
+  {
+    "directory": "vercel-composition-patterns",
+    "category": "architecture",
+    "provenance": {
+      "repository": "vercel-labs/agent-skills",
+      "url": "https://github.com/vercel-labs/agent-skills/blob/main/skills/composition-patterns/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "AGENTS.md": "997b7ce5cd1e618f02c79592a59d61b4c5dbdc95c0c107993c2d3a31ea9bf693",
+      "SKILL.md": "3392a387e7ab07aae3abc03d67acc128bd82f0674898e6f8ce315a26350fc478",
+      "rules/architecture-avoid-boolean-props.md": "22fe0ad2db132c88de64fa9a7a24a35e517c908a689936249308931169296649",
+      "rules/architecture-compound-components.md": "b734958ee4ea2536bae31aaa5823da2eec0df7e85a702397150e8fc30b07ff7b",
+      "rules/patterns-children-over-render-props.md": "4588371ca26270798c3ea54786b69e0b9ee792d76f3c0a787ba4027e2a7f2008",
+      "rules/patterns-explicit-variants.md": "71d03a3f04765e7dd96fc68f9567907f0505b037eaed6b5520d57affd1b7eb29",
+      "rules/react19-no-forwardref.md": "593983fbaf845e714d3ac1f4de983b03578c2633829522d35b7bedea03887843",
+      "rules/state-context-interface.md": "58a9a8e81e093f1055ca1c293d44a7b988099d446c4bffea5df7e384c18229ce",
+      "rules/state-decouple-implementation.md": "47929bdfb3f61f1980a43ae5968dd20a517d83816151330d02abb8a752e97671",
+      "rules/state-lift-state.md": "f475eb1e1667f15581ee5c62c3fd7a651d3db061e97867856e0c9979569a1891"
+    }
+  },
+  {
+    "directory": "python-performance-optimization",
+    "category": "performance",
+    "provenance": {
+      "repository": "wshobson/agents",
+      "url": "https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/python-performance-optimization/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE": "822c0850790a9ab30cd325176c286098a6136a380aeb9e213286f187484e8acd",
+      "SKILL.md": "95552342cd2d2e2ca6ef7912776becd1b7eb15425c741199b1b6ddf3ef6b4ba2",
+      "references/advanced-patterns.md": "63562f474e09ed7700d62d81e4a92d41a67e9305e12b7a39cc4572eb497fdd78",
+      "references/details.md": "0a8ad2c5fc64a613d207c1e8750f52538f590a8c0fa20405ffe33208e6b701be"
+    }
+  },
+  {
+    "directory": "python-project-structure",
+    "category": "architecture",
+    "provenance": {
+      "repository": "wshobson/agents",
+      "url": "https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/python-project-structure/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE": "822c0850790a9ab30cd325176c286098a6136a380aeb9e213286f187484e8acd",
+      "SKILL.md": "db19e547d8eb3329ee2a2465350d6876c1e8be8be9e6f1f8881e24aecf804af6"
+    }
+  },
+  {
+    "directory": "python-design-patterns",
+    "category": "architecture",
+    "provenance": {
+      "repository": "wshobson/agents",
+      "url": "https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/python-design-patterns/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE": "822c0850790a9ab30cd325176c286098a6136a380aeb9e213286f187484e8acd",
+      "SKILL.md": "1d606f163661e05ba32ba75db401214f29ff1f1fe67722358912a3c12b0f3f6b",
+      "references/details.md": "82b8fd8e89577ed3cef358d49ec59de9818ff860c2730132b880c7aeed1ddeab"
+    }
+  },
+  {
+    "directory": "rust-engineer",
+    "category": "performance",
+    "provenance": {
+      "repository": "Jeffallan/claude-skills",
+      "url": "https://github.com/Jeffallan/claude-skills/blob/main/skills/rust-engineer/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE": "93cf5db3784b217e63287d2609852cc1c9a17ec7ebd7d1f2367fcdefc4c63ec0",
+      "SKILL.md": "b0dc43f3e69baf2dffabd3e09b78bf7452a5645f3d949bab3ecf34eed5d69cfd",
+      "references/async.md": "e9eb292cbd2280778b07d12ddb968a94bb02eddd340b7fc8327caf568250513a",
+      "references/ownership.md": "319ec77235c9246e9005b122c183d099451214deab8b19467a7bf20510bb7f27"
+    }
+  },
+  {
+    "directory": "rust-skills",
+    "category": "architecture",
+    "provenance": {
+      "repository": "leonardomso/rust-skills",
+      "url": "https://github.com/leonardomso/rust-skills/blob/master/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-09"
+    },
+    "fileHashes": {
+      "LICENSE": "2ea362999eeb2c77bd04596dca64b5dcd690face4823bbf2366e37dbea3894eb",
+      "SKILL.md": "a2b87865a250de7e457adb4eb53c4a22868d57b31b06bb1a0790b5c4670248e3",
+      "rules/err-result-over-panic.md": "99ff60c01aa467a0d79fc0bc4466e758afe29d888f07a2c6a65e6f43ee731411",
+      "rules/err-thiserror-lib.md": "8079cbd9d620205e2a20d7b57828b3c42c1b67f976ebb6a77bb7c7757cdc4c8b",
+      "rules/own-arc-shared.md": "1d91e6dc2d95fdeb78e19e1ca8ff75820a53b47bfcdc5b4101b085b74469bbf4",
+      "rules/own-borrow-over-clone.md": "c087d7eeea2f304ca57c6abda7acfce7fe23d62c379185fe6f36c4f152e5b44a",
+      "rules/own-copy-small.md": "98852e94564d0250dec396d3e7fdbf94f2bf68099917e937a85d57327b5f066f",
+      "rules/own-move-large.md": "e4f1a0abbbc0e3ced86bd76496bbfd5e1a65dc207a4444553d9fb7e19e94982d",
+      "rules/own-rwlock-readers.md": "d6a204b6bc1aa35cb46058330121c2f0121f241cc6dd2554f37d3ab5c90930f9",
+      "rules/own-slice-over-vec.md": "408cd5ece94d6764eb8621dcc702232b5ec554395af64e4798026cecbed88671"
+    }
+  },
+  {
+    "directory": "readme-writing",
+    "category": "documentation",
+    "fileHashes": {
+      "SKILL.md": "43ab1cbc8f990ab8279ee8c551104f19fe59536c8040f2b25bf0241613ac3c2a"
+    }
+  },
+  {
+    "directory": "rust-low-level-performance",
+    "category": "performance",
+    "caution": {
+      "title": "Advanced \u00b7 profile first",
+      "useWhen": "Use for a measured CPU or memory hotspot, or a specific hardware requirement.",
+      "avoidWhen": "Avoid for routine Rust work, I/O waits, or speculative optimization. Unsafe and assembly need proven invariants and target validation."
+    },
+    "fileHashes": {
+      "SKILL.md": "29ee1fed0c7475effcbe708b384349c20b6d0c39aeb9002e022b72d75bc7d7fd",
+      "references/kernel-guide.md": "15dbd2e988cda424809b413758b68505c71d95b8e0d06fb9ae69b8cb3af15b1b"
+    }
+  }
+]

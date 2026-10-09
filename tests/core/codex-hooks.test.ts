@@ -4,8 +4,9 @@ import { judgeDiet, postToolUse, smartTruncate } from "../../src/core/hooks/cont
 import type { JevHookClient } from "../../src/core/hooks/jev-client.js";
 import { offloadDecision } from "../../src/core/hooks/offload.js";
 import { gateShell, preToolUseOutput } from "../../src/core/hooks/shell-gate.js";
+import type { PureAnswer } from "../../src/core/hooks/types.js";
 
-const client = (answers: Record<string, any>): JevHookClient => ({
+const client = (answers: Record<string, PureAnswer>): JevHookClient => ({
   evaluate: vi.fn(async () => answers.answer),
   evaluateBatch: vi.fn(async () => answers)
 });
@@ -43,9 +44,9 @@ describe("native Codex hooks", () => {
     expect(decisions.map(item => item.action)).toEqual(["keep", "drop"]);
     expect(smartTruncate("start\nERROR test failed\n" + "x".repeat(5000) + "\nend")).toContain("ERROR test failed");
     expect(await postToolUse({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: "api_key=private " + "x".repeat(4000) }, client({}))).toEqual({});
-    const compacted = await postToolUse({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: "obsolete progress ".repeat(300) }, client(Object.fromEntries([0, 1, 2].map(index => [`item_${index}`, { kind: "Choice", value: "drop", probabilities: { drop: .99 }, confidence: .99 }]))));
+    const compacted = await postToolUse({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: "obsolete progress ".repeat(300) }, client(Object.fromEntries([0, 1, 2].map(index => [`item_${index}`, { kind: "Choice", value: "drop", probabilities: { drop: .99 }, confidence: .99 }])) as Record<string, PureAnswer>));
     expect(compacted).toMatchObject({ continue: false, hookSpecificOutput: { hookEventName: "PostToolUse" } });
-    const critical = await postToolUse({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: "x".repeat(1_790) + "\nERROR test failed at src/app.ts\n" + "x".repeat(1_790) }, client(Object.fromEntries([0, 1, 2].map(index => [`item_${index}`, { kind: "Choice", value: "drop", probabilities: { drop: .99 }, confidence: .99 }]))));
+    const critical = await postToolUse({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_response: "x".repeat(1_790) + "\nERROR test failed at src/app.ts\n" + "x".repeat(1_790) }, client(Object.fromEntries([0, 1, 2].map(index => [`item_${index}`, { kind: "Choice", value: "drop", probabilities: { drop: .99 }, confidence: .99 }])) as Record<string, PureAnswer>));
     expect(JSON.stringify(critical)).toContain("ERROR test failed at src/app.ts");
   });
 

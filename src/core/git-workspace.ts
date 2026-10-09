@@ -9,7 +9,7 @@ function git(root: string, args: string[]): string {
 }
 
 function branch(root: string): string {
-  let name = "";
+  let name: string;
   try { name = git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]); }
   catch { throw new Error("Select a branch before using Git delivery."); }
   if (!name) throw new Error("Select a branch before using Git delivery.");
@@ -71,13 +71,15 @@ export function deliverGitTicket(root: string, start: GitStart, message: string)
   return { status: "committed", branch: start.branch, commit, message: subject };
 }
 
-/** Pushes the current branch to its configured remote when explicitly requested. */
-export function pushGitBranch(root: string): GitWorkspace {
+/** Pushes the current branch and reports whether the remote was updated. */
+export function pushGitBranch(root: string): GitWorkspace & { pushStatus: "pushed" | "up_to_date" } {
   const state = readGitWorkspace(root);
   if (!state.remote) throw new Error("Configure a Git remote before pushing this branch.");
-  try { git(root, ["push", ...(state.upstream ? [] : ["--set-upstream"]), state.remote, `HEAD:refs/heads/${state.branch}`]); }
+  let output: string;
+  try { output = git(root, ["push", "--porcelain", ...(state.upstream ? [] : ["--set-upstream"]), state.remote, `HEAD:refs/heads/${state.branch}`]); }
   catch { throw new Error(`Push to ${state.remote} failed. Check authentication, connectivity, and remote branch state.`); }
-  return readGitWorkspace(root);
+  const upToDate = output.split("\n").some(line => line.startsWith("=\t"));
+  return { ...readGitWorkspace(root), pushStatus: upToDate ? "up_to_date" : "pushed" };
 }
 
 function conventionalCommitSubject(message: string): string {

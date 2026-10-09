@@ -5,6 +5,22 @@ import { describe, expect, it } from "vitest";
 import { ProjectStore } from "../../src/core/projects.js";
 
 describe("project AGENTS.md setup", () => {
+  it("removes the obsolete push linter preference while preserving human review", () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-project-linter-"));
+    const projectPath = join(root, "project"); mkdirSync(projectPath);
+    writeFileSync(join(projectPath, "AGENTS.md"), "# Instructions\n");
+    const data = join(root, "data"); const store = new ProjectStore(data);
+    const project = store.create(projectPath);
+    store.setHumanInTheLoop(project.id, true);
+    const file = join(data, "projects.json");
+    const legacy = JSON.parse(readFileSync(file, "utf8"));
+    legacy[0].linterEnabled = true;
+    writeFileSync(file, JSON.stringify(legacy));
+    const restored = new ProjectStore(data);
+    expect(restored.get(project.id)?.humanInTheLoop).toBe(true);
+    expect(restored.get(project.id)).not.toHaveProperty("linterEnabled");
+    expect(readFileSync(join(projectPath, "AGENTS.md"), "utf8")).toBe("# Instructions\n");
+  });
   it("persists the per-project Git delivery choice", () => {
     const root = mkdtempSync(join(tmpdir(), "jev-project-git-"));
     const projectPath = join(root, "project");
