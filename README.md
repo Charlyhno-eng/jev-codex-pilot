@@ -30,7 +30,7 @@ You can launch ticket sequences in several projects at the same time. Each proje
 
 ## See JEV Codex Pilot in action
 
-![JEV Codex Pilot page1](assets/jcp-demo.gif)
+![JEV Codex Pilot page1](assets/jcp-demo2.gif)
 
 ---
 
