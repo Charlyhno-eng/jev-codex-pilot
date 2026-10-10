@@ -14,7 +14,7 @@ vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class {}, maske
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class {} }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} isProjectRunning() { return state.ticketBusy || state.gitBusy; } isProjectGitActionRunning() { return state.gitBusy; } async withProjectGitAction(_id: string, run: () => Promise<unknown>) { return run(); } } }));
 
-vi.mock("../../src/core/project-linter.js", () => ({ ensureProjectLinterTicket: (...args: unknown[]) => state.setup(...args) }));
+vi.mock("../../src/core/project-linter.js", async importOriginal => ({ ...await importOriginal<typeof import("../../src/core/project-linter.js")>(), ensureProjectLinterTicket: (...args: unknown[]) => state.setup(...args) }));
 vi.mock("../../src/core/git-workspace.js", () => ({ readGitWorkspace: () => ({ branch: "main" }), selectGitBranch: vi.fn(), pushGitBranch: () => { state.pushes++; return { branch: "main", remote: "origin" }; } }));
 
 async function request(method: string, path: string, headers: Record<string, string> = { host: "localhost:3000", origin: "http://localhost:5173" }, body?: unknown) {

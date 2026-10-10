@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ensureProjectLinterTicket, missingProjectLinters } from "../../src/core/project-linter.js";
+import { ensureProjectLinterTicket, missingProjectLinters, ProjectLinterStatus } from "../../src/core/project-linter.js";
 import { JobQueue } from "../../src/core/queue.js";
 import { Orchestrator } from "../../src/core/orchestrator.js";
 import type { Job } from "../../src/core/types.js";
@@ -16,6 +16,33 @@ function setup() {
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("default project lint setup", () => {
+  it("shows configured coverage only for supported projects with complete setup", () => {
+    const { project } = setup();
+    const status = new ProjectLinterStatus();
+    expect(status.get(project)).toBe(false);
+    writeFileSync(join(project, "app.ts"), "");
+    writeFileSync(join(project, "package.json"), JSON.stringify({ devDependencies: { eslint: "*" } }));
+    expect(status.get(project, [], "unconfigured")).toBe(false);
+    writeFileSync(join(project, "eslint.config.mjs"), "export default [];\n");
+    expect(status.get(project, [], "configured")).toBe(true);
+    writeFileSync(join(project, "app.py"), "");
+    expect(status.get(project, [], "mixed")).toBe(false);
+    writeFileSync(join(project, "pyproject.toml"), '[dependency-groups]\ndev = ["ruff"]\n');
+    expect(status.get(project, [], "python-configured")).toBe(true);
+    rmSync(join(project, "eslint.config.mjs"));
+    expect(status.get(project, [], "python-configured")).toBe(true);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    expect(status.get(project, [], "python-configured")).toBe(false);
+  });
+  it("requires recorded toolchain setup for Rust and Go lint badges", () => {
+    const { project } = setup();
+    writeFileSync(join(project, "Cargo.toml"), "");
+    writeFileSync(join(project, "go.mod"), "");
+    const status = new ProjectLinterStatus();
+    expect(status.get(project)).toBe(false);
+    expect(status.get(project, ["Rust"])).toBe(false);
+    expect(status.get(project, ["Rust", "Go"])).toBe(true);
+  });
   it("creates a durable setup ticket before existing work without changing project files", () => {
     const { root, project, queue } = setup();
     writeFileSync(join(project, "app.ts"), "export const answer = 42;\n");

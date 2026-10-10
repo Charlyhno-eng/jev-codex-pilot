@@ -57,9 +57,16 @@ describe("skills API and ticket attachment lifecycle", () => {
     const result = await request("GET", "/api/projects/first");
     expect(result.status).toBe(200);
     expect(result.body.languages).toEqual(["Python", "TypeScript"]);
+    expect(result.body.linterConfigured).toBe(false);
     const queued = (await request("GET", "/api/jobs?projectId=first")).body as Job[];
     expect(queued.find(job => job.kind === "linter_setup")).toMatchObject({ status: "PENDING" });
     expect((await request("GET", "/api/projects/missing")).status).toBe(404);
+    writeFileSync(join(path, "package.json"), JSON.stringify({ devDependencies: { eslint: "*" } }));
+    writeFileSync(join(path, "eslint.config.mjs"), "export default [];\n");
+    writeFileSync(join(path, "pyproject.toml"), '[dependency-groups]\ndev = ["ruff"]\n');
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    try { expect((await request("GET", "/api/projects/first")).body.linterConfigured).toBe(true); }
+    finally { clock.mockRestore(); }
     expect(state.runs).toBe(0);
   });
   it("shares imports across projects and preserves frozen copies when editing after library removal", async () => {

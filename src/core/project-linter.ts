@@ -12,6 +12,11 @@ export const PROJECT_LINTER_INSTRUCTIONS = "At the beginning of project work, in
 
 /** Detects missing lint setup without running commands or changing target project files. */
 export function missingProjectLinters(projectPath: string, initialized: string[] = []): string[] {
+  return inspectProjectLinters(projectPath, initialized).missing;
+}
+
+/** Reads lint coverage using the same rules as project preparation. */
+function inspectProjectLinters(projectPath: string, initialized: string[]) {
   const root = resolve(projectPath);
   const files = new Set<string>();
   const eslintDirectories = new Set<string>();
@@ -69,7 +74,24 @@ export function missingProjectLinters(projectPath: string, initialized: string[]
       if (!configured) missing.add(`${language} (${relative(root, directory) || "."})`);
     }
   }
-  return [...missing].sort();
+  return { missing: [...missing].sort(), configured: sources.size > 0 && missing.size === 0 };
+}
+
+/** Caches configured lint coverage without executing target project commands. */
+export class ProjectLinterStatus {
+  private readonly cache = new Map<string, { expires: number; revision: string; configured: boolean }>();
+
+  /** Returns whether all detected supported languages have lint setup. */
+  get(projectPath: string, initialized: string[] = [], revision = ""): boolean {
+    const key = resolve(projectPath);
+    const signature = JSON.stringify([initialized, revision]);
+    const cached = this.cache.get(key);
+    if (cached && cached.expires > Date.now() && cached.revision === signature) return cached.configured;
+    const { configured } = inspectProjectLinters(key, initialized);
+    if (this.cache.size >= 128) this.cache.delete(this.cache.keys().next().value!);
+    this.cache.set(key, { expires: Date.now() + 30_000, revision: signature, configured });
+    return configured;
+  }
 }
 
 /** Adds one visible setup ticket before pending work, leaving execution to an explicit Run. */

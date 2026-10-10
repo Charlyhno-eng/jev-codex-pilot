@@ -103,3 +103,5 @@ This update moves default linter setup into visible project preparation tickets 
 This update distinguishes successful branch pushes from branches already up to date using Git porcelain output, so the Git workspace reports when there is nothing to push even with uncommitted local changes.
 
 This update gives already-up-to-date push notices a violet information icon and panel, visually distinguishing them from successful push confirmations.
+
+This update adds a green Linter badge beside project language badges when all detected supported languages have lint setup, using cached read-only preparation checks and successful Rust/Go setup records. Project cards and workspace headers share the badge, and successful tickets refresh workspace metadata without running target commands.

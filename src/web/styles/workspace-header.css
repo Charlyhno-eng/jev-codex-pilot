@@ -21,6 +21,7 @@
 
 .project-languages{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0;color:#b8d8fa;font-size:10px;line-height:1.5}
 .project-languages>span{padding:2px 7px;border:1px solid #304967;border-radius:6px;background:#14243a}
+.project-languages .project-linter-badge{border-color:#32664f;background:#14382a;color:#9ce6ba}
 .project-languages .project-languages-empty{border-color:transparent;background:transparent;padding-left:0;color:#94a3bb}
 
 .workspace-header-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px 14px;min-width:0}
