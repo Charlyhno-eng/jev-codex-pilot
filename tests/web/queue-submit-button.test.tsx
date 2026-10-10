@@ -23,13 +23,14 @@ describe("To do submission control", () => {
   it("disables submission only when both the composer and queue are empty", () => {
     expect(button({ pendingCount: 0 })).toContain("disabled");
     const markup = button({ pendingCount: 0, hasDrafts: true });
-    expect(markup).toContain("Add &amp; run");
+    expect(markup).toContain("Add &amp; evaluate");
     expect(markup).not.toContain("disabled");
   });
 
-  it("allows arrivals during execution while preventing an overlapping launch", () => {
+  it("blocks review submissions during execution while allowing them during a review pause", () => {
     expect(button({ executionBlocked: true })).toContain("disabled");
-    expect(button({ executionBlocked: true, hasDrafts: true })).not.toContain("disabled");
+    expect(button({ executionBlocked: true, creationBlocked: true, hasDrafts: true })).toContain("disabled");
+    expect(button({ executionBlocked: true, creationBlocked: false, hasDrafts: true })).not.toContain("disabled");
   });
 
   it.each([{ submitting: true }, { launching: true }])("prevents duplicate submission during a request: %j", state => {

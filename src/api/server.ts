@@ -353,7 +353,7 @@ createServer(async (request, response) => {
       return json(response, 200, { path: absolute, files, count: files.length, truncated: files.length >= 5000, hasAgents: existsSync(resolve(absolute, "AGENTS.md")), isGitRepository: hasGit, isGithubLinked: hasGit && hasGithubRemote(absolute) });
     }
     if (request.method === "POST" && url.pathname === "/api/jobs") {
-      const input = await body(request) as { projectId?: string; run?: boolean; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[]; skillIds?: unknown }> };
+      const input = await body(request) as { projectId?: string; run?: boolean; evaluate?: boolean; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[]; skillIds?: unknown }> };
       if (!input || typeof input !== "object" || !Array.isArray(input.tasks) || input.tasks.some(task => !task || typeof task.description !== "string")) return json(response, 400, { error: "Provide a list of task descriptions." });
       const taskInputs = input.tasks.filter(task => task.description.trim());
       for (const task of taskInputs) attachments.validate(task.attachments);
@@ -362,12 +362,18 @@ createServer(async (request, response) => {
       const project = input.projectId ? projects.get(input.projectId) : undefined;
       if (!project || !tasks.length) return json(response, 400, { error: "A saved project and at least one task are required" });
       if (!projects.hasAgents(project.id)) return json(response, 400, { error: "Describe the application and create AGENTS.md before analyzing tasks." });
+      if (input.evaluate === true && input.run === true) return json(response, 400, { error: "Evaluate tickets before requesting execution separately." });
+      if (input.evaluate === true && orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the current sequence to finish before adding tickets for review." });
       projects.touch(project.id);
       const created = queue.createBatch(project.id, project.path, tasks);
       const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments), skills: skills.freeze(job.id, selections[index]) })!);
       // Creation with run=true explicitly requests execution, including an idle queue.
       if (input.run === true) { requestedProjectQueues.add(project.id); startRequestedQueue(project.id); }
-      return json(response, 201, withAttachments);
+      if (input.evaluate === true) {
+        await Promise.allSettled(withAttachments.map(job => orchestrator.prepare(job)));
+        for (const job of withAttachments) sessionJevJobIds.add(job.id);
+      }
+      return json(response, 201, withAttachments.map(job => queue.get(job.id)!));
     }
     const agentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/agents$/);
     if (request.method === "GET" && agentsMatch) return json(response, 200, { content: projects.readAgents(agentsMatch[1]) });

@@ -12,7 +12,7 @@ vi.mock("../../src/core/queue.js", () => ({ JobQueue: class { flush() {} get(id:
 vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class { touch() {} hasAgents() { return true; } get(id: string) { return id === "project" ? { id, path: state.root, linterEnabled: true, humanInTheLoop: state.humanInTheLoop } : undefined; } setHumanInTheLoop(id: string, humanInTheLoop: boolean) { state.humanInTheLoop = humanInTheLoop; return { ...this.get(id), humanInTheLoop }; } } }));
 vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class {}, maskedApiKey: vi.fn() }));
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class { validate() {} saveForJob() { return []; } } }));
-vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} ownsTicketRun() { return state.ticketReserved; } approveHumanReview() { if (state.ticketBusy) throw new Error("Wait for the active ticket"); state.approval(); } prepare(job: Job) { state.prepare(job); return Promise.resolve(job); } needsHumanReview() { return state.review; } async runBatch(id: string) { state.runs(id); } async run(id: string) { await state.singleRun(id); } isProjectRunning() { return state.ticketBusy || state.gitBusy; } isProjectGitActionRunning() { return state.gitBusy; } async withProjectGitAction(_id: string, run: () => Promise<unknown>) { return run(); } } }));
+vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} ownsTicketRun() { return state.ticketReserved; } approveHumanReview() { if (state.ticketBusy) throw new Error("Wait for the active ticket"); state.approval(); } async prepare(job: Job) { await state.prepare(job); return job; } needsHumanReview() { return state.review; } async runBatch(id: string) { state.runs(id); } async run(id: string) { await state.singleRun(id); } isProjectRunning() { return state.ticketBusy || state.gitBusy; } isProjectGitActionRunning() { return state.gitBusy; } async withProjectGitAction(_id: string, run: () => Promise<unknown>) { return run(); } } }));
 
 vi.mock("../../src/core/project-linter.js", async importOriginal => ({ ...await importOriginal<typeof import("../../src/core/project-linter.js")>(), ensureProjectLinterTicket: (...args: unknown[]) => state.setup(...args) }));
 vi.mock("../../src/core/git-workspace.js", () => ({ readGitWorkspace: () => ({ branch: "main" }), selectGitBranch: vi.fn(), pushGitBranch: () => { state.pushes++; return { branch: "main", remote: "origin" }; } }));
@@ -33,6 +33,30 @@ beforeAll(async () => {
 afterAll(() => rmSync(state.root, { recursive: true, force: true }));
 
 describe("workspace API", () => {
+  it("evaluates saved tickets without starting Codex, preserving analysis failures for review", async () => {
+    state.jobs = []; state.runs.mockClear(); state.singleRun.mockClear(); state.prepare.mockClear();
+    state.prepare.mockImplementationOnce((job: Job) => {
+      job.error = "Evaluation unavailable"; job.errorCategory = "jev";
+      throw new Error(job.error);
+    });
+    const result = await request("POST", "/api/jobs", undefined, { projectId: "project", evaluate: true, tasks: [{ description: "First" }, { description: "Second" }] });
+    expect(result.status).toBe(201);
+    expect(state.prepare).toHaveBeenCalledTimes(2);
+    expect(result.body.map((job: Job) => job.status)).toEqual(["PENDING", "PENDING"]);
+    expect(result.body[0].error).toBe("Evaluation unavailable");
+    expect(state.runs).not.toHaveBeenCalled();
+    expect(state.singleRun).not.toHaveBeenCalled();
+  });
+  it("rejects evaluation arrivals while running and contradictory execution requests before saving", async () => {
+    state.jobs = []; state.prepare.mockClear(); state.ticketBusy = true;
+    try {
+      expect((await request("POST", "/api/jobs", undefined, { projectId: "project", evaluate: true, tasks: [{ description: "Review first" }] })).status).toBe(409);
+      state.ticketBusy = false;
+      expect((await request("POST", "/api/jobs", undefined, { projectId: "project", evaluate: true, run: true, tasks: [{ description: "Review first" }] })).status).toBe(400);
+      expect(state.jobs).toEqual([]);
+      expect(state.prepare).not.toHaveBeenCalled();
+    } finally { state.ticketBusy = false; }
+  });
   it("allows disabling human review during execution without approving an active ticket", async () => {
     state.ticketBusy = true;
     state.approval.mockClear();
