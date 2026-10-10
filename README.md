@@ -22,7 +22,9 @@ When another ticket is queued, JEV reviews whether it relates to the completed w
 
 Before native Codex compaction, JEV replays the active transcript and pairs completed tool calls with their results. It independently decides whether to keep each pair verbatim, keep the call with a bounded result (`drop_result`), or remove the pair (`drop_call`). User and assistant text remains verbatim, the newest transcript items are pinned, and malformed or unavailable JEV decisions fall back to native compaction. The retained context is written to a private temporary checkpoint with secrets redacted. After Codex compacts the thread, a `SessionStart` hook compares the compacted history with that checkpoint and immediately restores missing high-priority content within a fixed context budget; overflow remains available in the private checkpoint.
 
-Tickets submitted together are analyzed and executed separately in queue order. Launching a sequence drains every pending ticket for that project, including tickets added while it runs. JEV applies the selected model and reasoning level independently to each ticket.
+In the web board, **Add & run** saves tickets immediately and explicitly requests execution. With an empty composer and existing pending tickets, the same button becomes **Run N tasks** and launches the saved queue, including linter setup tickets, without requiring another description or a particular selected card. It starts an idle project queue or appends work to its active sequence; existing human-review and session-limit pauses still require their normal continuation. API clients can request the same behavior with `POST /api/jobs` and `run: true`; omitting it only creates tickets. Tickets submitted together are analyzed and executed separately in queue order. Launching a sequence drains every pending ticket for that project, including tickets added while it runs. JEV applies the selected model and reasoning level independently to each ticket. Concurrent preparation requests share one evaluation per ticket and description. JEV decisions time out after 60 seconds so unavailable analysis or continuity services cannot hold the queue indefinitely; successful re-evaluation clears its earlier JEV error. The board uses actual server activity to release execution controls when a sequence ends.
+
+**Re-evaluate ticket** requests a fresh analysis for an idle pending ticket. Manual model and reasoning adjustments survive reloads and manual retries. The selected ticket cannot be edited, removed, skipped, or adjusted while it is preparing or executing; other pending tickets remain editable. Editing a previously reviewed next ticket also refreshes the continuity decision before its execution. Compaction and thread archival require an explicit Codex confirmation, and finalization failures release the project execution slot with a recorded ticket error.
 
 You can launch ticket sequences in several projects at the same time. Each project runs Codex concurrently in its own `CODEX_HOME`, with separate sessions and SQLite state. JEV links the user's existing Codex authentication and settings into each private home and imports that project's earlier sessions when it first creates the home. Codex account limits remain shared across projects.
 
@@ -62,17 +64,21 @@ GitHub Actions runs `.github/workflows/ci.yml` on pushes and pull requests. It i
 
 ## Browser project workspace
 
-The task workspace uses the full available width, up to 1,920 pixels, with a searchable read-only file tree on the left and four columns side by side on desktop: **To do**, **Running**, **Done**, and **Failed**. Smaller screens wrap the columns. Create tickets directly in **To do**, including optional image attachments, ticket-specific skills, and multiple drafts. Pending ticket reordering, editing, model adjustments, and explicit execution actions remain available.
+The task workspace uses the full available width, up to 1,920 pixels, with a searchable read-only file tree on the left and four columns side by side on desktop: **To do**, **Running**, **Done**, and **Failed**. Smaller screens wrap the columns. Create tickets directly in **To do**, including optional image attachments, ticket-specific skills, and multiple drafts. Pending ticket reordering, editing, model adjustments, and explicit execution actions remain available. Draft typing updates only the composer instead of re-rendering the board and file explorer; textarea height measurements are grouped per animation frame, and file-tree filtering and construction are cached until the files or search change.
 
 Escalating tickets stay in **Running** and receive a violet outline, retained after escalation. **Session paused** tickets appear in **Failed** with an amber outline and keep their session-resume behavior. Paused tickets are labeled separately and cannot be manually validated as failed tickets. Internal ticket statuses and execution rules are unchanged.
 
 Draft cards place image and skill attachment on the left of a dedicated footer, with horizontal reorder arrows and removal on the right. Source dialogs open above the entire workspace.
+
+Saving tickets preserves unsent drafts and changes typed during the request. Submission waits for selected images to finish loading, and edits enforce the same four-image limit including existing references. A failed board refresh after successful creation does not turn saved tickets into a failed submission.
 
 The toolbar places **Application context** (the complete AGENTS.md) immediately after **Board**, followed by **Git**, **Codex console**, **Skills**, and **Human in the loop**. Human review can be changed during execution and pauses after each ticket when enabled. The former empty sliding panel and browser terminal are no longer shown.
 
 Select a file in the left explorer to open a read-only source viewer with syntax colors and line numbers. Folders start collapsed; **Refresh** reloads the index. Generated folders and common credential files are hidden, credential assignments are masked, and the viewer rejects external paths and text files larger than 1 MB. Browsing files does not launch Codex or project commands.
 
 The dedicated **Git** page retains branch selection, automatic local commits, manual push, and unpushed-commit review. Git shows the current branch, changed-file count, and Refresh action on the right of its page header. Git and Codex console pages share the wider workspace layout.
+
+Git previews hide private paths and mask common credential assignments in working-tree and commit diffs. Untracked previews refuse private or external link targets, and initial staged files, nested untracked files, and both paths of a rename remain reviewable. The local API rejects browser requests from external origins and untrusted hosts without wildcard CORS access; revealing saved credentials requires a local browser origin. Local CLI requests remain supported.
 
 Project cards and the project workspace header show detected source languages, ordered by source-file count. Detection uses filename extensions without reading file contents or running project commands; dependencies, generated directories, private paths, symbolic links, minified assets, and TypeScript declarations are excluded. Scans are bounded and cached for 30 seconds; reopen or refresh the page after that interval to see source changes. Projects without recognized source files show **No languages detected**. These labels describe source files, not dependencies or a percentage of code. A green **Linter** badge appears alongside them when every detected supported language has lint setup according to JEV’s preparation checks. Empty projects and projects with missing setup do not show this badge. Configuration scans are cached for 30 seconds and refreshed after successful tickets; Rust and Go toolchain setup uses successful preparation records. The badge indicates configuration, not a passing lint result.
 
@@ -117,6 +123,8 @@ Open a new terminal, go to the project you want to work on, and launch the inter
 cd /path/to/your/project
 jc-pilot
 ```
+
+The CLI respects the project's Human in the loop setting. When review pauses an API-backed sequence, it reports the pause and returns; approve the ticket in the web workspace before continuing. The setting can also be disabled while a ticket is running and takes effect when that ticket finishes.
 
 ---
 

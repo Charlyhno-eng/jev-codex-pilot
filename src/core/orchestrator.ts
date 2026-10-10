@@ -8,6 +8,7 @@ import { CodexLoopDetector } from "./codex-loop-detector.js";
 import { codexExecPrefix, implementationBlocked } from "./codex-execution.js";
 import { existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
+import { withJevTimeout } from "./jev-timeout.js";
 import { analyze, assessTaskContinuity } from "./analyzer.js";
 import { logJev, logJevApplied, logJevError, logSession } from "./jev-logger.js";
 import { buildCodexCommand, buildCodexPrompt } from "./prompt.js";
@@ -129,7 +130,8 @@ function compactThread(threadId: string, home: string): Promise<void> {
       if (isCompactionFailure(message)) finish(new Error("Codex compaction failed"));
     });
     child.on("error", finish);
-    child.on("close", code => { if (!settled) finish(code === 0 ? undefined : new Error(`Codex app server exited with code ${code}`)); });
+    child.stdin.on("error", error => finish(error));
+    child.on("close", code => { if (!settled) finish(new Error(`Codex app server exited with code ${code} before confirming compaction`)); });
     send({ method: "initialize", id: 0, params: { clientInfo: { name: "jev_codex_pilot", title: "JEV Codex Pilot", version: "0.2.0" } } });
   });
 }
@@ -151,7 +153,8 @@ function archiveThread(threadId: string, home: string): Promise<void> {
       if (message.id === 1 && message.result) finish();
     });
     child.on("error", finish);
-    child.on("close", code => { if (!settled) finish(code === 0 ? undefined : new Error(`Codex app server exited with code ${code}`)); });
+    child.stdin.on("error", error => finish(error));
+    child.on("close", code => { if (!settled) finish(new Error(`Codex app server exited with code ${code} before confirming thread archival`)); });
     send({ method: "initialize", id: 0, params: { clientInfo: { name: "jev_codex_pilot", title: "JEV Codex Pilot", version: "0.2.0" } } });
   });
 }
@@ -207,6 +210,7 @@ function readCodexAccountUsage(): Promise<CodexAccountUsage> {
       }
     });
     child.on("error", error => finish({ capturedAt, unavailableReason: messageOf(error) }));
+    child.stdin.on("error", error => finish({ capturedAt, unavailableReason: messageOf(error) }));
     child.on("close", code => { if (!settled) finish({ capturedAt, unavailableReason: code === 0 ? "Codex account usage is not available for this authentication mode." : `Codex app-server exited with code ${code}.` }); });
     send({ method: "initialize", id: 0, params: { clientInfo: { name: "jev_codex_pilot", title: "JEV Codex Pilot", version: "0.2.0" } } });
   });
@@ -220,7 +224,11 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
     const finish = (value: CodexRateLimit) => { if (settled) return; settled = true; clearTimeout(timer); lines.close(); child.kill(); resolve(value); };
     const timer = setTimeout(() => finish({ available: false, reached: false, unavailableReason: "Codex rate-limit check timed out." }), 2_000);
     const send = (message: unknown) => child.stdin.write(`${JSON.stringify(message)}\n`);
-    const asDate = (value: unknown) => typeof value === "number" ? new Date(value * 1_000).toISOString() : undefined;
+    const asDate = (value: unknown) => {
+      if (typeof value !== "number") return undefined;
+      const date = new Date(value * 1_000);
+      return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+    };
     lines.on("line", line => {
       const message = parseObject(line);
       if (!message) return;
@@ -243,6 +251,7 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
       }
     });
     child.on("error", error => finish({ available: false, reached: false, unavailableReason: messageOf(error) }));
+    child.stdin.on("error", error => finish({ available: false, reached: false, unavailableReason: messageOf(error) }));
     child.on("close", code => { if (!settled) finish({ available: false, reached: false, unavailableReason: code === 0 ? "Codex rate limits are unavailable for this authentication mode." : `Codex app-server exited with code ${code}.` }); });
     send({ method: "initialize", id: 0, params: { clientInfo: { name: "jev_codex_pilot", title: "JEV Codex Pilot", version: "0.2.0" } } });
   });
@@ -250,7 +259,9 @@ function readCodexRateLimit(): Promise<CodexRateLimit> {
 
 /** Prepares queued tickets and runs each task through Codex. */
 export class Orchestrator {
+  private preparations = new Map<string, Promise<Job | undefined>>();
   private runningProjects = new Set<string>();
+  private runningTickets = new Set<string>();
   private gitActions = new Set<string>();
   private continuityDecisions = new Map<string, "related" | "unrelated" | "uncertain">();
   private humanReviewEnabled: (projectId: string) => boolean = () => false;
@@ -300,21 +311,36 @@ export class Orchestrator {
   }
 
   /** Evaluates a pending ticket and persists its JEV consumption. */
-  async prepare(job: Job) {
-    await this.trackJevUsage(job, () => this.prepareTicket(job));
-    return this.queue.get(job.id);
+  async prepare(job: Job): Promise<Job | undefined> {
+    const current = this.queue.get(job.id);
+    if (!current) throw new Error("Job not found");
+    if (current.analysis) return current;
+    const key = JSON.stringify([current.id, current.tasks]);
+    const existing = this.preparations.get(key);
+    if (existing) return existing;
+    const preparation = this.trackJevUsage(current, () => this.prepareTicket(current))
+      .finally(() => this.preparations.delete(key));
+    this.preparations.set(key, preparation);
+    return preparation;
   }
 
-  private async prepareTicket(job: Job) {
+  private async prepareTicket(job: Job): Promise<Job | undefined> {
     if (!existsSync(job.projectPath)) throw new Error(`Project not found: ${job.projectPath}`);
     if (job.analysis) return job;
     try {
-      const analysis = await this.analyzer(job.projectPath, job.tasks);
+      const analysis = await withJevTimeout(() => this.analyzer(job.projectPath, job.tasks));
+      const latest = this.queue.get(job.id);
+      if (!latest) throw new Error("Job not found");
+      if (JSON.stringify(latest.tasks) !== JSON.stringify(job.tasks)) return this.prepare(latest);
+      if (latest.analysis) return latest;
       logJev(`JEV recommends ${codexModelId(analysis.model)} with ${analysis.reasoning} reasoning for task ${job.id.slice(0, 8)} · expected outcome clarity ${analysis.outcome_clarity_score ?? "unavailable"}% · complexity ${analysis.complexity}/5`);
-      return this.queue.update(job.id, { analysis });
+      return this.queue.update(job.id, { analysis, error: undefined, errorCategory: undefined });
     } catch (error) {
       logJevError(`Recommendation unavailable for task ${job.id.slice(0, 8)} · ${messageOf(error)}`);
-      this.queue.update(job.id, { error: messageOf(error), errorCategory: "jev" });
+      const latest = this.queue.get(job.id);
+      if (latest?.analysis) return latest;
+      if (latest && JSON.stringify(latest.tasks) !== JSON.stringify(job.tasks)) return this.prepare(latest);
+      if (latest) this.queue.update(job.id, { error: messageOf(error), errorCategory: "jev" });
       throw error;
     }
   }
@@ -323,12 +349,14 @@ export class Orchestrator {
   /** Reports an active manual Git operation separately from ticket execution. */
   isProjectGitActionRunning(projectId: string) { return this.gitActions.has(projectId); }
   ownsProjectRun(projectId: string) { return this.runningProjects.has(projectId); }
+  /** Protects the selected ticket from changes while it is preparing or executing. */
+  ownsTicketRun(id: string) { return this.runningTickets.has(id); }
 
   private async taskContinuity(completed: Job[], next: Job) {
     const key = JSON.stringify({ completed: completed.map(job => [job.id, job.tasks]), next: [next.id, next.tasks] });
     const cached = this.continuityDecisions.get(key);
     if (cached) return cached;
-    const decision = await this.continuityReviewer(completed, next);
+    const decision = await withJevTimeout(() => this.continuityReviewer(completed, next));
     this.continuityDecisions.set(key, decision);
     if (this.continuityDecisions.size > 100) this.continuityDecisions.delete(this.continuityDecisions.keys().next().value!);
     return decision;
@@ -390,7 +418,7 @@ export class Orchestrator {
           }
         } catch (error) {
           const latest = this.queue.get(current.id);
-          if (latest && latest.status !== "SUCCESS" && latest.status !== "SESSION_PAUSED") this.queue.transition(current.id, "FAILED", { error: messageOf(error), errorCategory: "codex" });
+          if (latest && latest.status !== "SUCCESS" && latest.status !== "SESSION_PAUSED") this.queue.transition(current.id, "FAILED", { error: messageOf(error), errorCategory: latest.errorCategory ?? "codex" });
           if (this.humanReviewEnabled(first.projectId)) {
             this.queue.update(current.id, { awaitingHumanReview: true });
             break;
@@ -434,8 +462,11 @@ export class Orchestrator {
   }
 
   private async runWithEscalation(input: Job): Promise<Job> {
-    await this.trackJevUsage(input, () => this.runTrackedWithEscalation(input));
-    return this.queue.get(input.id)!;
+    this.runningTickets.add(input.id);
+    try {
+      await this.trackJevUsage(input, () => this.runTrackedWithEscalation(input));
+      return this.queue.get(input.id)!;
+    } finally { this.runningTickets.delete(input.id); }
   }
 
   private async runTrackedWithEscalation(input: Job): Promise<Job> {
@@ -532,7 +563,7 @@ export class Orchestrator {
     const previous = history.filter(job => !excluded.has(job.id) && job.status === "SUCCESS" && job.execution?.threadId && !job.execution.threadArchivedAt && !job.execution.threadResumeDisabledAt && !blockedThreads.has(job.execution.threadId)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
     let resumeThread = pausedThread && !blockedThreads.has(pausedThread) ? pausedThread : escalationThread ?? previous?.execution?.threadId;
     if (!pausedThread && !escalationThread && previous && resumeThread) {
-      let continuity = previous.execution?.reviewedNextTaskId === first.id ? previous.execution.reviewedNextContinuity ?? "uncertain" : undefined;
+      let continuity = previous.execution?.reviewedNextTaskId === first.id && previous.execution.reviewedNextTasks === JSON.stringify(first.tasks) ? previous.execution.reviewedNextContinuity ?? "uncertain" : undefined;
       if (!continuity) {
         try { continuity = await this.taskContinuity([previous], first); }
         catch (error) { continuity = "uncertain"; logJevError(`[codex:${first.id.slice(0, 8)}] Thread continuity review unavailable: ${messageOf(error)}. Keeping the current thread.`); }
@@ -693,6 +724,7 @@ export class Orchestrator {
       });
       child.on("close", async code => {
         if (settled) return; settled = true;
+        try {
         if (stdoutBuffer) record(stdoutBuffer);
         let success = code === 0 && !reportedFailure && !stageTurnFailed;
         let failureMessage = stalled ? "Codex produced no activity for 30 minutes; the stalled process was stopped." : reportedFailure ? "Codex reported that it could not implement the task" : `Codex exited with code ${code}`;
@@ -768,6 +800,7 @@ export class Orchestrator {
         const representative = this.queue.get(first.id)!; let compactedAfterTask = false; let compactionError: string | undefined; let clearError: string | undefined;
         let codexStatus = await this.statusReader(representative.execution?.threadId, home).catch(error => ({ capturedAt: new Date().toISOString(), unavailableReason: messageOf(error) })) as CodexStatusSnapshot;
         let reviewedNextTaskId: string | undefined;
+        let reviewedNextTasks: string | undefined;
         let reviewedNextContinuity: "related" | "unrelated" | "uncertain" | undefined;
         if (representative.execution?.threadId) {
           const ordered = this.queue.listProjectExecutionOrder(first.projectId);
@@ -778,6 +811,7 @@ export class Orchestrator {
             try { continuity = await this.taskContinuity([first], next); }
             catch (error) { logJevError(`[codex:${tag}] Thread continuity review unavailable: ${messageOf(error)}. Keeping the current thread.`); }
             reviewedNextTaskId = next.id;
+            reviewedNextTasks = JSON.stringify(next.tasks);
             reviewedNextContinuity = continuity;
           }
           if (success && continuity === "unrelated") {
@@ -802,10 +836,19 @@ export class Orchestrator {
         const checkpoint: ExecutionEvent = { id: randomUUID(), timestamp: now, kind: "system", title: "Codex status checkpoint", detail: JSON.stringify({ model: latest.execution?.model, reasoning: latest.execution?.reasoning, taskUsage: usage, accountUsage, codexStatus, verification }), status: "success" };
         const compactEvents: ExecutionEvent[] = compactedAfterTask ? [{ id: randomUUID(), timestamp: now, kind: "system", title: "Codex /compact confirmed", detail: "Codex app-server confirmed JEV's automatic compaction.", status: "success" }] : compactionError ? [{ id: randomUUID(), timestamp: now, kind: "error", title: "Automatic compaction failed", detail: compactionError, status: "error" }] : [];
         if (clearError) compactEvents.push({ id: randomUUID(), timestamp: now, kind: "error", title: "Automatic clear failed", detail: clearError, status: "error" });
-        const completed = this.queue.transition(first.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, errorCategory: success ? undefined : (loopDetected ? "loop" : stalled ? "interruption" : reportedFailure ? "code" : "codex"), execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", escalationPending: false, projectChangesDetected, lastActivityAt: now, completedAt: now, usage, accountUsage, codexStatus, metrics: latest.execution!.metrics ? { ...latest.execution!.metrics, actualTokens: totalCodexTokens(usage) } : latest.execution!.metrics, verification, compactedAfterTask, reviewedNextTaskId, reviewedNextContinuity, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.") : failureMessage, status: success ? "success" : "error" }] } })!;
+        const completed = this.queue.transition(first.id, success ? "SUCCESS" : "FAILED", { output: rawOutput, error: success ? undefined : failureMessage, errorCategory: success ? undefined : (loopDetected ? "loop" : stalled ? "interruption" : reportedFailure ? "code" : "codex"), execution: { ...latest.execution!, phase: success ? "COMPLETED" : "ERROR", escalationPending: false, projectChangesDetected, lastActivityAt: now, completedAt: now, usage, accountUsage, codexStatus, metrics: latest.execution!.metrics ? { ...latest.execution!.metrics, actualTokens: totalCodexTokens(usage) } : latest.execution!.metrics, verification, compactedAfterTask, reviewedNextTaskId, reviewedNextTasks, reviewedNextContinuity, events: [...latest.execution!.events, checkpoint, ...compactEvents, { id: randomUUID(), timestamp: now, kind: success ? "system" : "error", title: success ? "Execution completed" : "Execution failed", detail: success ? (verification === "functional_verified" ? "Codex finished with functional verification." : verification === "tests_passed" ? "Codex finished and automated tests passed." : verification === "build_only" ? "Codex finished; compilation passed but functional behavior was not verified." : "Codex finished without a detected verification command.") : failureMessage, status: success ? "success" : "error" }] } })!;
         clearInterval(heartbeat);
         if (success) logTicketCompleted(tag, first.tasks[0]?.description ?? first.id);
         resolve(completed);
+        } catch (error) {
+          clearInterval(heartbeat);
+          const latest = this.queue.get(first.id)!;
+          const now = new Date().toISOString();
+          resolve(this.queue.transition(first.id, "FAILED", {
+            output: rawOutput, error: messageOf(error), errorCategory: "codex",
+            execution: { ...latest.execution!, phase: "ERROR", completedAt: now, lastActivityAt: now, escalationPending: false, events: [...latest.execution!.events, { id: randomUUID(), timestamp: now, kind: "error", title: "Execution finalization failed", detail: messageOf(error), status: "error" }] }
+          })!);
+        }
       });
     });
   }

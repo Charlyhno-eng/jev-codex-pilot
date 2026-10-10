@@ -70,6 +70,8 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
       const result = await evaluate({
         model,
         state,
+        abortSignal: AbortSignal.timeout(60_000),
+        maxRetries: 0,
         questions: {
           taskType: {
             type: "choice",
@@ -100,6 +102,8 @@ export function createVercelGatewayJevProvider(config: AppConfig): JevProvider {
       const result = await evaluate({
         model,
         state,
+        abortSignal: AbortSignal.timeout(60_000),
+        maxRetries: 0,
         questions: {
           continuity: {
             type: "choice",

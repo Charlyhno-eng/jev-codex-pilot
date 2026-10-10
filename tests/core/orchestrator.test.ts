@@ -22,6 +22,88 @@ const analyzerFor = (taskType: TaskType, complexity: Complexity = 1) =>
   (projectPath: string, tasks: Array<{ description: string }>) => analyze(projectPath, tasks, async () => ({ taskType, complexity }));
 const accountUsage = async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", todayTokens: 42, lifetimeTokens: 420 });
 describe("Codex orchestration", () => {
+  it("releases the project slot when the project disappears during finalization", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-finalization-error-"));
+    try {
+      const project = join(root, "project");
+      const bin = join(root, "bin");
+      mkdirSync(project); mkdirSync(bin);
+      writeFileSync(join(bin, "codex"), `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+cd ..
+rmdir project
+printf '%s\\n' '{"type":"thread.started","thread_id":"missing-project-thread"}' '{"type":"turn.completed"}'
+`);
+      chmodSync(join(bin, "codex"), 0o755);
+      process.env.PATH = `${bin}:${originalPath}`;
+      const queue = new JobQueue(join(root, "queue"));
+      const job = queue.create("project", project, [{ description: "Read project" }]);
+      const analysis: JevAnalysis = { complexity: 5, model: "sol", reasoning: "high", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" };
+      queue.update(job.id, { analysis });
+      const orchestrator = new Orchestrator(queue, async () => analysis, undefined, accountUsage);
+      const completed = await orchestrator.run(job.id);
+      expect(completed.status).toBe("FAILED");
+      expect(completed.execution?.events.some(event => event.title === "Execution finalization failed")).toBe(true);
+      expect(orchestrator.isProjectRunning("project")).toBe(false);
+      expect(orchestrator.ownsTicketRun(job.id)).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("rechecks continuity after editing a previously reviewed next ticket", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-continuity-edit-"));
+    try {
+      const project = join(root, "project");
+      const bin = join(root, "bin");
+      mkdirSync(project); mkdirSync(bin);
+      writeFileSync(join(bin, "codex"), `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+printf '%s\\n' '{"type":"thread.started","thread_id":"new-thread"}' '{"type":"turn.completed"}'
+`);
+      chmodSync(join(bin, "codex"), 0o755);
+      process.env.PATH = `${bin}:${originalPath}`;
+      const queue = new JobQueue(join(root, "queue"));
+      const [previous, next] = queue.createBatch("project", project, [{ description: "Old work" }, { description: "Related request" }]);
+      const now = new Date().toISOString();
+      queue.transition(previous.id, "SUCCESS", { execution: { phase: "COMPLETED", model: "sol", reasoning: "high", startedAt: now, lastActivityAt: now, verification: "not_run", events: [], threadId: "old-thread", reviewedNextTaskId: next.id, reviewedNextTasks: JSON.stringify(next.tasks), reviewedNextContinuity: "related" } });
+      queue.updatePendingTask(next.id, "Unrelated request");
+      const analysis: JevAnalysis = { complexity: 1, model: "luna", reasoning: "medium", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" };
+      queue.update(next.id, { analysis });
+      const reviewer = vi.fn(async () => "unrelated" as const);
+      const archiver = vi.fn(async () => undefined);
+      const completed = await new Orchestrator(queue, async () => analysis, undefined, accountUsage, archiver, undefined, undefined, reviewer).run(next.id);
+      expect(completed.status).toBe("SUCCESS");
+      expect(reviewer).toHaveBeenCalledOnce();
+      expect(reviewer).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ tasks: [{ description: "Unrelated request" }] }));
+      expect(archiver).toHaveBeenCalledWith("old-thread", expect.any(String));
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("records compaction failure when the app server exits without confirmation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-unconfirmed-compaction-"));
+    try {
+      const project = join(root, "project");
+      const bin = join(root, "bin");
+      mkdirSync(project); mkdirSync(bin);
+      writeFileSync(join(bin, "codex"), `#!/bin/sh
+if [ "$1" != exec ]; then read ignored; exit 0; fi
+printf '%s\\n' '{"type":"thread.started","thread_id":"unconfirmed-thread"}' '{"type":"turn.completed"}'
+`);
+      chmodSync(join(bin, "codex"), 0o755);
+      process.env.PATH = `${bin}:${originalPath}`;
+      const queue = new JobQueue(join(root, "queue"));
+      const jobs = queue.createBatch("project", project, [{ description: "First" }, { description: "Next" }]);
+      const analysis: JevAnalysis = { complexity: 1, model: "luna", reasoning: "medium", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" };
+      jobs.forEach(job => queue.update(job.id, { analysis }));
+      const status = async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 200_000 } });
+      await new Orchestrator(queue, async () => analysis, undefined, accountUsage, undefined, undefined, status, async () => "related").runBatch(jobs[0].id);
+      const completed = queue.get(jobs[0].id)!;
+      expect(completed.status).toBe("SUCCESS");
+      expect(completed.execution?.compactedAfterTask).toBe(false);
+      expect(completed.execution?.events.some(event => event.title === "Automatic compaction failed")).toBe(true);
+      expect(completed.execution?.events.some(event => event.title === "Codex /compact confirmed")).toBe(false);
+      expect(queue.get(jobs[1].id)?.status).toBe("SUCCESS");
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
   it.each([false, true])("runs a recovered escalation in Running and continues the queue (legacy recovery: %s)", async legacy => {
     const root = mkdtempSync(join(tmpdir(), "jev-escalation-recovery-"));
     const project = join(root, "project");
@@ -292,6 +374,93 @@ printf '%s\\n' '{"type":"turn.completed"}'
 
     expect(prepared.analysis).toBe(analysis);
     expect(evaluations).toBe(0);
+  });
+
+  it("executes a ticket submitted while the previous ticket is running", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-live-arrival-"));
+    try {
+      const project = join(root, "project");
+      const bin = join(root, "bin");
+      mkdirSync(project); mkdirSync(bin);
+      const fakeCodex = join(bin, "codex");
+      writeFileSync(fakeCodex, `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+sleep 0.15
+printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type":"turn.completed"}'
+`);
+      chmodSync(fakeCodex, 0o755);
+      process.env.PATH = `${bin}:${originalPath}`;
+      const queue = new JobQueue(join(root, "queue"));
+      const first = queue.create("project", project, [{ description: "Read first document" }]);
+      const evaluator = vi.fn(analyzerFor("research"));
+      const orchestrator = new Orchestrator(queue, evaluator, async () => undefined, accountUsage, async () => undefined, undefined, undefined, async () => "unrelated");
+      const running = orchestrator.runBatch(first.id);
+      await vi.waitFor(() => expect(queue.get(first.id)?.status).toBe("RUNNING"));
+      const next = queue.createBatch("project", project, [{ description: "Read another document" }])[0];
+      await orchestrator.prepare(next);
+      await running;
+      expect(queue.get(first.id)?.status).toBe("SUCCESS");
+      expect(queue.get(next.id)?.status).toBe("SUCCESS");
+      expect(evaluator).toHaveBeenCalledTimes(2);
+      expect(orchestrator.isProjectRunning("project")).toBe(false);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("shares concurrent evaluations and preserves a manual recommendation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-concurrent-evaluation-"));
+    try {
+      const queue = new JobQueue(join(root, "queue"));
+      const job = queue.create("project", root, [{ description: "Read the documentation" }]);
+      const analysis: JevAnalysis = { complexity: 1, task_types: ["documentation"], model: "luna", reasoning: "medium", rationale: [], evaluator: "typesafe-ai/jev" };
+      let finish!: (value: JevAnalysis) => void;
+      const evaluator = vi.fn(() => new Promise<JevAnalysis>(resolve => { finish = resolve; }));
+      const orchestrator = new Orchestrator(queue, evaluator);
+      const first = orchestrator.prepare(job);
+      const second = orchestrator.prepare(job);
+      expect(evaluator).toHaveBeenCalledTimes(1);
+      queue.update(job.id, { analysis: { ...analysis, model: "sol", reasoning: "high" } });
+      finish(analysis);
+      await Promise.all([first, second]);
+      expect(queue.get(job.id)?.analysis).toMatchObject({ model: "sol", reasoning: "high" });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("bounds a stalled evaluation and permits another evaluation after failure", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-evaluation-timeout-"));
+    vi.useFakeTimers();
+    try {
+      const queue = new JobQueue(join(root, "queue"));
+      const job = queue.create("project", root, [{ description: "Read the documentation" }]);
+      const analysis: JevAnalysis = { complexity: 1, task_types: ["documentation"], model: "luna", reasoning: "medium", rationale: [], evaluator: "typesafe-ai/jev" };
+      const evaluator = vi.fn().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue(analysis);
+      const orchestrator = new Orchestrator(queue, evaluator);
+      const failed = expect(orchestrator.prepare(job)).rejects.toThrow("timed out after 60 seconds");
+      await vi.advanceTimersByTimeAsync(60_000);
+      await failed;
+      expect(queue.get(job.id)?.errorCategory).toBe("jev");
+      await orchestrator.prepare(job);
+      expect(queue.get(job.id)?.analysis).toEqual(analysis);
+      expect(queue.get(job.id)?.error).toBeUndefined();
+    } finally { vi.useRealTimers(); rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it("ignores an obsolete evaluation after the pending description changes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jev-edited-evaluation-"));
+    try {
+      const queue = new JobQueue(join(root, "queue"));
+      const job = queue.create("project", root, [{ description: "Original request" }]);
+      const oldAnalysis: JevAnalysis = { complexity: 1, task_types: ["documentation"], model: "luna", reasoning: "medium", rationale: [], evaluator: "typesafe-ai/jev" };
+      const newAnalysis: JevAnalysis = { ...oldAnalysis, complexity: 4, model: "sol" };
+      let finish!: (value: JevAnalysis) => void;
+      const evaluator = vi.fn().mockImplementationOnce(() => new Promise<JevAnalysis>(resolve => { finish = resolve; })).mockResolvedValue(newAnalysis);
+      const orchestrator = new Orchestrator(queue, evaluator);
+      const original = orchestrator.prepare(job);
+      queue.updatePendingTask(job.id, "Updated request");
+      await orchestrator.prepare(queue.get(job.id)!);
+      finish(oldAnalysis);
+      await original;
+      expect(queue.get(job.id)?.analysis).toEqual(newAnalysis);
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   it("recognizes the current app-server context-compaction completion notification", () => {

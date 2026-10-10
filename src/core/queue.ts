@@ -10,6 +10,10 @@ import { implementationBlocked } from "./codex-execution.js";
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const validJobs = (value: unknown): value is Job[] => Array.isArray(value) && value.every(job => isRecord(job) && typeof job.id === "string" && typeof job.projectId === "string" && typeof job.projectPath === "string" && Array.isArray(job.tasks) && job.tasks.every((task: unknown) => isRecord(task) && typeof task.description === "string") && ["PENDING", "RUNNING", "ESCALATING", "SESSION_PAUSED", "SUCCESS", "FAILED", "SKIPPED"].includes(String(job.status)) && typeof job.createdAt === "string" && Number.isInteger(job.attempts) && (!job.execution || isRecord(job.execution) && Array.isArray(job.execution.events)));
 
+function hasManualRoute(job: Job): boolean {
+  return Boolean(job.analysis && MODEL_LEVELS.includes(job.analysis.model) && REASONING_LEVELS.includes(job.analysis.reasoning) && job.analysis.rationale.some(reason => reason.startsWith("Manual JEV tuning:")));
+}
+
 /** Persists and updates ticket queue state. */
 export class JobQueue {
   private jobs: Job[] = [];
@@ -41,7 +45,7 @@ export class JobQueue {
           job = { ...job, analysis: { ...analysis, complexity } as unknown as typeof job.analysis };
         }
       }
-      if (job.status === "PENDING" && job.analysis && !job.execution?.escalationPending) {
+      if (job.status === "PENDING" && job.analysis && !job.execution?.escalationPending && !hasManualRoute(job)) {
         const routes = routesForComplexity(job.analysis.complexity);
         if (!routes.some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)) {
           const route = defaultRoute(job.analysis.complexity);
@@ -214,7 +218,7 @@ export class JobQueue {
       detail: status === "SUCCESS" ? "A user confirmed that this task is complete." : `A user returned this ${job.status.toLowerCase()} task to the pending column.`,
       status: "success" as const
     };
-    const retryRoute = status === "PENDING" && job.analysis && !routesForComplexity(job.analysis.complexity).some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)
+    const retryRoute = status === "PENDING" && job.analysis && !hasManualRoute(job) && !routesForComplexity(job.analysis.complexity).some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)
       ? defaultRoute(job.analysis.complexity)
       : undefined;
     return this.update(id, {

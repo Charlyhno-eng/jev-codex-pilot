@@ -1,8 +1,15 @@
 import type { JevHookClient } from "./jev-client.js";
-import type { OffloadResult, PureQuestion } from "./types.js";
+import type { OffloadResult, PureAnswer, PureQuestion } from "./types.js";
 import { logJevError } from "../jev-logger.js";
 
 export type DecisionRequest = { id: string; state: string; output: "pure" | "text" | "code"; question?: PureQuestion; minimumConfidence?: number };
+
+function validAnswer(answer: PureAnswer | undefined, question: PureQuestion): answer is PureAnswer {
+  if (!answer || answer.kind !== question.kind || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) return false;
+  if (answer.kind === "Noul") return typeof answer.value === "boolean";
+  if (answer.kind === "Choice") return typeof answer.value === "string" && question.kind === "Choice" && Object.hasOwn(question.criteria, answer.value);
+  return question.kind === "Score" && Number.isInteger(answer.value) && answer.value >= 0 && answer.value < question.criteria.length;
+}
 
 /** Sends only bounded pure decisions to JEV and returns a typed LLM escalation otherwise. */
 export async function offloadDecision(request: DecisionRequest, client: JevHookClient, timeoutMs = 1_200): Promise<OffloadResult> {
@@ -16,7 +23,7 @@ export async function offloadDecision(request: DecisionRequest, client: JevHookC
   const timer = setTimeout(() => { controller.abort(); rejectTimeout(new Error("JEV timed out")); }, timeoutMs);
   try {
     const answer = await Promise.race([client.evaluate(request.state, request.question, controller.signal), timeout]);
-    if (answer.kind !== request.question.kind || (answer.kind === "Choice" && (request.question.kind !== "Choice" || !(answer.value in request.question.criteria))) || (answer.kind === "Score" && (request.question.kind !== "Score" || !Number.isInteger(answer.value) || answer.value < 0 || answer.value >= request.question.criteria.length))) {
+    if (!validAnswer(answer, request.question)) {
       logJevError(`Decision offload · ${request.id} · fail open (invalid JEV answer)`);
       return { kind: "escalation", reason: "invalid_answer", questionId: request.id };
     }
@@ -49,7 +56,7 @@ export async function offloadDecisions(state: string, questions: PureQuestion[],
     const answers = await Promise.race([client.evaluateBatch(state, questions, controller.signal), timeout]);
     const results = Object.fromEntries(questions.map(question => {
       const answer = answers[question.id];
-      if (!answer || answer.kind !== question.kind || (answer.kind === "Choice" && (question.kind !== "Choice" || !(answer.value in question.criteria))) || (answer.kind === "Score" && (question.kind !== "Score" || !Number.isInteger(answer.value) || answer.value < 0 || answer.value >= question.criteria.length))) return [question.id, { kind: "escalation", reason: "invalid_answer", questionId: question.id }];
+      if (!validAnswer(answer, question)) return [question.id, { kind: "escalation", reason: "invalid_answer", questionId: question.id }];
       if (answer.confidence < minimumConfidence) return [question.id, { kind: "escalation", reason: "low_confidence", questionId: question.id, confidence: answer.confidence }];
       return [question.id, { kind: "jev", answer }];
     })) as Record<string, OffloadResult>;

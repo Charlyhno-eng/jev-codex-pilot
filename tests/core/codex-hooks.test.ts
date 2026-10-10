@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { codexHookArgs } from "../../src/core/hooks/codex-config.js";
 import { judgeDiet, postToolUse, smartTruncate } from "../../src/core/hooks/context-diet.js";
 import type { JevHookClient } from "../../src/core/hooks/jev-client.js";
-import { offloadDecision } from "../../src/core/hooks/offload.js";
+import { offloadDecision, offloadDecisions } from "../../src/core/hooks/offload.js";
 import { gateShell, preToolUseOutput } from "../../src/core/hooks/shell-gate.js";
 import type { PureAnswer } from "../../src/core/hooks/types.js";
 
@@ -12,6 +12,19 @@ const client = (answers: Record<string, PureAnswer>): JevHookClient => ({
 });
 
 describe("native Codex hooks", () => {
+  it.each([NaN, Infinity, -1, 1.1])("refuses malformed confidence in individual and batched decisions: %s", async confidence => {
+    const question = { kind: "Noul" as const, id: "answer", criteria: "Is this relevant?" };
+    const evaluator = client({ answer: { kind: "Noul", value: true, probabilities: { true: 1, false: 0 }, confidence } });
+    expect(await offloadDecision({ id: "answer", state: "{}", output: "pure", question }, evaluator)).toMatchObject({ kind: "escalation", reason: "invalid_answer" });
+    expect((await offloadDecisions("{}", [question], evaluator)).answer).toMatchObject({ kind: "escalation", reason: "invalid_answer" });
+  });
+
+  it("rejects inherited object properties as choice answers", async () => {
+    const question = { kind: "Choice" as const, id: "answer", criteria: { allow: "Allowed", deny: "Denied" } };
+    const evaluator = client({ answer: { kind: "Choice", value: "toString", probabilities: {}, confidence: 1 } });
+    expect(await offloadDecision({ id: "answer", state: "{}", output: "pure", question }, evaluator)).toMatchObject({ kind: "escalation", reason: "invalid_answer" });
+    expect((await offloadDecisions("{}", [question], evaluator)).answer).toMatchObject({ kind: "escalation", reason: "invalid_answer" });
+  });
   it("offloads a pure boolean and escalates text or unavailable JEV", async () => {
     const question = { kind: "Noul" as const, id: "relevant", criteria: "Is this relevant?" };
     expect(await offloadDecision({ id: "relevant", state: "{}", output: "pure", question }, client({ answer: { kind: "Noul", value: true, probabilities: { true: .96, false: .04 }, confidence: .96 } }))).toMatchObject({ kind: "jev", answer: { value: true, confidence: .96 } });

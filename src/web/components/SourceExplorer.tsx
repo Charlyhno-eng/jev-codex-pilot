@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api.js";
 import type { ProjectFile, TreeNode } from "../lib/types.js";
@@ -15,7 +15,7 @@ function Code({ content }: { content: string }) {
 }
 
 /** Shows the workspace file tree and opens source in a read-only dialog. */
-export function SourceExplorer({ projectId: id }: { projectId: string }) {
+export const SourceExplorer = memo(function SourceExplorer({ projectId: id }: { projectId: string }) {
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [selected, setSelected] = useState("");
   const [content, setContent] = useState<string>();
@@ -38,10 +38,10 @@ export function SourceExplorer({ projectId: id }: { projectId: string }) {
   const invalidateSelection = useCallback(() => { revision.current++; }, []);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   useEffect(() => { void refresh(); return invalidateSelection; }, [invalidateSelection, refresh]);
-  const visible = files.filter(file => file.path.toLowerCase().includes(filter.toLowerCase()));
-  const tree = buildTree(visible);
+  const visible = useMemo(() => { const query = filter.toLowerCase(); return files.filter(file => file.path.toLowerCase().includes(query)); }, [files, filter]);
+  const tree = useMemo(() => buildTree(visible), [visible]);
   return <aside className="workspace-explorer">
       <section className="ide-explorer"><header><b>PROJECT FILES</b><button disabled={loading} onClick={() => void refresh()}>{loading ? "Refreshing…" : "Refresh"}</button></header><input aria-label="Find a file" placeholder="Find a file…" value={filter} onChange={event => setFilter(event.target.value)}/><div className="ide-file-tree">{tree.map(node => <FileEntry key={node.path} node={node} selected={selected} onSelect={path => void select(path)}/>)}{!tree.length && <p>{loading ? "Loading files…" : "No source files found."}</p>}</div><small>{visible.length} files{files.length >= 5000 ? " · Index limited to 5,000 files" : ""} · Private files hidden</small>{!selected && error && <p className="ide-error" role="alert">{error}</p>}</section>
       {selected && createPortal(<div className="modal-backdrop" onMouseDown={() => { revision.current++; setSelected(""); }}><article className="ide-source source-dialog" role="dialog" aria-modal="true" aria-label={`Source: ${selected}`} onMouseDown={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape") { revision.current++; setSelected(""); } }}><header><b>{selected}</b><span>READ ONLY</span><button type="button" autoFocus aria-label="Close source viewer" onClick={() => { revision.current++; setSelected(""); }}>×</button></header>{error && <p className="ide-error" role="alert">{error}</p>}{content !== undefined ? <div className="ide-code"><pre className="ide-line-numbers" aria-hidden="true">{content.split("\n").map((_, index) => index + 1).join("\n")}</pre><pre><Code content={content}/></pre></div> : <div className="ide-empty">Loading file…</div>}</article></div>, document.body)}
   </aside>;
-}
+});

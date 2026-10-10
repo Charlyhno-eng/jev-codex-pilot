@@ -93,7 +93,7 @@ async function runViaApi(base: string, projectDirectory: string, descriptions: s
   say("Codex started. Waiting for JEV validation…");
   let lastPhase = "";
   while (true) {
-    const projectJobs = await request<Job[]>(base, `/jobs?projectId=${encodeURIComponent(project.id)}&view=summary`);
+    const projectJobs = await request<Array<Job & { projectBusy?: boolean }>>(base, `/jobs?projectId=${encodeURIComponent(project.id)}&view=summary`);
     const jobs = created.map(job => projectJobs.find(item => item.id === job.id) ?? job);
     const setup = projectJobs.find(item => item.kind === "linter_setup" && !item.archivedAt && (["PENDING", "RUNNING", "ESCALATING", "SESSION_PAUSED", "FAILED"].includes(item.status) || item.awaitingHumanReview));
     const observed = setup ? [setup, ...jobs] : jobs;
@@ -102,6 +102,12 @@ async function runViaApi(base: string, projectDirectory: string, descriptions: s
     if (phase !== lastPhase && job.status === "RUNNING") say(`Codex ${job.id.slice(0, 8)}: ${job.execution?.phase.toLowerCase() ?? "working"}`);
     if (phase !== lastPhase && job.status === "ESCALATING") say(`JEV ${job.id.slice(0, 8)} escalation: ${job.analysis?.model ?? "Codex"}/${job.analysis?.reasoning ?? "next route"}`);
     lastPhase = phase;
+    if (projectJobs.some(item => item.awaitingHumanReview) && !projectJobs.some(item => item.projectBusy || item.status === "RUNNING" || item.status === "ESCALATING")) {
+      for (const item of observed) summary(item);
+      say("Waiting for human review. Approve the ticket in the web workspace before continuing.");
+      process.exitCode = 1;
+      return;
+    }
     if (setup && (done(setup) && setup.status !== "SUCCESS" || setup.awaitingHumanReview) && observed.every(item => item.status !== "RUNNING" && item.status !== "ESCALATING")) {
       summary(setup);
       say("Project linter setup needs attention; implementation tickets remain pending.");
@@ -132,6 +138,7 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   for (const [index, job] of jobs.entries()) say(`Ticket ${index + 1}/${jobs.length} · ${job.id.slice(0, 8)} · ${descriptions[index]}`);
   const orchestrator = new Orchestrator(queue);
   orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
+  orchestrator.configureHumanReview(projectId => Boolean(projects.get(projectId)?.humanInTheLoop));
   for (const job of jobs) {
     const prepared = await orchestrator.prepare(job);
     if (prepared?.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);

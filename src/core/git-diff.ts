@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { isPrivateIdePath, readIdeFile, redactIdeText } from "./ide-files.js";
 
 export type ProjectDiffFile = {
   path: string;
@@ -14,7 +14,7 @@ export type ProjectDiff = {
 };
 
 function git(projectPath: string, args: string[]): Buffer {
-  return execFileSync("git", ["-C", projectPath, ...args], { encoding: "buffer", stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync("git", ["-C", projectPath, ...args], { encoding: "buffer", timeout: 30_000, maxBuffer: 8 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 function statusFor(code: string): ProjectDiffFile["status"] {
@@ -25,11 +25,11 @@ function statusFor(code: string): ProjectDiffFile["status"] {
 }
 
 function syntheticUntrackedDiff(projectPath: string, path: string): string {
-  const target = resolve(projectPath, path);
-  if (!target.startsWith(`${resolve(projectPath)}/`) || !existsSync(target) || !statSync(target).isFile()) return "";
-  const content = readFileSync(target);
-  if (content.includes(0) || content.length > 250_000) return `diff --git a/${path} b/${path}\nBinary or oversized untracked file omitted from preview.\n`;
-  const lines = content.toString("utf8").split("\n");
+  let content: string;
+  try { content = readIdeFile(projectPath, path).content; }
+  catch { return "File unavailable: binary, oversized, private, or outside the project."; }
+  if (Buffer.byteLength(content) > 250_000) return `diff --git a/${path} b/${path}\nOversized untracked file omitted from preview.\n`;
+  const lines = content.split("\n");
   return [
     `diff --git a/${path} b/${path}`,
     "new file mode 100644",
@@ -40,8 +40,7 @@ function syntheticUntrackedDiff(projectPath: string, path: string): string {
   ].join("\n");
 }
 
-/** Reads Git state only; it never changes the selected project. */
-/** Reads the current project diff for review. */
+/** Reads bounded, credential-masked Git diffs without changing the selected project. */
 export function readProjectDiff(projectPath: string, commit?: string): ProjectDiff {
   const root = resolve(projectPath);
   if (commit) {
@@ -54,7 +53,8 @@ export function readProjectDiff(projectPath: string, commit?: string): ProjectDi
       if (!raw[index]) continue;
       if (code.startsWith("R") || code.startsWith("C")) { index++; if (!raw[index]) break; }
       const filePath = raw[index];
-      const diff = git(root, ["show", "--format=", "--no-ext-diff", "--unified=4", hash, "--", filePath]).toString("utf8");
+      if (isPrivateIdePath(filePath)) continue;
+      const diff = redactIdeText(git(root, ["show", "--format=", "--no-ext-diff", "--no-textconv", "--no-renames", "--unified=4", hash, "--", filePath]).toString("utf8"));
       files.push({ path: filePath, status: statusFor(code), diff: diff || `No textual diff is available for ${filePath}.` });
     }
     return { base: hash.slice(0, 10), files: files.sort((a, b) => a.path.localeCompare(b.path)) };
@@ -62,7 +62,7 @@ export function readProjectDiff(projectPath: string, commit?: string): ProjectDi
   let base = "HEAD";
   try { git(root, ["rev-parse", "--verify", "HEAD"]); } catch { base = "working tree (no commit yet)"; }
   let rawStatus: Buffer;
-  try { rawStatus = git(root, ["status", "--porcelain=v1", "-z"]); }
+  try { rawStatus = git(root, ["status", "--porcelain=v1", "--untracked-files=all", "-z"]); }
   catch { throw new Error("Git changes are unavailable because this folder is not a Git repository."); }
   const entries = rawStatus.toString("utf8").split("\0").filter(Boolean);
   const files: ProjectDiffFile[] = [];
@@ -71,15 +71,15 @@ export function readProjectDiff(projectPath: string, commit?: string): ProjectDi
     const code = entry.slice(0, 2);
     const path = entry.slice(3);
     if (!path) continue;
+    const oldPath = code.includes("R") || code.includes("C") ? entries[++index] : undefined;
+    if (isPrivateIdePath(path) || oldPath && isPrivateIdePath(oldPath)) continue;
     if (code === "??") {
       files.push({ path, status: "untracked", diff: syntheticUntrackedDiff(root, path) });
       continue;
     }
-    // A rename record carries its former path as the next NUL-delimited entry.
-    if (code.includes("R") || code.includes("C")) index++;
-    const diffArgs = base === "HEAD" ? ["diff", "--no-ext-diff", "--find-renames", "--unified=4", "HEAD", "--", path] : ["diff", "--no-ext-diff", "--unified=4", "--", path];
+    const diffArgs = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--unified=4", ...(base === "HEAD" ? ["HEAD"] : ["--cached"]), "--", path, ...(oldPath ? [oldPath] : [])];
     let diff = "";
-    try { diff = git(root, diffArgs).toString("utf8"); } catch { /* The status entry remains useful even when Git has no textual patch. */ }
+    try { diff = redactIdeText(git(root, diffArgs).toString("utf8")); } catch { /* The status entry remains useful even when Git has no textual patch. */ }
     files.push({ path, status: statusFor(code), diff: diff || `No textual diff is available for ${path}.` });
   }
   return { base, files: files.sort((a, b) => a.path.localeCompare(b.path)) };

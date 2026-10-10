@@ -42,4 +42,16 @@ describe("live telemetry persistence", () => {
     queue.flush();
     expect(vi.getTimerCount()).toBe(0);
   });
+  it("preserves manual model and reasoning choices across reloads and manual retries", () => {
+    const { queue, jobs } = setup();
+    queue.update(jobs[0].id, { analysis: { complexity: 1, model: "luna", reasoning: "medium", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" } });
+    queue.adjustAnalysis(jobs[0].id, "model", 1);
+    queue.adjustAnalysis(jobs[0].id, "reasoning", 1);
+    const restored = new JobQueue(root);
+    expect(restored.get(jobs[0].id)?.analysis).toMatchObject({ model: "sol", reasoning: "high" });
+    restored.transition(jobs[0].id, "FAILED");
+    restored.moveManually(jobs[0].id, "PENDING");
+    expect(restored.get(jobs[0].id)?.analysis).toMatchObject({ model: "sol", reasoning: "high" });
+    expect(new JobQueue(root).get(jobs[0].id)?.analysis).toMatchObject({ model: "sol", reasoning: "high" });
+  });
 });

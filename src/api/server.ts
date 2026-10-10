@@ -39,18 +39,19 @@ const appConfig = new AppConfigStore();
 const attachments = new AttachmentStore(resolve(process.cwd(), ".jev"));
 const skills = new SkillStore(resolve(process.cwd(), ".jev"));
 const sessionJevJobIds = new Set<string>();
+const requestedProjectQueues = new Set<string>();
 const port = Number(process.env.PORT ?? 3000);
 const terminals = new ProjectTerminals();
 process.once("exit", () => { queue.flush(); terminals.dispose(); });
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => { terminals.dispose(); process.exit(0); });
 
 /** Requires same-origin browser requests before granting local file or shell access. */
-function trustedWorkspaceRequest(request: IncomingMessage) {
+function trustedWorkspaceRequest(request: IncomingMessage, requireOrigin = true) {
   const host = request.headers.host?.split(":")[0];
   if (host !== "localhost" && host !== "127.0.0.1") return false;
   if (request.headers["sec-fetch-site"] === "cross-site") return false;
   const source = request.headers.origin ?? request.headers.referer;
-  if (!source) return false;
+  if (!source) return !requireOrigin && !request.headers["sec-fetch-site"];
   try {
     const origin = new URL(source);
     return origin.protocol === "http:" && (origin.hostname === "localhost" || origin.hostname === "127.0.0.1") && (origin.host === request.headers.host || origin.port === String(port) || origin.port === "5173");
@@ -71,6 +72,15 @@ function hasGithubRemote(path: string) {
   } catch { return false; }
 }
 
+/** Starts explicitly requested work when the project slot becomes available. */
+function startRequestedQueue(projectId: string) {
+  if (!requestedProjectQueues.has(projectId) || orchestrator.isProjectRunning(projectId)) return;
+  requestedProjectQueues.delete(projectId);
+  if (orchestrator.needsHumanReview(projectId)) return;
+  const next = queue.listProjectExecutionOrder(projectId).find(job => job.status === "PENDING" || job.status === "SESSION_PAUSED");
+  if (next?.status === "PENDING") void runTicket(next.id, true);
+}
+
 /** Runs a ticket or sequence and records any startup failure. */
 async function runTicket(jobId: string, batch: boolean) {
   const starting = queue.get(jobId);
@@ -81,7 +91,7 @@ async function runTicket(jobId: string, batch: boolean) {
   } catch (error) {
     const current = queue.get(jobId);
     if (current && (current.status === "PENDING" || current.status === "RUNNING" || current.status === "ESCALATING") && !orchestrator.ownsProjectRun(current.projectId)) queue.transition(jobId, "FAILED", { error: error instanceof Error ? error.message : "Codex failed to start", errorCategory: current.execution ? "codex" : "jev" });
-  }
+  } finally { startRequestedQueue(starting.projectId); }
 }
 
 /** Checks whether a previously recorded Codex process is still alive. */
@@ -134,18 +144,33 @@ let resumingSessionPausedWork = false;
 
 /** Sends a JSON API response. */
 function json(response: ServerResponse, status: number, data: unknown) {
-  response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+  response.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
   response.end(JSON.stringify(data));
 }
 /** Reads a JSON API request body. */
 async function body(request: IncomingMessage): Promise<unknown> {
-  let raw = ""; for await (const chunk of request) { raw += chunk; if (Buffer.byteLength(raw) > 28 * 1024 * 1024) throw new Error("The request is too large. Attach at most four images of 5 MB each."); }
-  return raw ? JSON.parse(raw) : {};
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > 28 * 1024 * 1024) throw new RequestValidationError("The request is too large. Attach at most four images of 5 MB each.");
+    chunks.push(buffer);
+  }
+  let parsed: unknown;
+  try { parsed = bytes ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}; }
+  catch { throw new RequestValidationError("Provide a valid JSON request body."); }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new RequestValidationError("Provide a JSON object.");
+  return parsed;
 }
+
+/** Distinguishes invalid client requests from server failures. */
+class RequestValidationError extends Error {}
 
 /** Routes requests for the local JEV API. */
 createServer(async (request, response) => {
   try {
+    if (!trustedWorkspaceRequest(request, false)) return json(response, 403, { error: "Open this API from the local JEV application." });
     if (request.method === "OPTIONS") return json(response, 204, {});
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
     if (url.pathname === "/api/skills" && request.method === "GET") return json(response, 200, skills.list());
@@ -175,15 +200,16 @@ createServer(async (request, response) => {
       const jobs = (projectId ? queue.listProjectExecutionOrder(projectId) : queue.list()).filter(job => Boolean(projects.get(job.projectId)));
       if (url.searchParams.get("view") === "status") return json(response, 200, jobs.map(({ id, projectId, status }) => ({ id, projectId, status })));
       if (url.searchParams.get("view") !== "summary") return json(response, 200, jobs);
+      const projectActivity = new Map([...new Set(jobs.map(job => job.projectId))].map(id => [id, orchestrator.isProjectRunning(id)]));
       const detailId = url.searchParams.get("detailId");
       const history = detailId ? jobs.filter(job => job.execution || job.error).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
       const selectedId = history.find(job => job.id === detailId)?.id ?? (history.find(job => job.status === "RUNNING" || job.status === "ESCALATING") ?? history[0])?.id;
       return json(response, 200, jobs.map(job => {
-        if (job.id === selectedId) return job;
+        if (job.id === selectedId) return { ...job, projectBusy: projectActivity.get(job.projectId) };
         const summary = { ...job };
         delete summary.output;
         const skills = job.skills?.map(skill => Object.fromEntries(Object.entries(skill).filter(([key]) => key !== "content" && key !== "path")));
-        return { ...summary, skills, execution: job.execution ? { ...job.execution, events: [] } : undefined };
+        return { ...summary, projectBusy: projectActivity.get(job.projectId), skills, execution: job.execution ? { ...job.execution, events: [] } : undefined };
       }));
     }
     if (request.method === "GET" && url.pathname === "/api/usage") {
@@ -216,7 +242,7 @@ createServer(async (request, response) => {
       const input = await body(request) as { humanInTheLoop?: unknown };
       if (typeof input.humanInTheLoop !== "boolean") return json(response, 400, { error: "humanInTheLoop must be true or false." });
       if (typeof input.humanInTheLoop === "boolean") {
-        if (!input.humanInTheLoop) orchestrator.approveHumanReview(project.id);
+        if (!input.humanInTheLoop && !orchestrator.isProjectRunning(project.id)) orchestrator.approveHumanReview(project.id);
         projects.setHumanInTheLoop(project.id, input.humanInTheLoop);
       }
       return json(response, 200, withLanguages(projects.get(project.id)!));
@@ -261,16 +287,19 @@ createServer(async (request, response) => {
       if (request.method === "POST" && gitMatch[2] === "branch") {
         if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before changing branches." });
         const input = await body(request) as { name?: unknown; create?: unknown };
+        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active execution to finish before changing branches." });
         if (typeof input.name !== "string" || typeof input.create !== "boolean") return json(response, 400, { error: "A branch name and create choice are required." });
         return json(response, 200, selectGitBranch(project.path, input.name, input.create));
       }
       if (request.method === "POST" && gitMatch[2] === "push") {
         if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: orchestrator.isProjectGitActionRunning(project.id) ? "A Git action is already running for this project. Wait for it to finish." : "Wait for the active ticket to finish before pushing." });
-        return json(response, 200, await orchestrator.withProjectGitAction(project.id, async () => pushGitBranch(project.path)));
+        try { return json(response, 200, await orchestrator.withProjectGitAction(project.id, async () => pushGitBranch(project.path))); }
+        finally { startRequestedQueue(project.id); }
       }
       if (request.method === "PUT" && gitMatch[2] === "settings") {
         if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active ticket to finish before changing Git automation." });
         const input = await body(request) as { autoCommitPush?: unknown };
+        if (orchestrator.isProjectRunning(project.id)) return json(response, 409, { error: "Wait for the active execution to finish before changing Git automation." });
         if (typeof input.autoCommitPush !== "boolean") return json(response, 400, { error: "autoCommitPush must be true or false." });
         return json(response, 200, projects.setAutoCommitPush(project.id, input.autoCommitPush));
       }
@@ -293,6 +322,7 @@ createServer(async (request, response) => {
       });
     }
     if (request.method === "GET" && url.pathname === "/api/settings/secrets") {
+      if (!trustedWorkspaceRequest(request)) return json(response, 403, { error: "Private settings require a local browser origin." });
       const settings = appConfig.read();
       return json(response, 200, { apiKey: settings.aiGatewayApiKey });
     }
@@ -323,8 +353,9 @@ createServer(async (request, response) => {
       return json(response, 200, { path: absolute, files, count: files.length, truncated: files.length >= 5000, hasAgents: existsSync(resolve(absolute, "AGENTS.md")), isGitRepository: hasGit, isGithubLinked: hasGit && hasGithubRemote(absolute) });
     }
     if (request.method === "POST" && url.pathname === "/api/jobs") {
-      const input = await body(request) as { projectId?: string; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[]; skillIds?: unknown }> };
-      const taskInputs = Array.isArray(input.tasks) ? input.tasks.filter(task => task?.description?.trim()) : [];
+      const input = await body(request) as { projectId?: string; run?: boolean; tasks?: Array<TaskSpec & { attachments?: ImageAttachmentInput[]; skillIds?: unknown }> };
+      if (!input || typeof input !== "object" || !Array.isArray(input.tasks) || input.tasks.some(task => !task || typeof task.description !== "string")) return json(response, 400, { error: "Provide a list of task descriptions." });
+      const taskInputs = input.tasks.filter(task => task.description.trim());
       for (const task of taskInputs) attachments.validate(task.attachments);
       const selections = taskInputs.map(task => skills.select(task.skillIds));
       const tasks = taskInputs.map(task => ({ description: task.description.trim() }));
@@ -334,6 +365,8 @@ createServer(async (request, response) => {
       projects.touch(project.id);
       const created = queue.createBatch(project.id, project.path, tasks);
       const withAttachments = created.map((job, index) => queue.update(job.id, { attachments: attachments.saveForJob(job.id, taskInputs[index].attachments), skills: skills.freeze(job.id, selections[index]) })!);
+      // Creation with run=true explicitly requests execution, including an idle queue.
+      if (input.run === true) { requestedProjectQueues.add(project.id); startRequestedQueue(project.id); }
       return json(response, 201, withAttachments);
     }
     const agentsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/agents$/);
@@ -351,20 +384,32 @@ createServer(async (request, response) => {
       const job = queue.get(attachmentMatch[1]);
       const attachment = job?.attachments?.find(candidate => candidate.id === attachmentMatch[2]);
       if (!attachment || !existsSync(attachment.path)) return json(response, 404, { error: "Image attachment not found" });
-      response.writeHead(200, { "Content-Type": attachment.mimeType, "Cache-Control": "no-store", "Access-Control-Allow-Origin": "*" });
+      response.writeHead(200, { "Content-Type": attachment.mimeType, "Cache-Control": "no-store" });
       return response.end(readFileSync(attachment.path));
     }
     const match = url.pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(prepare|command|run|run-batch|continue|skip|archive|unarchive|remove|move|reorder|adjust|edit))?$/);
     if (!match) return json(response, 404, { error: "Route not found" });
     const [, id, action] = match; const job = queue.get(id);
     if (!job) return json(response, 404, { error: "Job not found" });
+    if (!projects.get(job.projectId)) return json(response, 404, { error: "Project not found" });
     if (request.method === "GET" && !action) return json(response, 200, job);
-    if (request.method === "POST" && action === "prepare") { await orchestrator.prepare(job); sessionJevJobIds.add(id); return json(response, 200, queue.get(id)); }
+    if (request.method === "POST" && action === "prepare") {
+      const input = await body(request) as { reevaluate?: unknown };
+      if (input?.reevaluate === true) {
+        if (job.status !== "PENDING" || orchestrator.isProjectRunning(job.projectId)) return json(response, 409, { error: "Wait for an idle pending ticket before re-evaluating." });
+        queue.update(id, { analysis: undefined });
+      }
+      await orchestrator.prepare(queue.get(id)!); sessionJevJobIds.add(id); return json(response, 200, queue.get(id));
+    }
     if (request.method === "POST" && action === "command") return json(response, 200, { command: await orchestrator.command(job) });
-    if (request.method === "POST" && action === "skip") return json(response, 200, queue.transition(id, "SKIPPED"));
+    if (request.method === "POST" && action === "skip") {
+      if (job.status !== "PENDING" || orchestrator.ownsTicketRun(id)) return json(response, 409, { error: "Only idle pending tickets can be skipped." });
+      return json(response, 200, queue.transition(id, "SKIPPED"));
+    }
     if (request.method === "POST" && action === "archive") return json(response, 200, queue.archive(id));
     if (request.method === "POST" && action === "unarchive") return json(response, 200, queue.unarchive(id));
     if (request.method === "POST" && action === "remove") {
+      if (orchestrator.ownsTicketRun(id)) return json(response, 409, { error: "Wait for this ticket to finish before removing it." });
       const removed = queue.removePending(id);
       if (removed) { attachments.removeForJob(removed.id); skills.removeForJob(removed.id); }
       return json(response, 200, { id: removed?.id, removed: true });
@@ -381,10 +426,13 @@ createServer(async (request, response) => {
     }
     if (request.method === "POST" && action === "edit") {
       const input = await body(request) as { description?: unknown; attachments?: ImageAttachmentInput[]; skillIds?: unknown };
-      if (typeof input.description !== "string") return json(response, 400, { error: "A task description is required." });
+      if (orchestrator.ownsTicketRun(id)) return json(response, 409, { error: "Wait for this ticket to finish before editing it." });
+      if (typeof input.description !== "string" || !input.description.trim()) return json(response, 400, { error: "A task description is required." });
+      const editable = queue.get(id)!;
       attachments.validate(input.attachments);
-      if (job.status !== "PENDING" || job.archivedAt) return json(response, 400, { error: "Only pending tickets can be edited." });
-      const selectedSkills = input.skillIds === undefined ? undefined : skills.updateSelection(id, input.skillIds, job.skills);
+      if ((editable.attachments?.length ?? 0) + (input.attachments?.length ?? 0) > 4) return json(response, 400, { error: "Attach at most four images to one task." });
+      if (editable.status !== "PENDING" || editable.archivedAt) return json(response, 400, { error: "Only pending tickets can be edited." });
+      const selectedSkills = input.skillIds === undefined ? undefined : skills.updateSelection(id, input.skillIds, editable.skills);
       const updated = queue.updatePendingTask(id, input.description)!;
       if (selectedSkills) queue.update(id, { skills: selectedSkills });
       const nextAttachments = input.attachments === undefined ? updated.attachments : [...(updated.attachments ?? []), ...attachments.saveForJob(updated.id, input.attachments)];
@@ -395,6 +443,7 @@ createServer(async (request, response) => {
     }
     if (request.method === "POST" && action === "adjust") {
       const input = await body(request) as { dimension?: unknown; delta?: unknown };
+      if (orchestrator.ownsTicketRun(id)) return json(response, 409, { error: "Wait for this ticket to finish before adjusting it." });
       if (input.dimension !== "model" && input.dimension !== "reasoning") return json(response, 400, { error: "Choose model or reasoning to adjust." });
       if (input.delta !== -1 && input.delta !== 1) return json(response, 400, { error: "The adjustment must be exactly one level down or up." });
       const adjusted = queue.adjustAnalysis(id, input.dimension, input.delta);
@@ -427,7 +476,7 @@ createServer(async (request, response) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     if (/\bJEV\b|precision|recommendation|analy(?:sis|z)/i.test(message)) logJevError(message);
-    return json(response, error instanceof SkillValidationError ? 400 : 500, { error: message });
+    return json(response, error instanceof SkillValidationError || error instanceof RequestValidationError ? 400 : 500, { error: message });
   }
 }).listen(port, "127.0.0.1", () => {
   recoverInterruptedWork();

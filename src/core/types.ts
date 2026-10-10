@@ -49,6 +49,7 @@ export interface ExecutionState {
   projectChangesDetected?: boolean;
   /** The continuity decision already made for the next queued ticket. */
   reviewedNextTaskId?: string;
+  reviewedNextTasks?: string;
   reviewedNextContinuity?: "related" | "unrelated" | "uncertain";
   usage?: CodexUsage;
   /** A best-effort account-wide usage snapshot captured from Codex app-server. */

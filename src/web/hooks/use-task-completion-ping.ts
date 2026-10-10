@@ -21,7 +21,7 @@ export function useTaskCompletionPing(jobs: Job[], projectId: string) {
       try {
         const context = audio.current ?? new AudioContext();
         audio.current = context;
-        void context.resume().catch(() => undefined);
+        if (context.state === "suspended") void context.resume().catch(() => undefined);
       } catch { /* Browsers without Web Audio still display the alerts. */ }
     };
     window.addEventListener("pointerdown", unlock);

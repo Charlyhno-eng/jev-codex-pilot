@@ -5,14 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ root: "", ticketBusy: false, gitBusy: false, pushes: 0, setup: vi.fn(), jobs: [] as Job[], handler: undefined as unknown as (req: IncomingMessage, res: ServerResponse) => Promise<void> }));
+const state = vi.hoisted(() => ({ root: "", ticketBusy: false, gitBusy: false, ticketReserved: false, humanInTheLoop: false, pushes: 0, review: false, singleRun: vi.fn(), runs: vi.fn(), setup: vi.fn(), prepare: vi.fn(), approval: vi.fn(), jobs: [] as Job[], handler: undefined as unknown as (req: IncomingMessage, res: ServerResponse) => Promise<void> }));
 vi.mock("node:http", () => ({ createServer: (handler: typeof state.handler) => { state.handler = handler; return { listen: vi.fn() }; } }));
 vi.mock("../../src/core/single-instance.js", () => ({ acquireApiInstance: vi.fn() }));
-vi.mock("../../src/core/queue.js", () => ({ JobQueue: class { flush() {} list() { return state.jobs; } listProjectExecutionOrder(id: string) { return state.jobs.filter(job => job.projectId === id); } } }));
-vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class { get(id: string) { return id === "project" ? { id, path: state.root, linterEnabled: true } : undefined; } } }));
+vi.mock("../../src/core/queue.js", () => ({ JobQueue: class { flush() {} get(id: string) { return state.jobs.find(job => job.id === id); } createBatch(projectId: string, projectPath: string, tasks: Job["tasks"]) { const jobs = tasks.map((task, index): Job => ({ id: `new-${index}`, projectId, projectPath, tasks: [task], status: "PENDING", attempts: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })); state.jobs.push(...jobs); return jobs; } update(id: string, patch: Partial<Job>) { const job = this.get(id)!; Object.assign(job, patch); return job; } list() { return state.jobs; } listProjectExecutionOrder(id: string) { return state.jobs.filter(job => job.projectId === id); } } }));
+vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class { touch() {} hasAgents() { return true; } get(id: string) { return id === "project" ? { id, path: state.root, linterEnabled: true, humanInTheLoop: state.humanInTheLoop } : undefined; } setHumanInTheLoop(id: string, humanInTheLoop: boolean) { state.humanInTheLoop = humanInTheLoop; return { ...this.get(id), humanInTheLoop }; } } }));
 vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class {}, maskedApiKey: vi.fn() }));
-vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class {} }));
-vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} isProjectRunning() { return state.ticketBusy || state.gitBusy; } isProjectGitActionRunning() { return state.gitBusy; } async withProjectGitAction(_id: string, run: () => Promise<unknown>) { return run(); } } }));
+vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class { validate() {} saveForJob() { return []; } } }));
+vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} ownsTicketRun() { return state.ticketReserved; } approveHumanReview() { if (state.ticketBusy) throw new Error("Wait for the active ticket"); state.approval(); } prepare(job: Job) { state.prepare(job); return Promise.resolve(job); } needsHumanReview() { return state.review; } async runBatch(id: string) { state.runs(id); } async run(id: string) { await state.singleRun(id); } isProjectRunning() { return state.ticketBusy || state.gitBusy; } isProjectGitActionRunning() { return state.gitBusy; } async withProjectGitAction(_id: string, run: () => Promise<unknown>) { return run(); } } }));
 
 vi.mock("../../src/core/project-linter.js", async importOriginal => ({ ...await importOriginal<typeof import("../../src/core/project-linter.js")>(), ensureProjectLinterTicket: (...args: unknown[]) => state.setup(...args) }));
 vi.mock("../../src/core/git-workspace.js", () => ({ readGitWorkspace: () => ({ branch: "main" }), selectGitBranch: vi.fn(), pushGitBranch: () => { state.pushes++; return { branch: "main", remote: "origin" }; } }));
@@ -33,6 +33,16 @@ beforeAll(async () => {
 afterAll(() => rmSync(state.root, { recursive: true, force: true }));
 
 describe("workspace API", () => {
+  it("allows disabling human review during execution without approving an active ticket", async () => {
+    state.ticketBusy = true;
+    state.approval.mockClear();
+    try {
+      const result = await request("PUT", "/api/projects/project", undefined, { humanInTheLoop: false });
+      expect(result.status).toBe(200);
+      expect(result.body.humanInTheLoop).toBe(false);
+      expect(state.approval).not.toHaveBeenCalled();
+    } finally { state.ticketBusy = false; }
+  });
   it("pushes completed work directly, including projects with the legacy linter preference", async () => {
     const path = "/api/projects/project";
     expect((await request("PUT", path, undefined, { linterEnabled: true })).status).toBe(400);
@@ -119,5 +129,84 @@ describe("lightweight ticket API", () => {
       { id: "older", projectId: "project", status: "SUCCESS" },
       { id: "live", projectId: "project", status: "RUNNING" }
     ]);
+  });
+});
+
+
+describe("ticket submission execution", () => {
+  it("rejects malformed task descriptions without creating work", async () => {
+    state.jobs = [];
+    for (const tasks of [[null], [{ description: 42 }], [{}], "invalid"]) {
+      expect((await request("POST", "/api/jobs", undefined, { projectId: "project", tasks, run: true })).status).toBe(400);
+      expect(state.jobs).toEqual([]);
+    }
+  });
+
+  it("refreshes an explicit re-evaluation but reuses ordinary preparation", async () => {
+    state.jobs = [{ id: "reevaluate", projectId: "project", projectPath: state.root, tasks: [{ description: "Read" }], status: "PENDING", attempts: 0, createdAt: "", updatedAt: "", analysis: { complexity: 1, model: "luna", reasoning: "medium", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" } }];
+    state.prepare.mockClear();
+    expect((await request("POST", "/api/jobs/reevaluate/prepare")).status).toBe(200);
+    expect(state.prepare.mock.calls[0][0].analysis).toBeDefined();
+    expect((await request("POST", "/api/jobs/reevaluate/prepare", undefined, { reevaluate: true })).status).toBe(200);
+    expect(state.prepare.mock.calls[1][0].analysis).toBeUndefined();
+  });
+
+  it("protects the selected ticket during preparation while allowing other pending edits", async () => {
+    state.jobs = [{ id: "reserved", projectId: "project", projectPath: state.root, tasks: [{ description: "Read" }], status: "PENDING", attempts: 0, createdAt: "", updatedAt: "" }];
+    state.ticketReserved = true;
+    try {
+      for (const action of ["skip", "remove", "edit", "adjust"]) {
+        expect((await request("POST", `/api/jobs/reserved/${action}`, undefined, { description: "Changed", dimension: "model", delta: 1 })).status).toBe(409);
+      }
+      expect(state.jobs[0].tasks[0].description).toBe("Read");
+      expect(state.jobs[0].status).toBe("PENDING");
+    } finally { state.ticketReserved = false; }
+    state.jobs[0].status = "RUNNING";
+    expect((await request("POST", "/api/jobs/reserved/skip")).status).toBe(409);
+  });
+
+  it("refuses launching history belonging to a removed project", async () => {
+    state.jobs = [{ id: "removed", projectId: "removed-project", projectPath: state.root, tasks: [{ description: "Read" }], status: "PENDING", attempts: 0, createdAt: "", updatedAt: "" }];
+    state.runs.mockClear();
+    expect((await request("POST", "/api/jobs/removed/run-batch")).status).toBe(404);
+    expect(state.runs).not.toHaveBeenCalled();
+  });
+  it("launches the existing pending linter setup without creating another ticket", async () => {
+    state.jobs = [{ id: "setup", kind: "linter_setup", projectId: "project", projectPath: state.root, tasks: [{ description: "Set up project linters" }], status: "PENDING", attempts: 0, createdAt: "", updatedAt: "" }];
+    state.runs.mockClear();
+    expect((await request("POST", "/api/jobs/setup/run-batch")).status).toBe(202);
+    expect(state.runs).toHaveBeenCalledWith("setup");
+    expect(state.jobs).toHaveLength(1);
+  });
+  it("continues newly submitted work after an explicitly launched single ticket", async () => {
+    state.jobs = [{ id: "first", projectId: "project", projectPath: state.root, tasks: [{ description: "First" }], status: "PENDING", attempts: 0, createdAt: "", updatedAt: "" }];
+    state.runs.mockClear();
+    let finish!: () => void;
+    state.singleRun.mockImplementationOnce(() => {
+      state.ticketBusy = true;
+      return new Promise<void>(resolve => { finish = () => { state.jobs[0].status = "SUCCESS"; state.ticketBusy = false; resolve(); }; });
+    });
+    expect((await request("POST", "/api/jobs/first/run")).status).toBe(202);
+    expect((await request("POST", "/api/jobs", undefined, { projectId: "project", run: true, tasks: [{ description: "Second" }] })).status).toBe(201);
+    expect(state.runs).not.toHaveBeenCalled();
+    finish();
+    await vi.waitFor(() => expect(state.runs).toHaveBeenCalledWith("new-0"));
+  });
+  it.each([
+    { run: true, busy: false, review: false, paused: false, expected: 1 },
+    { run: true, busy: true, review: false, paused: false, expected: 0 },
+    { run: true, busy: false, review: true, paused: false, expected: 0 },
+    { run: true, busy: false, review: false, paused: true, expected: 0 },
+    { run: false, busy: false, review: false, paused: false, expected: 0 }
+  ])("starts an idle queue only when execution is requested and unpaused: %j", async scenario => {
+    state.jobs = scenario.paused ? [{ id: "paused", projectId: "project", projectPath: state.root, tasks: [{ description: "Paused" }], status: "SESSION_PAUSED", attempts: 1, createdAt: "", updatedAt: "" }] : [];
+    state.ticketBusy = scenario.busy; state.review = scenario.review;
+    state.runs.mockClear();
+    try {
+      const result = await request("POST", "/api/jobs", undefined, { projectId: "project", run: scenario.run, tasks: [{ description: "Read docs" }] });
+      expect(result.status).toBe(201);
+      expect(state.runs).toHaveBeenCalledTimes(scenario.expected);
+      expect(state.jobs.at(-1)?.status).toBe("PENDING");
+    } finally { state.ticketBusy = false; state.review = false; }
   });
 });

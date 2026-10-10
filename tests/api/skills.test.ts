@@ -20,7 +20,7 @@ vi.mock("../../src/core/queue.js", async importOriginal => {
 vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class { get(id: string) { return ["first", "second"].includes(id) ? { id, path: join(state.root, "target", id) } : undefined; } hasAgents() { return true; } touch() {} } }));
 vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class {}, maskedApiKey: vi.fn() }));
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class { validate() {} saveForJob() { return []; } removeForJob() {} } }));
-vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} isProjectRunning() { return false; } async prepare(job: Job) { return job; } run() { state.runs++; } runBatch() { state.runs++; } } }));
+vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} ownsTicketRun() { return false; } isProjectRunning() { return false; } async prepare(job: Job) { return job; } run() { state.runs++; } runBatch() { state.runs++; } } }));
 async function request(method: string, path: string, input?: unknown, trusted = true) {
   const req = { method, url: path, headers: trusted ? { host: "localhost:3000", origin: "http://localhost:5173" } : { host: "localhost:3000", origin: "https://example.com" }, async *[Symbol.asyncIterator]() { if (input !== undefined) yield JSON.stringify(input); } } as unknown as IncomingMessage;
   const res = { writeHead: vi.fn(), end: vi.fn() };

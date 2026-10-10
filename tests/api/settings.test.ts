@@ -24,9 +24,9 @@ vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class {} }));
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class {} }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} } }));
 
-async function request(method: string, path: string, input?: unknown) {
+async function request(method: string, path: string, input?: unknown, headers: Record<string, string> = { host: "localhost:3000", origin: "http://localhost:5173" }) {
   const incoming = {
-    method, url: path, headers: { host: "localhost" },
+    method, url: path, headers,
     async *[Symbol.asyncIterator]() { if (input !== undefined) yield JSON.stringify(input); }
   } as unknown as IncomingMessage;
   const response = { writeHead: vi.fn(), end: vi.fn() };
@@ -41,6 +41,34 @@ beforeEach(async () => {
 });
 
 describe("provider settings API", () => {
+  it.each([
+    { host: "attacker.example:3000" },
+    { host: "localhost:3000", origin: "https://attacker.example" },
+    { host: "localhost:3000", origin: "null" },
+    { host: "localhost:3000", origin: "http://localhost:9999" },
+    { host: "localhost:3000", "sec-fetch-site": "cross-site" }
+  ])("blocks external reads, writes, and preflights before accessing credentials: %j", async headers => {
+    await request("PUT", "/api/settings", { apiKey: "saved-key" });
+    for (const method of ["GET", "PUT", "OPTIONS"]) {
+      expect((await request(method, method === "GET" ? "/api/settings/secrets" : "/api/settings", { apiKey: "overwritten" }, headers)).status).toBe(403);
+    }
+    expect((await request("GET", "/api/settings/secrets")).body).toEqual({ apiKey: "saved-key" });
+  });
+
+  it("allows CLI settings checks while requiring a browser origin for private credentials", async () => {
+    const headers = { host: "127.0.0.1:3000" };
+    expect((await request("GET", "/api/settings", undefined, headers)).status).toBe(200);
+    expect((await request("GET", "/api/settings/secrets", undefined, headers)).status).toBe(403);
+    expect(server.handler).toBeDefined();
+    expect((await request("GET", "/api/settings")).status).toBe(200);
+    const response = { writeHead: vi.fn(), end: vi.fn() };
+    await server.handler({ method: "GET", url: "/api/settings", headers } as IncomingMessage, response as unknown as ServerResponse);
+    expect(response.writeHead.mock.calls[0][1]).not.toHaveProperty("Access-Control-Allow-Origin");
+  });
+
+  it.each([null, [], 42, "invalid"])("returns a client error for non-object JSON: %j", async input => {
+    expect((await request("PUT", "/api/settings", input)).status).toBe(400);
+  });
   it("reads unconfigured settings and an empty API key", async () => {
     expect(await request("GET", "/api/settings")).toEqual({ status: 200, body: { configured: false, maskedApiKey: "" } });
     expect(await request("GET", "/api/settings/secrets")).toEqual({ status: 200, body: { apiKey: "" } });
