@@ -11,7 +11,7 @@ import { interactiveSession } from "./interactive.js";
 import type { Job, ProjectRecord } from "../core/types.js";
 
 const executionProvider = createExecutionProvider();
-const cliCommand = `node "${realpathSync(process.argv[1] ?? "bin/jc-pilot.mjs")}"`;
+const cliCommand = `node "${realpathSync(process.argv[1] ?? "bin/jc-pilot.ts")}"`;
 const help = `Usage: ${cliCommand}                 interactive terminal
        ${cliCommand} run "describe one task"
        ${cliCommand} status [ticket-id]

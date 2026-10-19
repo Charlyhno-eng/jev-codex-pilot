@@ -10,7 +10,8 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["src", "scripts", "vite.config.ts"]
+  "include": ["src", "bin/**/*.ts", "tests", "vite.config.ts", "eslint.config.ts"]
 }

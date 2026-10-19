@@ -89,8 +89,8 @@ describe("skills API and ticket attachment lifecycle", () => {
     expect(second.body[0].skills[0].path).not.toBe(selected.skills![0].path);
     expect(first.body[1].skills).toEqual([]);
     const summary = ((await request("GET", "/api/jobs?view=summary&projectId=first")).body as Job[]).find(job => job.id === selected.id)!;
-    expect(summary.skills[0]).not.toHaveProperty("content");
-    expect(summary.skills[0]).not.toHaveProperty("path");
+    expect(summary.skills![0]).not.toHaveProperty("content");
+    expect(summary.skills![0]).not.toHaveProperty("path");
     await request("DELETE", `/api/skills/${id}`);
     expect((await request("GET", `/api/skills/${id}`)).status).toBe(404);
     const edited = await request("POST", `/api/jobs/${selected.id}/edit`, { description: "Refine first", skillIds: [id] });

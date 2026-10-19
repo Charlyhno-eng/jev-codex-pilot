@@ -37,7 +37,7 @@ describe("workspace API", () => {
   it.each(["localhost", "127.0.0.1"])("allows folder selection through the local Vite fallback port on %s", async host => {
     expect(await request("POST", "/api/system/select-directory", { host: `${host}:5174`, origin: `http://${host}:5174`, "sec-fetch-site": "same-origin" })).toEqual({ status: 200, body: { path: state.root } });
   });
-  it.each([
+  it.each<Record<string, string>>([
     { host: "localhost:3000", origin: "http://localhost:5174", "sec-fetch-site": "same-origin" },
     { host: "localhost:5174", origin: "http://attacker.example:5174", "sec-fetch-site": "cross-site" },
     { host: "attacker.example:5174", origin: "http://attacker.example:5174", "sec-fetch-site": "same-origin" }
@@ -110,7 +110,7 @@ describe("workspace API", () => {
     expect((await request("GET", "/api/projects/project/files?path=../outside")).status).toBe(400);
     expect((await request("GET", "/api/projects/missing/files")).status).toBe(404);
   });
-  it.each([
+  it.each<Record<string, string>>([
     { host: "localhost:3000" },
     { host: "evil.example:3000", origin: "http://localhost:5173" },
     { host: "localhost:3000", origin: "https://evil.example" },
@@ -133,7 +133,7 @@ describe("lightweight ticket API", () => {
       tasks: [{ description: id }], createdAt: `2026-10-08T12:00:0${index}.000Z`,
       updatedAt: "2026-10-08T12:00:05.000Z", status: id === "live" ? "RUNNING" : "SUCCESS", attempts: 1,
       output: `private logs for ${id}`,
-      execution: { phase: "IMPLEMENTING", model: "sol", reasoning: "low", startedAt: "2026-10-08T12:00:00.000Z", lastActivityAt: "2026-10-08T12:00:05.000Z", verification: "not_run", events: [{ id: `event-${id}`, kind: "command", title: "Command", detail: "Long command output", timestamp: "2026-10-08T12:00:05.000Z", status: "success" }] }
+      execution: { phase: "WORKING", model: "sol", reasoning: "low", startedAt: "2026-10-08T12:00:00.000Z", lastActivityAt: "2026-10-08T12:00:05.000Z", verification: "not_run", events: [{ id: `event-${id}`, kind: "command", title: "Command", detail: "Long command output", timestamp: "2026-10-08T12:00:05.000Z", status: "success" }] }
     }));
   });
   it("omits all logs from summaries while preserving full default responses", async () => {

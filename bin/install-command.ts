@@ -6,9 +6,9 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const marker = "Installed by JEV Codex Pilot";
-const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
+const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-function writeLauncher(path, content) {
+function writeLauncher(path: string, content: string) {
   if (existsSync(path) && !readFileSync(path, "utf8").includes(marker)) {
     throw new Error(`A different command already exists at ${path}. It was not replaced.`);
   }
@@ -16,7 +16,7 @@ function writeLauncher(path, content) {
   writeFileSync(path, content);
 }
 
-function updateProfile(path, statement) {
+function updateProfile(path: string, statement: string) {
   const start = "# >>> jc-pilot PATH >>>";
   const end = "# <<< jc-pilot PATH <<<";
   const old = existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -29,19 +29,28 @@ function updateProfile(path, statement) {
   writeFileSync(path, content);
 }
 
+interface InstallCommandOptions {
+  platform?: string;
+  userDirectory?: string;
+  environment?: NodeJS.ProcessEnv;
+  entry?: string;
+  node?: string;
+  execute?: (command: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: "pipe" }) => unknown;
+}
+
 /** Install a user-owned launcher; never use the global npm prefix. */
 export function installCommand({
   platform = process.platform,
   userDirectory = homedir(),
   environment = process.env,
-  entry = fileURLToPath(new URL("./jc-pilot.mjs", import.meta.url)),
+  entry = fileURLToPath(new URL("./jc-pilot.ts", import.meta.url)),
   node = process.execPath,
   execute = execFileSync
-} = {}) {
+}: InstallCommandOptions = {}) {
   if (platform === "win32") {
     const directory = join(environment.LOCALAPPDATA || join(userDirectory, "AppData", "Local"), "jc-pilot", "bin");
     const launcher = join(directory, "jc-pilot.cmd");
-    const batchQuote = value => `"${value.replaceAll("%", "%%")}"`;
+    const batchQuote = (value: string) => `"${value.replaceAll("%", "%%")}"`;
     writeLauncher(launcher, `@rem ${marker}\r\n@echo off\r\nsetlocal DisableDelayedExpansion\r\n${batchQuote(node)} ${batchQuote(entry)} %*\r\nexit /b %errorlevel%\r\n`);
     const script = "$bin = $env:JEV_INSTALL_BIN; $old = [Environment]::GetEnvironmentVariable('Path', 'User'); if (($old -split ';') -notcontains $bin) { [Environment]::SetEnvironmentVariable('Path', ($bin + ';' + $old), 'User') }";
     execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { env: { ...environment, JEV_INSTALL_BIN: directory }, stdio: "pipe" });

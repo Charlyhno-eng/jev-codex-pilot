@@ -1,11 +1,30 @@
-import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { installCommand } from "../../bin/install-command.mjs";
+import { installCommand } from "../../bin/install-command.js";
 
 describe("user command installation", () => {
+  it.each(["jc-pilot.ts", "jc-pilot.mjs"])("launches %s from another directory with native TypeScript support", entry => {
+    const root = mkdtempSync(join(tmpdir(), "jev-typescript-cli-"));
+    const project = join(root, "target project");
+    mkdirSync(project);
+    try {
+      const installed = installCommand({
+        platform: "linux", userDirectory: join(root, "home"), environment: { SHELL: "/bin/bash" },
+        ...(entry.endsWith(".mjs") ? { entry: fileURLToPath(new URL(`../../bin/${entry}`, import.meta.url)) } : {})
+      });
+      const output = execFileSync(installed.launcher, ["--help"], { cwd: project, encoding: "utf8", timeout: 15_000 });
+      expect(output).toContain("Usage:");
+      expect(output).toContain("run \"describe one task\"");
+      expect(readdirSync(project)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("preserves the target directory and arguments through an installed launcher", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-command-"));
     const userDirectory = join(root, "user's home $with spaces");
@@ -47,7 +66,7 @@ describe("user command installation", () => {
     expect(readFileSync(join(userDirectory, ".bash_profile"), "utf8")).toContain("# login settings");
     expect(readFileSync(join(userDirectory, ".bashrc"), "utf8")).toContain("jc-pilot PATH");
     const fish = installCommand({ platform: "linux", userDirectory, environment: { SHELL: "/usr/bin/fish" } });
-    expect(readFileSync(fish.profiles[0], "utf8")).toContain("fish_add_path");
+    expect(readFileSync(fish.profiles![0], "utf8")).toContain("fish_add_path");
     expect(fish.instruction).toContain("source ");
   });
 

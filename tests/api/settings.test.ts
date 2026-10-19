@@ -41,7 +41,7 @@ beforeEach(async () => {
 });
 
 describe("provider settings API", () => {
-  it.each([
+  it.each<Record<string, string>>([
     { host: "attacker.example:3000" },
     { host: "localhost:3000", origin: "https://attacker.example" },
     { host: "localhost:3000", origin: "null" },

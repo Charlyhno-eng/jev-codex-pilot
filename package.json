@@ -3,16 +3,19 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "bin": {
-    "jc-pilot": "./bin/jc-pilot.mjs"
+    "jc-pilot": "./bin/jc-pilot.ts"
   },
   "scripts": {
-    "setup:cli": "node bin/install-command.mjs",
+    "setup:cli": "node bin/install-command.ts",
     "dev": "concurrently -k \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch src/api/server.ts",
     "dev:web": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
-    "lint": "eslint . --ext .js,.mjs,.cjs,.ts,.tsx",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config . --ext .js,.mjs,.cjs,.ts,.tsx",
     "start": "tsx src/api/server.ts",
     "test": "vitest run"
   },

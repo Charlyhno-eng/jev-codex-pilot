@@ -383,7 +383,7 @@ printf '%s\\n' '{"type":"turn.completed"}'
 
     const prepared = await orchestrator.prepare(queue.get(job.id)!);
 
-    expect(prepared.analysis).toBe(analysis);
+    expect(prepared?.analysis).toBe(analysis);
     expect(evaluations).toBe(0);
   });
 

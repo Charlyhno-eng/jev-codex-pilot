@@ -54,6 +54,8 @@ Saved executions carry their provider ID and display name. Threads and automatic
 
 ### Install
 
+Use Node.js 24 or later. JEV’s CLI entry points and ESLint configuration run directly from TypeScript using Node’s native type stripping. Existing installed CLI launchers remain compatible through a minimal JavaScript forwarding entry point.
+
 ```bash
 npm install
 ```
@@ -72,7 +74,7 @@ During development, Codex can request additional implementation turns with stron
 
 JEV scores expected-outcome clarity and task complexity when the ticket is added to the Kanban board. Clarity is advisory; the 1–5 complexity score selects the default model and reasoning route. Neither score blocks execution.
 
-GitHub Actions runs `.github/workflows/ci.yml` on pushes and pull requests. It installs dependencies from the lockfile, builds and type-checks the app, checks for unused TypeScript declarations, runs ESLint, and runs the test suite. Run the same checks locally with `npm run build && npm run lint && npm test`. The workflow can also be started manually from the Actions tab.
+GitHub Actions runs `.github/workflows/ci.yml` on pushes and pull requests. It installs dependencies from the lockfile, builds and type-checks the app, CLI, configuration, and tests, checks for unused TypeScript declarations, runs ESLint, and runs the test suite. Run the same checks locally with `npm run build && npm run lint && npm test`. The workflow can also be started manually from the Actions tab.
 
 ---
 
@@ -107,6 +109,8 @@ Open **Skills**, immediately to the right of **Codex console**, to browse a libr
 The bundled library contains only **readme-writing** and **anatomy**. The previous general design, performance, and architecture skills have been removed from the catalog and distribution. Existing tickets retain their frozen skill versions, including resources and usage guidance from retired skills. Imported skills remain supported. `skills/catalog.json` records the SHA-256 hashes of bundled resources. The library opens details in a keyboard-accessible popup with instructions and included resources.
 
 The **readme-writing** skill requires a real banner first, one application title followed by a separator, 8–13 concise English description lines, an optional existing visual, and a final Quickstart with verified Install and Run commands. Missing banners or commands are reported rather than invented. The detailed product sections in this project are not part of that compact template.
+
+JEV’s application and tooling sources use TypeScript. Anatomy retains its original JavaScript resources as a pinned upstream snapshot so its standalone Node/browser examples and catalog integrity hashes remain valid.
 
 The **anatomy** skill from [wheresryan22/anatomy](https://github.com/wheresryan22/anatomy) creates detailed interactive isometric technical illustrations using SVG, with optional WebGL and 3D. Its original instructions, complete references, kit, runtime scripts, and example sources are included under the MIT license. The bundled snapshot is pinned to commit `1482e8469b0a9e0d8cc18ea2740a01423d29ae80`; `UPSTREAM.md` records provenance and omitted generated HTML/PDF exports, test files, and repository media. Example pages can be rebuilt from their sources. Figure generation uses Node.js 20.10+; browser verification requires Chrome or Chromium. Attach Anatomy to a ticket through **Add skill**; its instructions and resources are frozen with that ticket and passed to the coding provider on explicit Run. Browsing the library runs no scripts and publishes nothing.
 

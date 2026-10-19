@@ -123,7 +123,7 @@ printf solution > result.txt
 printf '%s\\n' '{"type":"turn.completed"}'
 `);
     const at = new Date().toISOString();
-    queue.transition(job.id, "RUNNING", { execution: { phase: "QUEUED", model: "test-model", reasoning: "high", startedAt: at, lastActivityAt: at, threadId: "saved-thread", continuationPending: true, events: [] } });
+    queue.transition(job.id, "RUNNING", { execution: { phase: "QUEUED", model: "test-model", reasoning: "high", startedAt: at, lastActivityAt: at, threadId: "saved-thread", continuationPending: true, verification: "not_run", events: [] } });
     queue.recoverInterrupted(() => false);
     const restored = new JobQueue(data);
     expect(restored.get(job.id)).toMatchObject({ status: "PENDING", analysis: { model: "sol", reasoning: "high" }, execution: { continuationPending: true } });
