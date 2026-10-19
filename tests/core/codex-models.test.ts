@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { codexModelId, defaultRoute, MODEL_LEVELS, readCodexSettings, REASONING_LEVELS } from "../../src/core/codex-models.js";
-import { selectCodexModelId } from "../../src/core/codex-catalog.js";
+import { defaultRoute, MODEL_LEVELS, readModelSettings, REASONING_LEVELS } from "../../src/core/model-routing.js";
+import { selectCodexModelId, configuredCodexModelId as configuredModelId } from "../../src/core/execution/codex/catalog.js";
 
 afterEach(() => { delete process.env.JEV_CODEX_MODEL_LUNA; });
 
@@ -12,7 +12,7 @@ describe("Codex model catalog", () => {
     expect(MODEL_LEVELS).toEqual(["luna", "sol", "astra"]);
     expect(REASONING_LEVELS).toEqual(["low", "medium", "high", "xhigh", "max"]);
     process.env.JEV_CODEX_MODEL_LUNA = "gpt-future-luna";
-    expect(codexModelId("luna")).toBe("gpt-future-luna");
+    expect(configuredModelId("luna")).toBe("gpt-future-luna");
   });
 
   it("applies the five configured default routes", () => {
@@ -28,7 +28,7 @@ describe("Codex model catalog", () => {
   it("picks a renamed installed model when the old ID disappears", () => {
     const available = [{ model: "gpt-5.7-luna", displayName: "GPT-5.7 Luna" }, { model: "gpt-5.7-terra", displayName: "GPT-5.7 Terra" }];
     expect(selectCodexModelId("luna", available)).toBe("gpt-5.7-luna");
-    expect(selectCodexModelId("sol", available)).toBe(codexModelId("sol"));
+    expect(selectCodexModelId("sol", available)).toBe(configuredModelId("sol"));
   });
 
   it("loads each complexity route from TOML and permits a newly configured model", () => {
@@ -37,7 +37,7 @@ describe("Codex model catalog", () => {
       .replace('astra = "gpt-6-astra"', 'astra = "gpt-6-astra"\nnova = "gpt-next-nova"')
       .replace('routes = ["sol:low"]', 'routes = ["nova:high", "sol:medium"]');
     writeFileSync(file, content);
-    expect(readCodexSettings(file).complexityRoutes[3]).toEqual([
+    expect(readModelSettings(file).complexityRoutes[3]).toEqual([
       { model: "nova", reasoning: "high" }, { model: "sol", reasoning: "medium" }
     ]);
     expect(defaultRoute(1)).toEqual({ model: "luna", reasoning: "medium" });
@@ -46,6 +46,6 @@ describe("Codex model catalog", () => {
   it("rejects routes whose model or reasoning is not configured", () => {
     const file = join(mkdtempSync(join(tmpdir(), "jev-invalid-routes-")), "model.toml");
     writeFileSync(file, readFileSync(resolve("config/model.toml"), "utf8").replace("sol:high", "unknown:high"));
-    expect(() => readCodexSettings(file)).toThrow(/Invalid complexity 5 route/);
+    expect(() => readModelSettings(file)).toThrow(/Invalid complexity 5 route/);
   });
 });

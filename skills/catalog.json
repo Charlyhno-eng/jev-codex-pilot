@@ -1,183 +1,5 @@
 [
   {
-    "directory": "frontend-design",
-    "category": "design",
-    "provenance": {
-      "repository": "anthropics/skills",
-      "url": "https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md",
-      "license": "Apache-2.0",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE.txt": "e4a4e5181833a8562fc94b5df9e7faa4e58d7cc4782dea4217edd062c741d87c",
-      "SKILL.md": "9dad2a0a1107a047b3d03fb41794d9676873e7724b25a4f8f764cb300377f5ec"
-    }
-  },
-  {
-    "directory": "qt-qml",
-    "category": "design",
-    "provenance": {
-      "repository": "TheQtCompanyRnD/agent-skills",
-      "url": "https://github.com/TheQtCompanyRnD/agent-skills/blob/main/skills/qt-qml/SKILL.md",
-      "license": "BSD-3-Clause",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE": "d50f9c4b504974212047cc9cb45920f28a79d7bf5591c0ac5f4cc9bab3132425",
-      "SKILL.md": "1654b893d584cc660d14043ed0b2716b2e08a9f10734bc13aa34a1dfbf1f87b2"
-    }
-  },
-  {
-    "directory": "py-side6-gui-design",
-    "category": "design",
-    "provenance": {
-      "repository": "Joey-1123/opencode-v2-skills",
-      "url": "https://github.com/Joey-1123/opencode-v2-skills/blob/main/skills/py-side6-gui-design/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "SKILL.md": "9aebf690fb14ee3d983a8debedd5b90cb128a33cfa507022f7bc7de21eb0a3b0"
-    }
-  },
-  {
-    "directory": "gpui-kit-design-guides",
-    "category": "design",
-    "provenance": {
-      "repository": "longbridge/gpui-kit",
-      "url": "https://github.com/longbridge/gpui-kit/blob/main/skills/gpui-kit-design-guides/SKILL.md",
-      "license": "Apache-2.0",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE-APACHE": "4393547797060d439361135b28bf2d30f304c98304365c4c55526272d942d1e1",
-      "SKILL.md": "4fee86a7ecff0375a1bf331238f6f37f00af231d6c8081cd7cb620b170f0c4cc",
-      "references/coding-guides.md": "a31ff82047a56f99c2dde0d6d7fafc3f447133054cdf897f79ca38459c9187ea",
-      "references/design-guides.md": "f0648824af604c710c6aa6d0db48ede0eb62fbf0b5a38233a02fc2cc74442887"
-    }
-  },
-  {
-    "directory": "vercel-react-best-practices",
-    "category": "performance",
-    "provenance": {
-      "repository": "vercel-labs/agent-skills",
-      "url": "https://github.com/vercel-labs/agent-skills/blob/main/skills/react-best-practices/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "AGENTS.md": "a08cff108b1e525f26e459dd60f6d180de693846e5b3f028c6a5272e52956267",
-      "SKILL.md": "1fb799446d4cc600f2ddbf8dc9054a1eae6a7d3c5c4d4d6628c9b81a65b38af9",
-      "rules/async-parallel.md": "5b8dec0b93eb60b5038559cbe69fa9803e053c8888228c37515e60ae51ec0300",
-      "rules/bundle-barrel-imports.md": "8597179435a4dcecc50b2d304ed211cd34dd894ebfa93c4ce9492efe34c87e2e"
-    }
-  },
-  {
-    "directory": "vercel-composition-patterns",
-    "category": "architecture",
-    "provenance": {
-      "repository": "vercel-labs/agent-skills",
-      "url": "https://github.com/vercel-labs/agent-skills/blob/main/skills/composition-patterns/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "AGENTS.md": "997b7ce5cd1e618f02c79592a59d61b4c5dbdc95c0c107993c2d3a31ea9bf693",
-      "SKILL.md": "3392a387e7ab07aae3abc03d67acc128bd82f0674898e6f8ce315a26350fc478",
-      "rules/architecture-avoid-boolean-props.md": "22fe0ad2db132c88de64fa9a7a24a35e517c908a689936249308931169296649",
-      "rules/architecture-compound-components.md": "b734958ee4ea2536bae31aaa5823da2eec0df7e85a702397150e8fc30b07ff7b",
-      "rules/patterns-children-over-render-props.md": "4588371ca26270798c3ea54786b69e0b9ee792d76f3c0a787ba4027e2a7f2008",
-      "rules/patterns-explicit-variants.md": "71d03a3f04765e7dd96fc68f9567907f0505b037eaed6b5520d57affd1b7eb29",
-      "rules/react19-no-forwardref.md": "593983fbaf845e714d3ac1f4de983b03578c2633829522d35b7bedea03887843",
-      "rules/state-context-interface.md": "58a9a8e81e093f1055ca1c293d44a7b988099d446c4bffea5df7e384c18229ce",
-      "rules/state-decouple-implementation.md": "47929bdfb3f61f1980a43ae5968dd20a517d83816151330d02abb8a752e97671",
-      "rules/state-lift-state.md": "f475eb1e1667f15581ee5c62c3fd7a651d3db061e97867856e0c9979569a1891"
-    }
-  },
-  {
-    "directory": "python-performance-optimization",
-    "category": "performance",
-    "provenance": {
-      "repository": "wshobson/agents",
-      "url": "https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/python-performance-optimization/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE": "822c0850790a9ab30cd325176c286098a6136a380aeb9e213286f187484e8acd",
-      "SKILL.md": "95552342cd2d2e2ca6ef7912776becd1b7eb15425c741199b1b6ddf3ef6b4ba2",
-      "references/advanced-patterns.md": "63562f474e09ed7700d62d81e4a92d41a67e9305e12b7a39cc4572eb497fdd78",
-      "references/details.md": "0a8ad2c5fc64a613d207c1e8750f52538f590a8c0fa20405ffe33208e6b701be"
-    }
-  },
-  {
-    "directory": "python-project-structure",
-    "category": "architecture",
-    "provenance": {
-      "repository": "wshobson/agents",
-      "url": "https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/python-project-structure/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE": "822c0850790a9ab30cd325176c286098a6136a380aeb9e213286f187484e8acd",
-      "SKILL.md": "db19e547d8eb3329ee2a2465350d6876c1e8be8be9e6f1f8881e24aecf804af6"
-    }
-  },
-  {
-    "directory": "python-design-patterns",
-    "category": "architecture",
-    "provenance": {
-      "repository": "wshobson/agents",
-      "url": "https://github.com/wshobson/agents/blob/main/plugins/python-development/skills/python-design-patterns/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE": "822c0850790a9ab30cd325176c286098a6136a380aeb9e213286f187484e8acd",
-      "SKILL.md": "1d606f163661e05ba32ba75db401214f29ff1f1fe67722358912a3c12b0f3f6b",
-      "references/details.md": "82b8fd8e89577ed3cef358d49ec59de9818ff860c2730132b880c7aeed1ddeab"
-    }
-  },
-  {
-    "directory": "rust-engineer",
-    "category": "performance",
-    "provenance": {
-      "repository": "Jeffallan/claude-skills",
-      "url": "https://github.com/Jeffallan/claude-skills/blob/main/skills/rust-engineer/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE": "93cf5db3784b217e63287d2609852cc1c9a17ec7ebd7d1f2367fcdefc4c63ec0",
-      "SKILL.md": "b0dc43f3e69baf2dffabd3e09b78bf7452a5645f3d949bab3ecf34eed5d69cfd",
-      "references/async.md": "e9eb292cbd2280778b07d12ddb968a94bb02eddd340b7fc8327caf568250513a",
-      "references/ownership.md": "319ec77235c9246e9005b122c183d099451214deab8b19467a7bf20510bb7f27"
-    }
-  },
-  {
-    "directory": "rust-skills",
-    "category": "architecture",
-    "provenance": {
-      "repository": "leonardomso/rust-skills",
-      "url": "https://github.com/leonardomso/rust-skills/blob/master/SKILL.md",
-      "license": "MIT",
-      "retrievedAt": "2026-10-09"
-    },
-    "fileHashes": {
-      "LICENSE": "2ea362999eeb2c77bd04596dca64b5dcd690face4823bbf2366e37dbea3894eb",
-      "SKILL.md": "a2b87865a250de7e457adb4eb53c4a22868d57b31b06bb1a0790b5c4670248e3",
-      "rules/err-result-over-panic.md": "99ff60c01aa467a0d79fc0bc4466e758afe29d888f07a2c6a65e6f43ee731411",
-      "rules/err-thiserror-lib.md": "8079cbd9d620205e2a20d7b57828b3c42c1b67f976ebb6a77bb7c7757cdc4c8b",
-      "rules/own-arc-shared.md": "1d91e6dc2d95fdeb78e19e1ca8ff75820a53b47bfcdc5b4101b085b74469bbf4",
-      "rules/own-borrow-over-clone.md": "c087d7eeea2f304ca57c6abda7acfce7fe23d62c379185fe6f36c4f152e5b44a",
-      "rules/own-copy-small.md": "98852e94564d0250dec396d3e7fdbf94f2bf68099917e937a85d57327b5f066f",
-      "rules/own-move-large.md": "e4f1a0abbbc0e3ced86bd76496bbfd5e1a65dc207a4444553d9fb7e19e94982d",
-      "rules/own-rwlock-readers.md": "d6a204b6bc1aa35cb46058330121c2f0121f241cc6dd2554f37d3ab5c90930f9",
-      "rules/own-slice-over-vec.md": "408cd5ece94d6764eb8621dcc702232b5ec554395af64e4798026cecbed88671"
-    }
-  },
-  {
     "directory": "readme-writing",
     "category": "documentation",
     "fileHashes": {
@@ -185,16 +7,97 @@
     }
   },
   {
-    "directory": "rust-low-level-performance",
-    "category": "performance",
-    "caution": {
-      "title": "Advanced \u00b7 profile first",
-      "useWhen": "Use for a measured CPU or memory hotspot, or a specific hardware requirement.",
-      "avoidWhen": "Avoid for routine Rust work, I/O waits, or speculative optimization. Unsafe and assembly need proven invariants and target validation."
+    "directory": "anatomy",
+    "category": "design",
+    "provenance": {
+      "repository": "wheresryan22/anatomy",
+      "url": "https://github.com/wheresryan22/anatomy/blob/1482e8469b0a9e0d8cc18ea2740a01423d29ae80/SKILL.md",
+      "license": "MIT",
+      "retrievedAt": "2026-10-19"
     },
     "fileHashes": {
-      "SKILL.md": "29ee1fed0c7475effcbe708b384349c20b6d0c39aeb9002e022b72d75bc7d7fd",
-      "references/kernel-guide.md": "15dbd2e988cda424809b413758b68505c71d95b8e0d06fb9ae69b8cb3af15b1b"
+      "LICENSE": "87c078ab9d90a3044f359e6b563d4e6afea7aa060897cf4f21618687b3856796",
+      "SKILL.md": "3423ada45a05033bb6e320dfc3b3ac832569969a5afb059bbfc9096c5cf0c71b",
+      "UPSTREAM.md": "ff1e66a14a01fd5708a89c02903dcea07925287d1c77a8cf361f8192868e764b",
+      "agents/openai.yaml": "254b17510460bc5151295b1e1e40b6a1aceeff60a0dda4e9594adcfa36819526",
+      "examples/arcade-cabinet/arcade-cabinet.css": "a0ea7bce89a665ddd13f72daf31849c07d8b517b66a3d555543aa506b8933629",
+      "examples/arcade-cabinet/build.mjs": "be649f9fed8f1841b96546577729096af63670ef7b83d4cec32716df3429a03d",
+      "examples/arcade-cabinet/live.js": "d9f02ea9193f3109501333bdfb4ab297a71457aaba431f05f5df667ea8c40c8f",
+      "examples/arcade-cabinet/parts.mjs": "3ba74b8c55e72933b1e119e3d24c939f654b2c43d41ff26cf855f064cbc7d2a3",
+      "examples/arcade-cabinet/screen.mjs": "8fbb8aebb1d657508979ec9b58a29281c71403396df1fcdc6f8f834fe9097be9",
+      "examples/arcade-cabinet/sheet.mjs": "b5f71ec5682e49c954ba344ee66a2f75d06f76fe7006e6a714c71cc0552eff81",
+      "examples/desk-computer/build.mjs": "d378f9814acf75bc915921d4f2d83ed1eb4991a8b4298eb0de0e10383b2ff66d",
+      "examples/dial-indicator/build.mjs": "e4eaa2324af7f2630650ca72e52a78d56159213a786e14fba8321344789f990d",
+      "examples/push-button/build.mjs": "830973d137441897f03f55d2f19ba0a5f9b22221e72bf5060809753ebfb02e45",
+      "examples/push-button/sheet.mjs": "be472b279a847016d4ea3ca4ab28365998e1f737248049248270a4d7471db828",
+      "examples/raptor-engine/build.mjs": "cf5dc0d679bee415fc36c74f2e67d4620e106011037dd3a0d44dcdc559084427",
+      "examples/raptor-engine/live.js": "03d801ef2b75e17a38ebc3d5cb9178747226ea8c2e0c527caafb9c72844d88d8",
+      "examples/raptor-engine/raptor.css": "f850575feeeacac8ef5d9d9c49359f4deaef848666c68a4dafa9727fe926cd6e",
+      "examples/raptor-engine/sheet.mjs": "20a125dc6db40c7e874e3c928e5e119ad4e998387b7e0bf62bb612d6d9815c48",
+      "examples/ripple-tank/build.mjs": "5a5b846bcd146630be3eafb73ebd04cfdd2101d05def15a877fff7188822b493",
+      "examples/ripple-tank/live.js": "5bff25143635ff13af50a7bee015289d8ada5a2f5b13c0cdb8a1516897f03944",
+      "examples/ripple-tank/model.mjs": "f6315aa53e80c0c69bf3c52baf0a1340ca4daacfae80245def02f357c2d33882",
+      "examples/ripple-tank/ripple.css": "1bf7a778f0b50928adcd54e67c44aa2b12a6877b45f15a0b697d87ab7be0dd5c",
+      "examples/spot-plate/art.tsx": "aecef8d6ee247e99d52717371a319283af8b1bbba2adfcdd4d012553d2963b38",
+      "examples/spot-plate/drops.ts": "9bec874c5e324d69a25cc9085ecf2c5d9c3c2e3bd1a8c667c45e048301b899d4",
+      "examples/spot-plate/fan.ts": "648c1d946e9512afcae60e077d2436926ca1ea94b02c944df8624419812077b1",
+      "examples/spot-plate/figure.tsx": "b9db1ef99bfac58d55d0506f05e0c178e5c9566c61cbf26826ea25cfaa57805f",
+      "examples/spot-plate/geometry.ts": "faf7d6bf1b475daacd4751687d409d7a5c03a6c2bb216ae81beadce5a3cea99a",
+      "examples/spot-plate/live.tsx": "e96fd47aa4ab250a6b2c6fe3c6c3c96d4bcf737dff7f084d4912f5d1ef195116",
+      "examples/spot-plate/rig.ts": "b19fc1637a1f4c411c23f34c7a48361f308402b15b11efc44fb6555e8f67ceea",
+      "examples/spot-plate/spot-plate.css": "b31e4c8e02f4de0b77fe0a71718f59d7df2e3abc3d9772f802e00fc3d8a582bd",
+      "examples/test-rig/art.tsx": "a6b8c1094a9402380d9835ecedbcc677254686b7391027a20da10fc8bf24dae5",
+      "examples/test-rig/figure.tsx": "2dbaef167b9a6a96de74357fc57ae2a650159007852d3d4e8c471b8837e463a9",
+      "examples/test-rig/geometry.ts": "b8c275eb58b093a85c312f90dc5d79fd9d9a93ae266e42a8a6fa7f6f9aaeb571",
+      "examples/test-rig/live.tsx": "46a4c338a2805fc0078a20d6f4e12d9de20fc4145ec051ffce3964b164c5a7da",
+      "examples/test-rig/pose.ts": "380e1d07afcaa3a4e2cd1b13556500f2b336e354fa1c369918b3173f0c9d0866",
+      "examples/test-rig/rig.ts": "9672431d6982acaa7b6f28e88e1371443bd6a10fb906ff52fc7bdb0f5fd88b05",
+      "examples/test-rig/stretch.css": "dd15f4582b5fb9b228dc7e32ef57dbcba0129dad38b36e5707247eeb7a2abe8b",
+      "examples/test-rig/view.ts": "5465a3e122c2074f8de755b874c7bdb783b365e4140e3e741fc91a32cd69500c",
+      "examples/turning-dial/build.mjs": "dcb1b2a1fec2c98c2cea401c6a5b1c7e6545da3b5ea08433cfd72a7f27a49248",
+      "examples/turning-dial/dial.css": "769fc9596dcd2bbc46823d6e2816a3e584b52e0a6db359d93bedce16f354bedd",
+      "examples/turning-dial/live.js": "e872f0d930ba583ce7c4c252a3767aa6b9f6cd1f97fe6dddb212653a0579b41f",
+      "examples/turning-dial/stress.mjs": "6d3aec19d8ce6daadffe15113da9415c2fe084c6407d1bb7fb4b5fec86330314",
+      "kit/audit.mjs": "74e605b5d549c1f31c8a1104db7560057105cf86809bf6ced00e4ac79194c8e2",
+      "kit/canvas-painter.mjs": "1918db10279c9d9df87d7df52c7ed8c2de8acd0bbce214c8f2115a39e7f955ac",
+      "kit/gl-shared.mjs": "8c3773cf3e15844df332db3ba55af940186edb2227201e5839347ecc390c039c",
+      "kit/gl.mjs": "17a477411e0b9fcb8e84e718094eaefa6be2c0b7d6ce15ee03fe8e252944130a",
+      "kit/iso-kit.mjs": "6d3ecc725d30c3b0346da309cf61dfa5a65017c23620bbd4093009d4fb104018",
+      "kit/iso-kit.ts": "e9fc988c61a11bfac1f097e62419915ea86b2130ab091f1b50c0e019c907e253",
+      "kit/iso.css": "ef19bac5a42ba9be42b56b2c1cf7fc7e21d332a8060765e9ca1d987b8ab23924",
+      "kit/lathe.mjs": "a4e7e974b1a37e603ad2b76363b6f9815cc101dfff0ad277a5d4e8f1dc56fccb",
+      "kit/pdf-button.mjs": "884de49c75f11c78a102b4b413006f36b087e0e3bc9f33dc462dc44430d69342",
+      "kit/react/draw.tsx": "d5389bd78aa3d5424a37b1ce6f635bd102eb86faf27d064b10957716278a631c",
+      "kit/react/live.tsx": "6d01fa12bca4ec14d1b7d7d5331d18a997dd3ee131d59dd57f83b932a1705f42",
+      "kit/tube.mjs": "bcb3cc360f6d83e6a5753f4c464b4587ab7965028b05a5d58e285abce58667c9",
+      "kit/turn-audit.mjs": "e4385f1a8a388c4544b49c6677ff8ab7048f7fcfa8cd5fe653d96a4a0df62843",
+      "kit/turn-build.mjs": "0c088efd9f22329d1b0c2190c95e5b5b43a2c46deae6ff047b3166ef643cfa83",
+      "kit/turn-fixed.mjs": "7429b46eb7673aefb6ed90adeaf130c1dafe8e32af038cbde24a04e693d13fc7",
+      "kit/turn.mjs": "cb4b530b5e1750ba0e4fd2367d5f25e00195c0136672aa2ecd665c0622ffd1a2",
+      "references/3d.md": "de58da5415b4c9fe7712b5b71e0868c4d36363d54e4e32d98a6b016363554536",
+      "references/craft.md": "38761fa9b81d66b30e50b05488501d4815830d3627f153d60f76ca783f598936",
+      "references/kit.md": "684672e069fdb52735efabc3f4310dedd840d0c8066a8dc7784be2b7e656be71",
+      "references/motion.md": "dda401ca1b4661a5f0b7c1e33dac6e7e4b8c13d51ca5d9312123a5c02dab320b",
+      "references/print.md": "1b4146c35214f76bf8ddc1765b3d1540d9bdfceba0c641e7b93c33229265c0be",
+      "references/publish.md": "57790e740662bc8f2044ba5f0385598bad955d6a38dd2a47d56d644f21d8deb8",
+      "references/react.md": "76b5cee6e0a7513e3c77a832e3f58b1343806597d469774e1749f141525801fd",
+      "references/verify.md": "fb81437fc5d75094a34432eb6f545644aa228e15173a27d08b3cace912033561",
+      "references/walkthrough.md": "4d157e0169080a6ed44d5b06de0a5de2931baf3d0fac30283d2644dd66506dfa",
+      "references/webgl.md": "fb4e2421c6a705d4ad849c8e516731ebc958bc5ff0855548ff58232b0aa01923",
+      "scripts/capture.mjs": "12e901efe79df75073eeeaf5462ac989a8e2892279253d27f8ee114c54be43d3",
+      "scripts/chrome-port.mjs": "6775d3d389d26f37a52be8358aa88d1dc0aded63cb24ae20a936505a192e5d9d",
+      "scripts/drive.mjs": "49c22499827a2a5effb802513976bcb8b6dfced139bb4d677ff6e9edd2700eec",
+      "scripts/fingerprint.mjs": "1582728c6f70b340f8fdda28f287e6f8d45e291ab739ef9ff527a5374f7b1654",
+      "scripts/inline-kit.mjs": "01e08df7c2556ce52a7e8ed9009a332036b209ab7e42389874af2a65fda6e9db",
+      "scripts/line-ends.mjs": "da79cc624c5bda0cb8af8f864dbe53026e44ca2377dab3665076ad570d804f42",
+      "scripts/lines.mjs": "b0ca73ab3a0d1cd4a28fda933496cbd7384ef315d821b5d2fffae1c704ce79cc",
+      "scripts/print-sheet.mjs": "d2874dd7353a55b1a4aec87bd642fdeb8230a2aadeb33a16ed9cb5bae96d091c",
+      "scripts/print.mjs": "eb3b2c6f45f10c9a66ddd9e7f89867b70c8dcb6a8200ac030028f16df306b6e8",
+      "scripts/publish.mjs": "03400f14063e717a7f05d599d02fc47fd18ba60756f170d6e0ed5065fae1fdbe",
+      "scripts/session.mjs": "8896ea1587a5a612a20db7a7a9310a53387d6eef640277834f7bac7e69109302",
+      "scripts/turn-bench.mjs": "d86cd53e3702fa92e22b4052ee9bf47da10fd0a71401fe477bd8da2fe30b1631",
+      "scripts/turn-check.mjs": "c76f93ad3aad63006b4539dd420d671e4665ac148ba733d3cd50b2ffd4b5c5f2",
+      "scripts/turn-fidelity.mjs": "d033fa1fcff2672db9a823d5155b531d190875a42e2812091cb6079b14d4bf20"
     }
   }
 ]

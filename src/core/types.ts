@@ -1,8 +1,8 @@
 export type Complexity = 1 | 2 | 3 | 4 | 5;
-export type CodexModel = string;
+export type ModelKey = string;
 export type Reasoning = string;
 export type JobStatus = "PENDING" | "RUNNING" | "ESCALATING" | "SESSION_PAUSED" | "SUCCESS" | "FAILED" | "SKIPPED";
-export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "loop" | "quota" | "interruption" | "jev";
+export type JobIssueCategory = "code" | "verification" | "dependency" | "codex" | "agent" | "loop" | "quota" | "interruption" | "jev";
 export type TaskType = "installation" | "feature" | "bugfix" | "ui_ux" | "refactoring" | "testing" | "documentation" | "configuration" | "architecture" | "performance" | "security" | "database" | "research";
 
 export interface TaskSpec {
@@ -14,7 +14,7 @@ export interface JobAttachment {
   id: string;
   name: string;
   mimeType: string;
-  /** Private local path used only when JEV starts Codex with --image. */
+  /** Private local path supplied only when JEV explicitly executes a ticket. */
   path: string;
   size: number;
 }
@@ -30,6 +30,11 @@ export interface ExecutionEvent {
 }
 
 export interface ExecutionState {
+  /** Missing on legacy tickets, whose execution provider was Codex. */
+  providerId?: string;
+  providerName?: string;
+  /** Normalized outcome; raw vendor output is retained only for diagnostics and old history. */
+  implementationBlocked?: boolean;
   phase: ExecutionPhase;
   model: string;
   reasoning: Reasoning;
@@ -45,40 +50,43 @@ export interface ExecutionState {
   threadResumeDisabledAt?: string;
   /** The ticket is progressing through JEV's automatic model escalation ladder. */
   escalationPending?: boolean;
-  /** Whether any attempt in this escalation chain changed project files. */
+  /** The unfinished ticket should resume in its thread without changing its route. */
+  continuationPending?: boolean;
+  /** Whether any attempt in this ticket changed project files. */
   projectChangesDetected?: boolean;
   /** The continuity decision already made for the next queued ticket. */
   reviewedNextTaskId?: string;
   reviewedNextTasks?: string;
   reviewedNextContinuity?: "related" | "unrelated" | "uncertain";
-  usage?: CodexUsage;
-  /** A best-effort account-wide usage snapshot captured from Codex app-server. */
-  accountUsage?: CodexAccountUsage;
-  codexStatus?: CodexStatusSnapshot;
-  /** Planning and reported usage metrics for this Codex execution. */
-  metrics?: CodexExecutionMetrics;
+  usage?: ExecutionUsage;
+  /** A best-effort account-wide usage snapshot captured from the execution provider. */
+  accountUsage?: AccountUsage;
+  /** Historical field name retained for saved queues and API compatibility; contents are provider-neutral. */
+  codexStatus?: ExecutionStatusSnapshot;
+  /** Planning and reported usage metrics for this AI execution. */
+  metrics?: ExecutionMetrics;
   compactedAfterTask?: boolean;
   verification: "not_run" | "build_only" | "tests_passed" | "functional_verified" | "environment_blocked";
   verificationNote?: string;
   events: ExecutionEvent[];
 }
 
-export interface CodexUsage {
+export interface ExecutionUsage {
   input_tokens?: number;
   cached_input_tokens?: number;
   output_tokens?: number;
   reasoning_output_tokens?: number;
 }
 
-export interface CodexExecutionMetrics {
+export interface ExecutionMetrics {
   estimatedTokens: number;
   estimateBasis?: "scope" | "project_history";
   actualTokens?: number;
   turns: number;
-  routes: Array<{ stage: "implementation"; model: string; reasoning: Reasoning; usage?: CodexUsage }>;
+  routes: Array<{ stage: "implementation"; model: string; reasoning: Reasoning; usage?: ExecutionUsage }>;
 }
 
-export interface CodexAccountUsage {
+export interface AccountUsage {
   capturedAt: string;
   lifetimeTokens?: number;
   peakDailyTokens?: number;
@@ -86,16 +94,16 @@ export interface CodexAccountUsage {
   unavailableReason?: string;
 }
 
-export interface CodexStatusWindow {
+export interface ExecutionStatusWindow {
   remainingPercent: number;
   resetsAt?: string;
 }
 
-export interface CodexStatusSnapshot {
+export interface ExecutionStatusSnapshot {
   capturedAt: string;
   context?: { usedTokens: number; windowTokens: number };
-  fiveHour?: CodexStatusWindow;
-  weekly?: CodexStatusWindow;
+  fiveHour?: ExecutionStatusWindow;
+  weekly?: ExecutionStatusWindow;
   unavailableReason?: string;
 }
 
@@ -104,7 +112,7 @@ export interface JevAnalysis {
   /** Advisory score for how clearly the ticket describes its expected result. */
   outcome_clarity_score?: number;
   task_types: string[];
-  model: CodexModel;
+  model: ModelKey;
   reasoning: Reasoning;
   /** Legacy fields retained when reading older ticket history. */
   context_files?: string[];

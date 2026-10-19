@@ -96,6 +96,7 @@ export class ProjectLinterStatus {
 
 /** Adds one visible setup ticket before pending work, leaving execution to an explicit Run. */
 export function ensureProjectLinterTicket(queue: JobQueue, projectId: string, projectPath: string, fresh = true): Job | undefined {
+  if (queue.isProjectLinterDismissed(projectPath)) return undefined;
   const jobs = queue.listProjectExecutionOrder(projectId);
   const existing = jobs.find(job => job.kind === "linter_setup" && !job.archivedAt && ["PENDING", "RUNNING", "ESCALATING", "SESSION_PAUSED", "FAILED"].includes(job.status));
   if (existing) return existing;

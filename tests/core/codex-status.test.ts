@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { codexQuotaWindows, readCodexContext } from "../../src/core/codex-status.js";
+import { codexQuotaWindows, readCodexContext } from "../../src/core/execution/codex/status.js";
 
 describe("Codex status snapshots", () => {
   it("reads the last context reading without exposing rollout content", async () => {

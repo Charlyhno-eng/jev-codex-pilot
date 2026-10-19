@@ -32,19 +32,24 @@ beforeAll(async () => { state.root = mkdtempSync(join(tmpdir(), "jev-skills-api-
 afterAll(() => rmSync(state.root, { recursive: true, force: true }));
 
 describe("skills API and ticket attachment lifecycle", () => {
-  it("exposes advanced guidance in the library, previews, and frozen ticket summaries", async () => {
-    const id = "builtin-rust-low-level-performance";
+  it("exposes only the README and Anatomy built-ins and freezes it without launching execution", async () => {
+    const id = "builtin-readme-writing";
     const library = (await request("GET", "/api/skills")).body;
-    const skill = library.find((item: { id: string }) => item.id === id);
-    expect(skill.caution).toBeDefined();
-    expect((await request("GET", `/api/skills/${id}`)).body.caution).toEqual(skill.caution);
-    const created = await request("POST", "/api/jobs", { projectId: "second", tasks: [{ description: "Optimize a Rust hotspot", skillIds: [id] }] });
+    expect(library.map((item: { id: string }) => item.id)).toEqual([id, "builtin-anatomy"]);
+    expect((await request("GET", "/api/skills/builtin-rust-low-level-performance")).status).toBe(404);
+    const anatomy = (await request("GET", "/api/skills/builtin-anatomy")).body;
+    expect(anatomy.content).toContain("The object is the explanation.");
+    expect(anatomy.provenance.repository).toBe("wheresryan22/anatomy");
+    expect(anatomy.files).toContainEqual({ path: "kit/iso-kit.mjs" });
+    expect(anatomy.files).toContainEqual({ path: "references/craft.md" });
+    expect((await request("GET", `/api/skills/${id}`)).body.content).toContain("Quickstart");
+    const created = await request("POST", "/api/jobs", { projectId: "second", tasks: [{ description: "Write the README", skillIds: [id] }] });
     expect(created.status).toBe(201);
     const job = created.body[0];
-    expect(job.skills[0].caution).toEqual(skill.caution);
+    expect(job.skills[0].id).toBe(id);
     const summaries = (await request("GET", "/api/jobs?view=summary&projectId=second")).body;
     const saved = summaries.find((item: { id: string }) => item.id === job.id).skills[0];
-    expect(saved.caution).toEqual(skill.caution);
+    expect(saved.id).toBe(id);
     expect(saved).not.toHaveProperty("content");
     expect(saved).not.toHaveProperty("path");
     expect(state.runs).toBe(0);
@@ -70,7 +75,7 @@ describe("skills API and ticket attachment lifecycle", () => {
     expect(state.runs).toBe(0);
   });
   it("shares imports across projects and preserves frozen copies when editing after library removal", async () => {
-    expect((await request("GET", "/api/skills")).body).toHaveLength(13);
+    expect((await request("GET", "/api/skills")).body).toHaveLength(2);
     const imported = await request("POST", "/api/skills", { files: skillFiles() });
     expect(imported.status).toBe(201);
     expect(imported.body).not.toHaveProperty("files");
@@ -108,6 +113,6 @@ describe("skills API and ticket attachment lifecycle", () => {
     expect((await request("POST", "/api/skills", { files: skillFiles() }, false)).status).toBe(403);
     expect((await request("DELETE", `/api/skills/${all[0].id}`, undefined, false)).status).toBe(403);
     expect((await request("DELETE", `/api/skills/${all[0].id}`)).status).toBe(400);
-    expect((await request("GET", "/api/skills")).body).toHaveLength(13);
+    expect((await request("GET", "/api/skills")).body).toHaveLength(2);
   });
 });

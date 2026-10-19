@@ -10,17 +10,3 @@ export type PureAnswer =
 
 export type Escalation = { kind: "escalation"; reason: "text_or_code" | "low_confidence" | "jev_unavailable" | "invalid_answer"; questionId: string; confidence?: number };
 export type OffloadResult = { kind: "jev"; answer: PureAnswer } | Escalation;
-
-export type HookEvent = {
-  hook_event_name: "PreToolUse" | "PostToolUse" | "PreCompact" | "SessionStart";
-  session_id?: string;
-  turn_id?: string;
-  tool_use_id?: string;
-  tool_name?: string;
-  cwd?: string;
-  transcript_path?: string | null;
-  tool_input?: unknown;
-  tool_response?: unknown;
-  trigger?: "manual" | "auto";
-  source?: "startup" | "resume" | "clear" | "compact";
-};

@@ -16,8 +16,8 @@ import { SkillStore, SkillValidationError } from "../core/skills.js";
 import { AttachmentStore, type ImageAttachmentInput } from "../core/attachments.js";
 import { selectDirectory } from "../core/native-dialog.js";
 import type { TaskSpec } from "../core/types.js";
-import { COMPLEXITY_ROUTES, MODEL_LEVELS, REASONING_LEVELS } from "../core/codex-models.js";
-import { availableCodexModels, selectCodexModelId } from "../core/codex-catalog.js";
+import { COMPLEXITY_ROUTES, MODEL_LEVELS, REASONING_LEVELS } from "../core/model-routing.js";
+import { createExecutionProvider, findExecutionProvider } from "../core/execution/provider.js";
 import { logJev, logJevApplied, logJevError, logSession } from "../core/jev-logger.js";
 import { acquireApiInstance } from "../core/single-instance.js";
 import { listIdeFiles, readIdeFile } from "../core/ide-files.js";
@@ -32,7 +32,8 @@ const withLanguages = (project: ReturnType<ProjectStore["create"]>) => {
   return { ...project, languages: projectLanguages.get(project.path), linterConfigured: projectLinterStatus.get(project.path, completed.filter(job => job.kind === "linter_setup").flatMap(job => job.linterLanguages ?? []), completed.map(job => job.id).join(",")) };
 };
 const projects = new ProjectStore(resolve(process.cwd(), ".jev"));
-const orchestrator = new Orchestrator(queue);
+const executionProvider = createExecutionProvider();
+const orchestrator = new Orchestrator(queue, { provider: executionProvider });
 orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
 orchestrator.configureHumanReview(projectId => Boolean(projects.get(projectId)?.humanInTheLoop));
 const appConfig = new AppConfigStore();
@@ -104,25 +105,25 @@ function processAlive(pid: number) {
   catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
-/** Stops an orphan only when its PID still belongs to Codex and its heartbeat expired. */
-function stopStaleCodexProcesses() {
+/** Stops an orphan only when its PID still belongs to its recorded AI provider and its heartbeat expired. */
+function stopStaleExecutionProcesses() {
   for (const job of queue.list().filter(item => (item.status === "RUNNING" || item.status === "ESCALATING") && !orchestrator.ownsProjectRun(item.projectId))) {
     const pid = job.execution?.pid;
     const heartbeat = job.execution?.heartbeatAt ?? job.execution?.lastActivityAt;
     if (!pid || !heartbeat || Date.now() - Date.parse(heartbeat) < 30 * 60_000 || !processAlive(pid)) continue;
     let command: string;
     try { command = readFileSync(`/proc/${pid}/cmdline`, "utf8"); } catch { continue; }
-    if (!command.split("\0").some(argument => /(?:^|\/)codex$/.test(argument))) continue;
+    if (!findExecutionProvider(job.execution?.providerId ?? "codex")?.ownsProcess(command.split("\0"))) continue;
     try {
       process.kill(pid, "SIGTERM");
-      logJevError(`Stopped abandoned Codex process ${pid} for task ${job.id.slice(0, 8)} after 30 minutes without a server heartbeat`);
+      logJevError(`Stopped abandoned ${job.execution?.providerName ?? "Codex"} process ${pid} for task ${job.id.slice(0, 8)} after 30 minutes without a server heartbeat`);
     } catch { /* A process that exited here will be recovered on the next check. */ }
   }
 }
 
 /** Recovers abandoned executions without launching Codex without a new user action. */
 function recoverInterruptedWork() {
-  stopStaleCodexProcesses();
+  stopStaleExecutionProcesses();
   for (const job of queue.recoverInterrupted(processAlive, id => orchestrator.ownsProjectRun(id))) {
     logJev(`Task ${job.id.slice(0, 8)} recovered after server interruption; review before relaunching`);
   }
@@ -191,9 +192,8 @@ createServer(async (request, response) => {
       return json(response, 200, { removed: true });
     }
     if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { ok: true, app: "jev-codex-pilot" });
-    if (request.method === "GET" && url.pathname === "/api/codex-models") {
-      const available = await availableCodexModels();
-      return json(response, 200, { models: Object.fromEntries(MODEL_LEVELS.map(tier => [tier, selectCodexModelId(tier, available)])), modelLevels: MODEL_LEVELS, reasoningLevels: REASONING_LEVELS, complexityRoutes: COMPLEXITY_ROUTES });
+    if (request.method === "GET" && (url.pathname === "/api/execution-models" || url.pathname === "/api/codex-models")) {
+      return json(response, 200, { provider: { id: executionProvider.id, name: executionProvider.label }, models: await executionProvider.models(), modelLevels: MODEL_LEVELS, reasoningLevels: REASONING_LEVELS, complexityRoutes: COMPLEXITY_ROUTES });
     }
     if (request.method === "GET" && url.pathname === "/api/jobs") {
       const projectId = url.searchParams.get("projectId") ?? undefined;

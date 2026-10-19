@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { codexHookArgs } from "../../src/core/hooks/codex-config.js";
-import { judgeDiet, postToolUse, smartTruncate } from "../../src/core/hooks/context-diet.js";
+import { codexHookArgs } from "../../src/core/execution/codex/hooks.js";
+import { judgeDiet, postToolUse, smartTruncate } from "../../src/core/execution/codex/context-diet.js";
 import type { JevHookClient } from "../../src/core/hooks/jev-client.js";
 import { offloadDecision, offloadDecisions } from "../../src/core/hooks/offload.js";
-import { gateShell, preToolUseOutput } from "../../src/core/hooks/shell-gate.js";
+import { gateShell, preToolUseOutput } from "../../src/core/execution/codex/shell-gate.js";
 import type { PureAnswer } from "../../src/core/hooks/types.js";
 
 const client = (answers: Record<string, PureAnswer>): JevHookClient => ({
@@ -69,6 +69,6 @@ describe("native Codex hooks", () => {
     expect(args.join(" ")).toContain("hooks.PreToolUse");
     expect(args.join(" ")).toContain("hooks.PreCompact");
     expect(args.join(" ")).toContain("hooks.SessionStart");
-    expect(args.join(" ")).toContain("src/core/hooks/runner.ts");
+    expect(args.join(" ")).toContain("src/core/execution/codex/hook-runner.ts");
   });
 });

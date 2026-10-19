@@ -8,3 +8,5 @@
 @import "./workspace-header.css";
 @import "./board-layout.css";
 @import "./modal-controls.css";
+
+@import "./ticket-issue.css";

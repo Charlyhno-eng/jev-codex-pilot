@@ -63,6 +63,34 @@ describe("default project lint setup", () => {
     expect(ensureProjectLinterTicket(queue, "project", project)?.status).toBe("FAILED");
     expect(queue.list()).toHaveLength(1);
   });
+  it("remembers deleted setup across reloads, rescans, and project re-registration", () => {
+    const { root, project, queue } = setup();
+    writeFileSync(join(project, "app.ts"), "");
+    const ticket = ensureProjectLinterTicket(queue, "project", project)!;
+    queue.removePending(ticket.id);
+    expect(JSON.parse(readFileSync(join(root, "queue", "jobs.json.bak"), "utf8"))).toEqual([]);
+    expect(JSON.parse(readFileSync(join(root, "queue", "dismissed-linter-projects.json.bak"), "utf8"))).toEqual([project]);
+    expect(ensureProjectLinterTicket(queue, "project", project)).toBeUndefined();
+    const restored = new JobQueue(join(root, "queue"));
+    writeFileSync(join(project, "app.py"), "");
+    expect(ensureProjectLinterTicket(restored, "project", project, false)).toBeUndefined();
+    expect(ensureProjectLinterTicket(restored, "registered-again", project)).toBeUndefined();
+    expect(restored.list()).toEqual([]);
+    const other = join(root, "other"); mkdirSync(other); writeFileSync(join(other, "app.ts"), "");
+    expect(ensureProjectLinterTicket(restored, "other", other)?.kind).toBe("linter_setup");
+  });
+  it.each([false, true])("launches implementation without recreating dismissed setup on a %s batch launch", async batch => {
+    const { root, project, queue } = setup(); writeFileSync(join(project, "app.ts"), "");
+    queue.removePending(ensureProjectLinterTicket(queue, "project", project)!.id);
+    const restored = new JobQueue(join(root, "queue"));
+    const work = restored.create("project", project, [{ description: "Implement a feature" }]);
+    const orchestrator = new Orchestrator(restored);
+    const run = vi.spyOn(orchestrator as unknown as { runWithEscalation(job: Job): Promise<Job> }, "runWithEscalation")
+      .mockImplementation(async job => restored.transition(job.id, "SUCCESS")!);
+    if (batch) await orchestrator.runBatch(work.id); else await orchestrator.run(work.id);
+    expect(run.mock.calls.map(([job]) => job.id)).toEqual([work.id]);
+    expect(restored.list()).toHaveLength(1);
+  });
   it("recognizes inherited ESLint setup, Ruff, and existing alternative linters", () => {
     const { project, queue } = setup(); mkdirSync(join(project, "src"));
     writeFileSync(join(project, "src", "app.ts"), "");

@@ -1,3 +1,4 @@
+import { createExecutionProvider } from "../../src/core/execution/provider.js";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,11 +28,11 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"skill-test-thread"}' '{"ty
       process.env.PATH = `${bin}:${originalPath}`;
       const queue = new JobQueue(join(root, "data"));
       const store = new SkillStore(join(root, "data"));
-      const skill = store.list().find(item => item.name === "frontend-design")!;
+      const skill = store.list().find(item => item.name === "anatomy")!;
       const [first, next] = queue.createBatch("project", project, [{ description: "Read UI implementation" }, { description: "Read README" }]);
       const frozen = store.freeze(first.id, store.select([skill.id]));
       queue.update(first.id, { analysis, skills: frozen }); queue.update(next.id, { analysis });
-      const orchestrator = new Orchestrator(queue, async () => analysis, async () => undefined, async () => ({ capturedAt: new Date().toISOString() }), async () => undefined, async () => ({ available: false, reached: false }), async () => ({ capturedAt: new Date().toISOString() }), async () => "related");
+      const orchestrator = new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: async () => ({ capturedAt: new Date().toISOString() }), archiveThread: async () => undefined, readRateLimit: async () => ({ available: false, reached: false }), readStatus: async () => ({ capturedAt: new Date().toISOString() }) }, continuityReviewer: async () => "related" });
       await orchestrator.runBatch(first.id);
       expect(queue.get(first.id)?.status).toBe("SUCCESS"); expect(queue.get(next.id)?.status).toBe("SUCCESS");
       let invocations = readFileSync(calls, "utf8").split("CALL_START\n").slice(1);
@@ -40,7 +41,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"skill-test-thread"}' '{"ty
       expect(firstPrompt).toContain(frozen[0].content); expect(firstPrompt).toContain(frozen[0].path);
       expect(queue.get(first.id)?.execution?.threadId).toBe("skill-test-thread");
       expect(invocations[1]).toContain("resume");
-      expect(invocations[1]).not.toContain("frontend-design");
+      expect(invocations[1]).not.toContain("anatomy");
       expect(invocations[1]).toContain("Disregard skills from previous tickets");
       queue.moveManually(first.id, "PENDING");
       await orchestrator.run(first.id);

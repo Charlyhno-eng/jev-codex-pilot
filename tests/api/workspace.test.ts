@@ -11,6 +11,7 @@ vi.mock("../../src/core/single-instance.js", () => ({ acquireApiInstance: vi.fn(
 vi.mock("../../src/core/queue.js", () => ({ JobQueue: class { flush() {} get(id: string) { return state.jobs.find(job => job.id === id); } createBatch(projectId: string, projectPath: string, tasks: Job["tasks"]) { const jobs = tasks.map((task, index): Job => ({ id: `new-${index}`, projectId, projectPath, tasks: [task], status: "PENDING", attempts: 0, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() })); state.jobs.push(...jobs); return jobs; } update(id: string, patch: Partial<Job>) { const job = this.get(id)!; Object.assign(job, patch); return job; } list() { return state.jobs; } listProjectExecutionOrder(id: string) { return state.jobs.filter(job => job.projectId === id); } } }));
 vi.mock("../../src/core/projects.js", () => ({ ProjectStore: class { touch() {} hasAgents() { return true; } get(id: string) { return id === "project" ? { id, path: state.root, linterEnabled: true, humanInTheLoop: state.humanInTheLoop } : undefined; } setHumanInTheLoop(id: string, humanInTheLoop: boolean) { state.humanInTheLoop = humanInTheLoop; return { ...this.get(id), humanInTheLoop }; } } }));
 vi.mock("../../src/core/app-config.js", () => ({ AppConfigStore: class {}, maskedApiKey: vi.fn() }));
+vi.mock("../../src/core/native-dialog.js", () => ({ selectDirectory: vi.fn(() => state.root) }));
 vi.mock("../../src/core/attachments.js", () => ({ AttachmentStore: class { validate() {} saveForJob() { return []; } } }));
 vi.mock("../../src/core/orchestrator.js", () => ({ Orchestrator: class { configureGitDelivery() {} configureHumanReview() {} ownsTicketRun() { return state.ticketReserved; } approveHumanReview() { if (state.ticketBusy) throw new Error("Wait for the active ticket"); state.approval(); } async prepare(job: Job) { await state.prepare(job); return job; } needsHumanReview() { return state.review; } async runBatch(id: string) { state.runs(id); } async run(id: string) { await state.singleRun(id); } isProjectRunning() { return state.ticketBusy || state.gitBusy; } isProjectGitActionRunning() { return state.gitBusy; } async withProjectGitAction(_id: string, run: () => Promise<unknown>) { return run(); } } }));
 
@@ -33,6 +34,16 @@ beforeAll(async () => {
 afterAll(() => rmSync(state.root, { recursive: true, force: true }));
 
 describe("workspace API", () => {
+  it.each(["localhost", "127.0.0.1"])("allows folder selection through the local Vite fallback port on %s", async host => {
+    expect(await request("POST", "/api/system/select-directory", { host: `${host}:5174`, origin: `http://${host}:5174`, "sec-fetch-site": "same-origin" })).toEqual({ status: 200, body: { path: state.root } });
+  });
+  it.each([
+    { host: "localhost:3000", origin: "http://localhost:5174", "sec-fetch-site": "same-origin" },
+    { host: "localhost:5174", origin: "http://attacker.example:5174", "sec-fetch-site": "cross-site" },
+    { host: "attacker.example:5174", origin: "http://attacker.example:5174", "sec-fetch-site": "same-origin" }
+  ])("rejects folder selection from mismatched or external origins: %j", async headers => {
+    expect((await request("POST", "/api/system/select-directory", headers)).status).toBe(403);
+  });
   it("evaluates saved tickets without starting Codex, preserving analysis failures for review", async () => {
     state.jobs = []; state.runs.mockClear(); state.singleRun.mockClear(); state.prepare.mockClear();
     state.prepare.mockImplementationOnce((job: Job) => {

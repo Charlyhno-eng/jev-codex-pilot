@@ -1,0 +1,13 @@
+.ticket-issue{margin:24px 36px;padding:20px;border:1px solid #813e4d;border-radius:12px;background:#28171e;color:#f5bdc7;display:grid;gap:16px;min-width:0}
+.ticket-issue h3{margin:0;font-size:17px;color:#ffd5dd}
+.ticket-issue dl{margin:0;display:grid;gap:14px}
+.ticket-issue dl>div{display:grid;gap:5px}
+.ticket-issue dt,.ticket-issue>div>b{font-size:11px;font-weight:700;color:#f3a6b7}
+.ticket-issue dd{margin:0;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+.ticket-issue-detail{white-space:pre-wrap}
+.ticket-issue pre{margin:8px 0 0;padding:12px;max-height:320px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#171017;border-radius:7px;font-size:12px;line-height:1.6;color:#edc3cc}
+.ticket-issue p{margin:0;font-size:12px;line-height:1.6}
+.ticket-issue a{color:#9cceff;font-size:13px;justify-self:start}
+.ticket-issue-paused{border-color:#806335;background:#282219;color:#ebd3a7}
+.ticket-issue-paused h3,.ticket-issue-paused dt{color:#ffe0a7}
+@media(max-width:700px){.ticket-issue{margin:16px;padding:16px}}

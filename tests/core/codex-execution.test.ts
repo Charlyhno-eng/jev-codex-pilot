@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { implementationBlocked } from "../../src/core/codex-execution.js";
+import { implementationBlocked } from "../../src/core/execution/codex/outcome.js";
 
 const response = (text: string) => JSON.stringify({ type: "item.completed", item: { type: "agent_message", text } });
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { projectCodexEnv, projectCodexHome, projectCodexStateArgs } from "../../src/core/codex-home.js";
+import { projectCodexEnv, projectCodexHome, projectCodexStateArgs } from "../../src/core/execution/codex/home.js";
 
 const originalHome = process.env.CODEX_HOME;
 let temporary = "";

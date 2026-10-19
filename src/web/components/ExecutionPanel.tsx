@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ExecutionEvent, Job } from "../lib/types.js";
 import { formatNumber, reasoningLabel } from "../lib/format.js";
-import { CodexStatusPanel } from "./CodexStatusPanel.js";
+import { TicketIssue } from "./TicketIssue.js";
+import { ExecutionStatusPanel } from "./ExecutionStatusPanel.js";
+import { formatExecutionConsole } from "../../core/execution/console.js";
 
 type Activity = { id: string; timestamp?: string; title: string; detail?: string; tone: "jev" | "route" | "command" | "complete" | "error" };
 
-/** Shows the decision trail and raw Codex output for one ticket. */
+/** Shows the decision trail and raw provider output for one ticket. */
 export function ExecutionPanel({ job }: { job: Job }) {
   const execution = job.execution;
+  const providerName = execution?.providerName ?? "Codex";
   const consoleRef = useRef<HTMLPreElement>(null);
-  const consoleText = useMemo(() => formatCodexConsole(job.output ?? ""), [job.output]);
+  const consoleText = useMemo(() => formatExecutionConsole(job.output ?? "", execution?.providerId), [job.output, execution?.providerId]);
   const activity = useMemo(() => execution ? buildActivity(job, execution.events) : [], [job, execution]);
   const latestRoute = execution?.metrics?.routes.at(-1);
   const live = job.status === "RUNNING" || job.status === "ESCALATING";
@@ -17,7 +20,7 @@ export function ExecutionPanel({ job }: { job: Job }) {
 
   return <div className="execution-panel execution-dashboard">
     <section className="execution-overview">
-      <div><p className="panel-label">DEVELOPMENT STATUS</p><h3>{statusTitle(job.status, execution?.verification)}</h3><span>{execution?.completedAt ? `Finished ${new Date(execution.completedAt).toLocaleString()}` : execution ? `Started ${new Date(execution.startedAt).toLocaleString()}` : "Waiting for Codex"}</span></div>
+      <div><p className="panel-label">DEVELOPMENT STATUS</p><h3>{statusTitle(job.status, execution?.verification)}</h3><span>{execution?.completedAt ? `Finished ${new Date(execution.completedAt).toLocaleString()}` : execution ? `Started ${new Date(execution.startedAt).toLocaleString()}` : `Waiting for ${providerName}`}</span></div>
       {execution && <div className="execution-facts">
         <span><small>MODEL</small><b>{job.status === "ESCALATING" ? execution.model : latestRoute?.model ?? execution.model}</b></span>
         <span><small>REASONING</small><b>{reasoningLabel(job.status === "ESCALATING" ? execution.reasoning : latestRoute?.reasoning ?? execution.reasoning)}</b></span>
@@ -25,18 +28,16 @@ export function ExecutionPanel({ job }: { job: Job }) {
         <span><small>ACTUAL TOKENS</small><b>{formatNumber(execution.metrics?.actualTokens ?? execution.usage?.input_tokens)}</b></span>
       </div>}
     </section>
-    {execution && <CodexStatusPanel status={execution.codexStatus}/>}
-    {job.error && <div className="execution-error"><b>{issueLabel(job.errorCategory)}</b><span>{job.error}</span></div>}
-    {job.gitDelivery?.status === "failed" && <div className="execution-error"><b>Automatic Git commit failed</b><span>{job.gitDelivery.error}</span></div>}
-    {job.recoveryNote && <div className="verification-note"><b>Interrupted execution</b><span>{job.recoveryNote}</span></div>}
-    {job.status === "SESSION_PAUSED" && <div className="verification-note"><b>Codex quota reached</b><span>{job.sessionResumeAt ? `Development will resume after ${new Date(job.sessionResumeAt).toLocaleString()}.` : "Development will resume when the next Codex session is available."}</span></div>}
-    {execution?.verificationNote && <div className="verification-note"><b>{job.errorCategory === "dependency" ? "Missing verification dependency" : "Verification note"}</b><span>{execution.verificationNote}</span></div>}
+    {execution && <ExecutionStatusPanel status={execution.codexStatus} providerName={providerName}/>}
+    <TicketIssue job={job}/>
+    {!job.error && job.status !== "FAILED" && job.status !== "SESSION_PAUSED" && job.recoveryNote && <div className="verification-note"><b>Interrupted execution</b><span>{job.recoveryNote}</span></div>}
+    {job.status !== "FAILED" && job.status !== "SESSION_PAUSED" && execution?.verificationNote && <div className="verification-note"><b>Verification note</b><span>{execution.verificationNote}</span></div>}
     {execution && <details className="execution-activity">
       <summary><div><p className="panel-label">JEV ACTIVITY</p><h4>Decisions and development log</h4></div><span>{activity.length} events</span><i aria-hidden="true">⌄</i></summary>
       <div className="activity-list">{activity.map(item => <article className={`activity-event ${item.tone}`} key={item.id}><i>{activityIcon(item.tone)}</i><div><div><b>{item.title}</b>{item.timestamp && <time>{new Date(item.timestamp).toLocaleTimeString()}</time>}</div>{item.detail && <p>{item.detail}</p>}</div></article>)}</div>
     </details>}
-    <details className="raw-console" open={live}><summary>Raw Codex console {live ? "· streaming" : ""}</summary><div className="live-console"><pre ref={consoleRef}>{consoleText || "Waiting for the first Codex event…"}{live && <span className="console-cursor">▋</span>}</pre></div></details>
-    {job.output && <details className="raw-output"><summary>View raw Codex JSONL output</summary><pre>{job.output}</pre></details>}
+    <details className="raw-console" open={live}><summary>Raw {providerName} console {live ? "· streaming" : ""}</summary><div className="live-console"><pre ref={consoleRef}>{consoleText || `Waiting for the first ${providerName} event…`}{live && <span className="console-cursor">▋</span>}</pre></div></details>
+    {job.output && <details className="raw-output"><summary>View raw {providerName} output</summary><pre>{job.output}</pre></details>}
   </div>;
 }
 
@@ -50,35 +51,8 @@ function buildActivity(job: Job, events: ExecutionEvent[]): Activity[] {
   return result;
 }
 
-function isVisibleActivity(event: ExecutionEvent) { return event.title !== "Starting Codex" && event.title !== "Codex status checkpoint" && (event.kind === "command" || event.kind === "file" || event.kind === "error" || event.kind === "system"); }
+function isVisibleActivity(event: ExecutionEvent) { return !/^Starting | status checkpoint$/.test(event.title) && (event.kind === "command" || event.kind === "file" || event.kind === "error" || event.kind === "system"); }
 function activityTone(event: ExecutionEvent): Activity["tone"] { if (event.kind === "error" || event.status === "error") return "error"; if (event.kind === "command") return "command"; if (/model changed|reasoning changed|routing|escalat|compact|clear/i.test(event.title)) return "route"; if (/completed|execution completed|verification satisfied/i.test(event.title)) return "complete"; return "jev"; }
 function activityIcon(tone: Activity["tone"]) { return tone === "command" ? ">_" : tone === "route" ? "↗" : tone === "complete" ? "✓" : tone === "error" ? "!" : "J"; }
 function compactDetail(detail?: string) { return detail?.length && detail.length > 1400 ? `${detail.slice(0, 1400)}…` : detail; }
 function statusTitle(status: string, verification?: string) { if (status === "PENDING") return "Ready to resume"; if (status === "RUNNING") return "Development in progress"; if (status === "ESCALATING") return "Ticket escalation in progress"; if (status === "SESSION_PAUSED") return "Development paused"; if (status === "FAILED") return "Development needs attention"; return verification === "environment_blocked" ? "Development completed · checks partly blocked" : "Development completed"; }
-function issueLabel(category?: Job["errorCategory"]) { return ({ code: "Code failure", verification: "Verification unavailable", dependency: "Missing dependency", codex: "Codex error", loop: "Repetition loop stopped", quota: "Codex quota reached", interruption: "Server interruption", jev: "JEV analysis error" } as Record<string, string>)[category ?? ""] ?? "Execution error"; }
-
-function formatCodexConsole(output: string) {
-  return output.split("\n").filter(Boolean).map(line => {
-    if (/^Reading additional input from stdin/i.test(line)) return "";
-    try {
-      const event = JSON.parse(line) as unknown;
-      if (!isRecord(event)) return line.slice(0, 4000);
-      const item = isRecord(event.item) ? event.item : {};
-      if (event.type === "thread.started") return `● Session started  ${String(event.thread_id ?? "")}`;
-      if (event.type === "turn.started") return "✦ Codex is reading the project and planning…";
-      if (event.type === "turn.completed") return `✓ Turn completed  ${JSON.stringify(event.usage ?? {})}`;
-      if (event.type === "turn.failed" || event.type === "error") return `! ERROR  ${JSON.stringify(event.error ?? event.message ?? event)}`;
-      if (item.type === "command_execution") {
-        const command = String(item.command ?? "");
-        const result = String(item.aggregated_output ?? "").trim().slice(-4000);
-        return item.status === "in_progress" ? `$ ${command}` : result || `✓ Command finished with exit code ${String(item.exit_code ?? 0)}`;
-      }
-      if (item.type === "agent_message") return String(item.text ?? "");
-      if (/reason/i.test(String(item.type ?? ""))) return `◆ ${String(item.text ?? "Reasoning…")}`;
-      if (/file|change|patch/i.test(String(item.type ?? ""))) return `◇ Files changed  ${JSON.stringify(item.changes ?? item.path ?? item).slice(0, 4000)}`;
-      return "";
-    } catch { return line.slice(0, 4000); }
-  }).filter(Boolean).join("\n\n");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }

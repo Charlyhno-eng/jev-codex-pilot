@@ -1,7 +1,7 @@
 import { type ReactNode, useState } from "react";
 import type { Job } from "../lib/types.js";
 import { reasoningLabel } from "../lib/format.js";
-import { useCodexModels } from "../hooks/use-codex-models.js";
+import { useExecutionModels } from "../hooks/use-execution-models.js";
 
 const queueStatuses = ["PENDING", "RUNNING", "SUCCESS", "FAILED"] as const;
 
@@ -13,7 +13,7 @@ export function Status({ status }: { status: string }) {
 
 /** Renders the active queue and completed ticket history. */
 export function QueueBoard({ jobs, selectedId, onSelect, onArchive, onEdit, onMove, onReorder, composer }: { composer?: ReactNode; jobs: Job[]; selectedId?: string; onSelect: (job: Job) => void; onArchive: (job: Job, action: "archive" | "unarchive") => Promise<void>; onEdit: (job: Job) => void; onReorder: (job: Job, beforeId: string | null) => Promise<void>; onMove: (job: Job, status: "PENDING" | "SUCCESS") => Promise<void> }) {
-  const { models } = useCodexModels();
+  const { models } = useExecutionModels();
   const modelName = (tier: string) => models[tier] ?? tier;
   const visible = jobs.filter(job => !job.archivedAt && job.status !== "SKIPPED");
   const history = jobs.filter(job => job.archivedAt || job.status === "SKIPPED");

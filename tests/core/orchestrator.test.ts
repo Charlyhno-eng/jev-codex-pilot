@@ -1,16 +1,18 @@
+import { isCompactionComplete } from "../../src/core/execution/codex/lifecycle.js";
+import { createExecutionProvider } from "../../src/core/execution/provider.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JobQueue } from "../../src/core/queue.js";
-import { codexModelId } from "../../src/core/codex-models.js";
-import { isCompactionComplete, Orchestrator } from "../../src/core/orchestrator.js";
+import { configuredModelId } from "../../src/core/model-routing.js";
+import { Orchestrator } from "../../src/core/orchestrator.js";
 import { analyze } from "../../src/core/analyzer.js";
 import type { Complexity, JevAnalysis, TaskType } from "../../src/core/types.js";
 
 vi.mock("../../src/core/project-linter.js", async importOriginal => ({ ...await importOriginal<typeof import("../../src/core/project-linter.js")>(), ensureProjectLinterTicket: vi.fn(() => undefined) }));
 
-vi.mock("../../src/core/codex-status.js", () => ({ readCodexStatusSnapshot: async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", unavailableReason: "Unavailable in this test." }) }));
+vi.mock("../../src/core/execution/codex/status.js", () => ({ readCodexStatusSnapshot: async () => ({ capturedAt: "2026-01-01T00:00:00.000Z", unavailableReason: "Unavailable in this test." }) }));
 
 const originalPath = process.env.PATH;
 const originalCodexHome = process.env.CODEX_HOME;
@@ -40,7 +42,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"missing-project-thread"}' 
       const job = queue.create("project", project, [{ description: "Read project" }]);
       const analysis: JevAnalysis = { complexity: 5, model: "sol", reasoning: "high", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" };
       queue.update(job.id, { analysis });
-      const orchestrator = new Orchestrator(queue, async () => analysis, undefined, accountUsage);
+      const orchestrator = new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), readAccountUsage: accountUsage } });
       const completed = await orchestrator.run(job.id);
       expect(completed.status).toBe("FAILED");
       expect(completed.execution?.events.some(event => event.title === "Execution finalization failed")).toBe(true);
@@ -70,11 +72,11 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"new-thread"}' '{"type":"tu
       queue.update(next.id, { analysis });
       const reviewer = vi.fn(async () => "unrelated" as const);
       const archiver = vi.fn(async () => undefined);
-      const completed = await new Orchestrator(queue, async () => analysis, undefined, accountUsage, archiver, undefined, undefined, reviewer).run(next.id);
+      const completed = await new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), readAccountUsage: accountUsage, archiveThread: archiver }, continuityReviewer: reviewer }).run(next.id);
       expect(completed.status).toBe("SUCCESS");
       expect(reviewer).toHaveBeenCalledOnce();
       expect(reviewer).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ tasks: [{ description: "Unrelated request" }] }));
-      expect(archiver).toHaveBeenCalledWith("old-thread", expect.any(String));
+      expect(archiver).toHaveBeenCalledWith("old-thread", expect.objectContaining({ projectPath: project }));
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
@@ -95,7 +97,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"unconfirmed-thread"}' '{"t
       const analysis: JevAnalysis = { complexity: 1, model: "luna", reasoning: "medium", task_types: ["research"], rationale: [], evaluator: "typesafe-ai/jev" };
       jobs.forEach(job => queue.update(job.id, { analysis }));
       const status = async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 200_000 } });
-      await new Orchestrator(queue, async () => analysis, undefined, accountUsage, undefined, undefined, status, async () => "related").runBatch(jobs[0].id);
+      await new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), readAccountUsage: accountUsage, readStatus: status }, continuityReviewer: async () => "related" }).runBatch(jobs[0].id);
       const completed = queue.get(jobs[0].id)!;
       expect(completed.status).toBe("SUCCESS");
       expect(completed.execution?.compactedAfterTask).toBe(false);
@@ -129,12 +131,12 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"recovered-thread"}' '{"typ
       analysis, attempts: 4, output: oldOutput,
       errorCategory: "interruption",
       recoveryNote: legacy ? "JEV was interrupted during model escalation. Review the partial work before resuming at the selected route." : undefined,
-      execution: { phase: "QUEUED", model: codexModelId("sol"), reasoning: "high", startedAt: now, lastActivityAt: now, threadId: "interrupted-thread", escalationPending: true, verification: "not_run", events: [] }
+      execution: { phase: "QUEUED", model: configuredModelId("sol"), reasoning: "high", startedAt: now, lastActivityAt: now, threadId: "interrupted-thread", escalationPending: true, verification: "not_run", events: [] }
     });
     queue.update(next.id, { analysis });
     queue.recoverInterrupted(() => false);
     const restored = new JobQueue(data);
-    const orchestrator = new Orchestrator(restored, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related");
+    const orchestrator = new Orchestrator(restored, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" });
     const running = orchestrator.runBatch(job.id);
     await vi.waitFor(() => expect(restored.get(job.id)).toMatchObject({ status: "RUNNING", attempts: 5 }));
     expect(restored.get(job.id)?.recoveryNote).toBeUndefined();
@@ -146,15 +148,14 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"recovered-thread"}' '{"typ
     expect(invocations).toHaveLength(2);
     expect(invocations[0]).toContain("resume\n");
     expect(invocations[0]).toContain("interrupted-thread\n");
-    expect(invocations[0]).toContain(`${codexModelId("sol")}\n`);
+    expect(invocations[0]).toContain(`${configuredModelId("sol")}\n`);
     expect(invocations[0]).toContain('model_reasoning_effort="high"');
     expect(invocations[0]).toContain("Inspect the work already made");
   });
 
   it.each([
-    "Implementation complete.",
     "Je ne peux pas l’implémenter dans ce tour : l’espace de travail est toujours en lecture seule. Aucun fichier n’a été modifié."
-  ])("rejects an implementation with no project changes even with exit code zero: %s", async message => {
+  ])("keeps an explicit implementation-blocked response as a failure: %s", async message => {
     const root = mkdtempSync(join(tmpdir(), "jev-empty-implementation-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
@@ -174,7 +175,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"recovered-thread"}' '{"typ
     const analysis: JevAnalysis = { complexity: 3, task_types: ["feature"], model: "sol", reasoning: "medium", context_files: ["index.html"], files_to_modify: ["index.html"], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
     const compactor = vi.fn(async () => undefined);
-    const completed = await new Orchestrator(queue, async () => analysis, compactor, accountUsage, undefined, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 200_000 } })).run(job.id);
+    const completed = await new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: compactor, readAccountUsage: accountUsage, readStatus: async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 200_000 } }) } }).run(job.id);
     expect(completed.status).toBe("FAILED");
     expect(completed.error).toMatch(/No project file changes|could not implement/i);
     expect(compactor).not.toHaveBeenCalled();
@@ -201,7 +202,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     process.env.PATH = `${bin}:${originalPath}`;
     const queue = new JobQueue(join(root, "queue"));
     const analysis: JevAnalysis = { complexity: 3, task_types: ["feature"], model: "sol", reasoning: "medium", context_files: ["index.html"], files_to_modify: ["index.html"], rationale: [], evaluator: "typesafe-ai/jev" };
-    const orchestrator = new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related");
+    const orchestrator = new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" });
     for (const description of ["Create the laboratory", "Animate the brain"]) {
       const job = queue.create("project", project, [{ description }]);
       queue.update(job.id, { analysis });
@@ -236,33 +237,34 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     const job = restored.create("project", project, [{ description: "Inspect project" }]);
     const analysis: JevAnalysis = { complexity: 1, task_types: ["research"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     restored.update(job.id, { analysis });
-    const completed = await new Orchestrator(restored, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    const completed = await new Orchestrator(restored, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage } }).run(job.id);
     expect(completed.status).toBe("SUCCESS");
     expect(readFileSync(args, "utf8").split("\n")).not.toContain("resume");
     expect(restored.list("project")).toHaveLength(3);
   });
 
-  it("stops an active Codex run after repeated identical failed commands", async () => {
+  it("lets repeated failed commands finish without stopping Codex", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-loop-run-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
     mkdirSync(project); mkdirSync(bin);
     writeFileSync(join(project, "AGENTS.md"), "Use the project instructions.\n");
     const fakeCodex = join(bin, "codex");
-    writeFileSync(fakeCodex, `#!/bin/sh\nprintf '%s\\n' '{"type":"thread.started","thread_id":"loop-thread"}'\nfor count in 1 2 3; do printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"cat missing.ts","aggregated_output":"missing","exit_code":1}}'; done\nprintf '%s\\n' '{"type":"turn.completed"}'\n`);
+    writeFileSync(fakeCodex, `#!/bin/sh\nprintf '%s\\n' '{"type":"thread.started","thread_id":"loop-thread"}'\nfor count in 1 2 3; do printf '%s\\n' '{"type":"item.completed","item":{"type":"command_execution","command":"cat missing.ts","aggregated_output":"missing","exit_code":1}}'; done\nfor count in 1 2 3 4 5 6; do printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Still investigating the solution."}}'; done\nprintf 'finished' > result.txt\nprintf '%s\\n' '{"type":"turn.completed"}'\n`);
     chmodSync(fakeCodex, 0o755);
     process.env.PATH = `${bin}:${originalPath}`;
     const queue = new JobQueue(join(root, "queue"));
     const job = queue.create("project-1", project, [{ description: "Implement feature" }]);
     const analysis: JevAnalysis = { complexity: 1, task_types: ["feature"], model: "luna", reasoning: "low", context_files: ["AGENTS.md"], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
-    expect(completed.status).toBe("FAILED");
-    expect(completed.errorCategory).toBe("loop");
-    expect(completed.execution?.events.some(event => event.title === "Repetition loop detected")).toBe(true);
+    const completed = await new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage } }).run(job.id);
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.attempts).toBe(1);
+    expect(completed.execution?.events.some(event => event.title === "Repetition loop detected")).toBe(false);
+    expect(readFileSync(join(project, "result.txt"), "utf8")).toBe("finished");
   });
 
-  it("does not escalate or retry a loop failure after later work succeeds", async () => {
+  it("continues the batch after repeated commands finish normally", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-loop-batch-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
@@ -276,13 +278,13 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     const queue = new JobQueue(join(root, "queue"));
     const jobs = queue.createBatch("project-1", project, [{ description: "First task" }, { description: "Later task" }]);
     for (const [index, job] of jobs.entries()) queue.update(job.id, { analysis: { complexity: 1, task_types: ["research"], model: index ? "sol" : "luna", reasoning: index ? "high" : "low", context_files: ["AGENTS.md"], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" } });
-    await new Orchestrator(queue, analyzerFor("feature"), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "unrelated").runBatch(jobs[0].id);
-    expect(queue.get(jobs[0].id)).toMatchObject({ status: "FAILED", errorCategory: "loop", attempts: 1 });
+    await new Orchestrator(queue, { analyzer: analyzerFor("feature"), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "unrelated" }).runBatch(jobs[0].id);
+    expect(queue.get(jobs[0].id)).toMatchObject({ status: "SUCCESS", attempts: 1 });
     expect(queue.get(jobs[1].id)?.status).toBe("SUCCESS");
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
   });
 
-  it("stops a repeated implementation route before a third Codex turn", async () => {
+  it("allows more than three repeated implementation routing turns without file changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "jev-route-loop-"));
     const project = join(root, "project");
     const bin = join(root, "bin");
@@ -290,17 +292,26 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     mkdirSync(project); mkdirSync(bin);
     writeFileSync(join(project, "AGENTS.md"), "Use the project instructions.\n");
     const fakeCodex = join(bin, "codex");
-    writeFileSync(fakeCodex, `#!/bin/sh\nif [ "$1" != "exec" ]; then exit 0; fi\nprintf 'run\\n' >> '${calls}'\nprintf '%s\\n' '{"type":"thread.started","thread_id":"route-loop-thread"}' '{"type":"item.completed","item":{"type":"agent_message","text":"Continue.\\nJEV_ROUTE=sol:high"}}' '{"type":"turn.completed"}'\n`);
+    writeFileSync(fakeCodex, `#!/bin/sh
+if [ "$1" != exec ]; then exit 0; fi
+printf 'run\\n' >> '${calls}'
+printf '%s\\n' '{"type":"thread.started","thread_id":"route-loop-thread"}'
+count=$(wc -l < '${calls}')
+if [ "$count" -lt 6 ]; then
+  printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Continue.\\nJEV_ROUTE=sol:high"}}'
+fi
+printf '%s\\n' '{"type":"turn.completed"}'
+`);
     chmodSync(fakeCodex, 0o755);
     process.env.PATH = `${bin}:${originalPath}`;
     const queue = new JobQueue(join(root, "queue"));
     const job = queue.create("project-1", project, [{ description: "Implement feature" }]);
     const analysis: JevAnalysis = { complexity: 2, task_types: ["research"], model: "luna", reasoning: "medium", context_files: ["AGENTS.md"], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
-    expect(completed).toMatchObject({ status: "FAILED", errorCategory: "loop" });
-    expect(completed.execution?.metrics?.turns).toBe(2);
-    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(2);
+    const completed = await new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage } }).run(job.id);
+    expect(completed.status).toBe("SUCCESS");
+    expect(completed.execution?.metrics?.turns).toBe(6);
+    expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(6);
   });
 
   it("rejects simultaneous launches for different tickets in one project", async () => {
@@ -316,7 +327,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"write-thread"}' '{"type":"
     const queue = new JobQueue(join(root, "queue"));
     const first = queue.create("project-1", project, [{ description: "First change" }]);
     const second = queue.create("project-1", project, [{ description: "Second change" }]);
-    const orchestrator = new Orchestrator(queue, analyzerFor("research"), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "uncertain");
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("research"), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "uncertain" });
     const running = orchestrator.run(first.id);
     await expect(orchestrator.run(second.id)).rejects.toThrow("already running for this project");
     expect((await running).status).toBe("SUCCESS");
@@ -344,7 +355,7 @@ printf '%s\\n' '{"type":"turn.completed"}'
     const queue = new JobQueue(join(root, "queue"));
     const first = queue.createBatch("first", firstProject, [{ description: "First A" }, { description: "Second A" }]);
     const second = queue.createBatch("second", secondProject, [{ description: "First B" }, { description: "Second B" }]);
-    const orchestrator = new Orchestrator(queue, analyzerFor("research"), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related");
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("research"), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" });
     await Promise.all([orchestrator.runBatch(first[0].id), orchestrator.runBatch(second[0].id)]);
     expect([...first, ...second].map(job => queue.get(job.id)?.status)).toEqual(["SUCCESS", "SUCCESS", "SUCCESS", "SUCCESS"]);
     expect(first.map(job => queue.get(job.id)?.execution?.threadId)).toEqual(["first-thread", "first-thread"]);
@@ -368,7 +379,7 @@ printf '%s\\n' '{"type":"turn.completed"}'
     const analysis: JevAnalysis = { complexity: 1, outcome_clarity_score: 75, task_types: ["feature"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
     let evaluations = 0;
-    const orchestrator = new Orchestrator(queue, async () => { evaluations += 1; return analysis; }, async () => undefined, accountUsage);
+    const orchestrator = new Orchestrator(queue, { analyzer: async () => { evaluations += 1; return analysis; }, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage } });
 
     const prepared = await orchestrator.prepare(queue.get(job.id)!);
 
@@ -393,7 +404,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
       const queue = new JobQueue(join(root, "queue"));
       const first = queue.create("project", project, [{ description: "Read first document" }]);
       const evaluator = vi.fn(analyzerFor("research"));
-      const orchestrator = new Orchestrator(queue, evaluator, async () => undefined, accountUsage, async () => undefined, undefined, undefined, async () => "unrelated");
+      const orchestrator = new Orchestrator(queue, { analyzer: evaluator, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage, archiveThread: async () => undefined }, continuityReviewer: async () => "unrelated" });
       const running = orchestrator.runBatch(first.id);
       await vi.waitFor(() => expect(queue.get(first.id)?.status).toBe("RUNNING"));
       const next = queue.createBatch("project", project, [{ description: "Read another document" }])[0];
@@ -414,7 +425,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
       const analysis: JevAnalysis = { complexity: 1, task_types: ["documentation"], model: "luna", reasoning: "medium", rationale: [], evaluator: "typesafe-ai/jev" };
       let finish!: (value: JevAnalysis) => void;
       const evaluator = vi.fn(() => new Promise<JevAnalysis>(resolve => { finish = resolve; }));
-      const orchestrator = new Orchestrator(queue, evaluator);
+      const orchestrator = new Orchestrator(queue, { analyzer: evaluator });
       const first = orchestrator.prepare(job);
       const second = orchestrator.prepare(job);
       expect(evaluator).toHaveBeenCalledTimes(1);
@@ -433,7 +444,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
       const job = queue.create("project", root, [{ description: "Read the documentation" }]);
       const analysis: JevAnalysis = { complexity: 1, task_types: ["documentation"], model: "luna", reasoning: "medium", rationale: [], evaluator: "typesafe-ai/jev" };
       const evaluator = vi.fn().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue(analysis);
-      const orchestrator = new Orchestrator(queue, evaluator);
+      const orchestrator = new Orchestrator(queue, { analyzer: evaluator });
       const failed = expect(orchestrator.prepare(job)).rejects.toThrow("timed out after 60 seconds");
       await vi.advanceTimersByTimeAsync(60_000);
       await failed;
@@ -453,7 +464,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
       const newAnalysis: JevAnalysis = { ...oldAnalysis, complexity: 4, model: "sol" };
       let finish!: (value: JevAnalysis) => void;
       const evaluator = vi.fn().mockImplementationOnce(() => new Promise<JevAnalysis>(resolve => { finish = resolve; })).mockResolvedValue(newAnalysis);
-      const orchestrator = new Orchestrator(queue, evaluator);
+      const orchestrator = new Orchestrator(queue, { analyzer: evaluator });
       const original = orchestrator.prepare(job);
       queue.updatePendingTask(job.id, "Updated request");
       await orchestrator.prepare(queue.get(job.id)!);
@@ -486,7 +497,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
     writeFileSync(image, "visual reference");
     queue.update(job.id, { attachments: [{ id: "reference", name: "reference.png", mimeType: "image/png", size: 16, path: image }] });
     const compactor = vi.fn(async () => undefined);
-    const orchestrator = new Orchestrator(queue, analyzerFor("installation"), compactor, accountUsage, undefined, undefined, async () => ({ capturedAt: "2026-09-22T00:00:00.000Z", context: { usedTokens: 90_900, windowTokens: 258_000 }, fiveHour: { remainingPercent: 81 }, weekly: { remainingPercent: 29 } }));
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("installation"), provider: { ...createExecutionProvider(), compactThread: compactor, readAccountUsage: accountUsage, readStatus: async () => ({ capturedAt: "2026-09-22T00:00:00.000Z", context: { usedTokens: 90_900, windowTokens: 258_000 }, fiveHour: { remainingPercent: 81 }, weekly: { remainingPercent: 29 } }) } });
     await orchestrator.prepare(job);
     const completed = await orchestrator.run(job.id);
 
@@ -499,7 +510,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
     expect(readFileSync(args, "utf8")).toContain("--approve-for-me");
     expect(readFileSync(args, "utf8")).not.toContain("--sandbox");
     expect(readFileSync(args, "utf8")).toContain("--model");
-    expect(readFileSync(args, "utf8")).toContain(codexModelId("luna"));
+    expect(readFileSync(args, "utf8")).toContain(configuredModelId("luna"));
     expect(readFileSync(args, "utf8")).toContain('model_reasoning_effort="medium"');
     expect(completed.execution?.compactedAfterTask).toBe(false);
     expect(compactor).not.toHaveBeenCalled();
@@ -527,7 +538,7 @@ printf '%s\\n' '{"type":"thread.started","thread_id":"arrival-thread"}' '{"type"
     const job = queue.create("project-1", project, [{ description: "Resume after the quota reset" }]);
     let statusReads = 0;
     const rateLimits = async () => { statusReads++; return { available: false, reached: false }; };
-    const orchestrator = new Orchestrator(queue, analyzerFor("research"), async () => undefined, accountUsage, undefined, rateLimits);
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("research"), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage, readRateLimit: rateLimits } });
     await orchestrator.prepare(job);
 
     const paused = await orchestrator.run(job.id);
@@ -580,12 +591,12 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     const job = queue.create("project-1", project, [{ description: "Implement a tricky change" }]);
     const analysis: JevAnalysis = { complexity: 2, task_types: ["research"], model: "luna", reasoning: "medium", context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev" };
     queue.update(job.id, { analysis });
-    const completed = await new Orchestrator(queue, async () => analysis, async () => undefined, accountUsage).run(job.id);
+    const completed = await new Orchestrator(queue, { analyzer: async () => analysis, provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage } }).run(job.id);
     const invocations = readFileSync(calls, "utf8").trim().split("\n");
 
     expect(invocations).toHaveLength(2);
-    expect(invocations[0]).toContain(codexModelId("luna"));
-    expect(invocations[1]).toContain(codexModelId("luna"));
+    expect(invocations[0]).toContain(configuredModelId("luna"));
+    expect(invocations[1]).toContain(configuredModelId("luna"));
     expect(invocations[1]).toContain('model_reasoning_effort="high"');
     expect(completed.status).toBe("SUCCESS");
     expect(completed.execution?.usage?.input_tokens).toBe(6);
@@ -611,11 +622,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     ]);
     const decisions = ["installation", "ui_ux", "testing"] as const;
     let decision = 0;
-    const orchestrator = new Orchestrator(
-      queue,
-      (projectPath, tasks) => analyze(projectPath, tasks, async () => ({ taskType: decisions[decision++], complexity: 1 })),
-      async () => undefined,
-      accountUsage, undefined, undefined, undefined, async () => "related"
+    const orchestrator = new Orchestrator(queue, { analyzer: (projectPath, tasks) => analyze(projectPath, tasks, async () => ({ taskType: decisions[decision++], complexity: 1 })), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" }
     );
     await orchestrator.runBatch(jobs[0].id);
 
@@ -643,7 +650,7 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
       { description: "First change" },
       { description: "Tests that depend on the change" }
     ]);
-    await new Orchestrator(queue, analyzerFor("feature"), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related").runBatch(jobs[0].id);
+    await new Orchestrator(queue, { analyzer: analyzerFor("feature"), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" }).runBatch(jobs[0].id);
 
     expect(queue.listBatch(jobs[0].batchId!).map(job => job.status)).toEqual(["FAILED", "FAILED"]);
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(10);
@@ -672,9 +679,9 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
       { model: "sol", reasoning: "high" }
     ] as const;
     let index = 0;
-    await new Orchestrator(queue, async () => ({
+    await new Orchestrator(queue, { analyzer: async () => ({
       complexity: 1, task_types: ["feature"],       ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
-    }), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related").runBatch(jobs[0].id);
+    }), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" }).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
     expect(result.map(job => job.status)).toEqual(["SUCCESS", "SUCCESS"]);
@@ -702,9 +709,9 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
       { complexity: 3, model: "luna", reasoning: "max" }
     ] as const;
     let index = 0;
-    await new Orchestrator(queue, async () => ({
+    await new Orchestrator(queue, { analyzer: async () => ({
       task_types: ["research"], ...decisions[index++], context_files: [], files_to_modify: [], rationale: [], evaluator: "typesafe-ai/jev"
-    }), async () => undefined, accountUsage, undefined, undefined, undefined, async () => "related").runBatch(jobs[0].id);
+    }), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage }, continuityReviewer: async () => "related" }).runBatch(jobs[0].id);
 
     const result = queue.listBatch(jobs[0].batchId!);
     expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(3);
@@ -727,10 +734,10 @@ printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3}}'
     const compactor = vi.fn(async () => undefined);
     const archiver = vi.fn(async () => undefined);
     const continuity = vi.fn(async () => "unrelated" as const);
-    const orchestrator = new Orchestrator(queue, analyzerFor("research"), compactor, accountUsage, archiver, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 120_000, windowTokens: 258_000 } }), continuity);
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("research"), provider: { ...createExecutionProvider(), compactThread: compactor, readAccountUsage: accountUsage, archiveThread: archiver, readStatus: async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 120_000, windowTokens: 258_000 } }) }, continuityReviewer: continuity });
     expect((await orchestrator.run(completed.id)).status).toBe("SUCCESS");
     expect(continuity).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ id: completed.id })]), expect.objectContaining({ id: next.id }));
-    expect(archiver).toHaveBeenCalledWith("unrelated-thread", expect.any(String));
+    expect(archiver).toHaveBeenCalledWith("unrelated-thread", expect.objectContaining({ projectPath: project }));
     expect(compactor).not.toHaveBeenCalled();
     expect(queue.get(completed.id)?.execution?.threadArchivedAt).toBeTruthy();
     expect(queue.get(next.id)?.status).toBe("PENDING");
@@ -756,13 +763,13 @@ printf '%s\n' '{"type":"turn.completed"}'
     const jobs = queue.createBatch("project-1", project, [{ description: "Add a login screen" }, { description: "Optimize the image loader" }]);
     const archiver = vi.fn(async () => undefined);
     const continuity = vi.fn(async () => "unrelated" as const);
-    const orchestrator = new Orchestrator(queue, analyzerFor("research"), async () => undefined, accountUsage, archiver, undefined, undefined, continuity);
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("research"), provider: { ...createExecutionProvider(), compactThread: async () => undefined, readAccountUsage: accountUsage, archiveThread: archiver }, continuityReviewer: continuity });
     await orchestrator.runBatch(jobs[0].id);
     expect(readFileSync(counter, "utf8")).toBe("2");
     expect(queue.listBatch(jobs[0].batchId!).map(job => job.status)).toEqual(["SUCCESS", "SUCCESS"]);
     expect(queue.get(jobs[0].id)?.execution?.threadId).toBe("thread-1");
     expect(continuity).toHaveBeenCalledTimes(1);
-    expect(archiver).toHaveBeenCalledWith("thread-1", expect.any(String));
+    expect(archiver).toHaveBeenCalledWith("thread-1", expect.objectContaining({ projectPath: project }));
     expect(queue.get(jobs[1].id)?.execution?.threadId).toBe("thread-2");
   }, 3000);
 
@@ -779,11 +786,11 @@ printf '%s\n' '{"type":"turn.completed"}'
     const next = queue.create("project-1", project, [{ description: "Add validation to the login screen" }]);
     const compactor = vi.fn(async () => undefined);
     const archiver = vi.fn(async () => undefined);
-    const orchestrator = new Orchestrator(queue, analyzerFor("research"), compactor, accountUsage, archiver, undefined, async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 258_000 } }), async () => "related");
+    const orchestrator = new Orchestrator(queue, { analyzer: analyzerFor("research"), provider: { ...createExecutionProvider(), compactThread: compactor, readAccountUsage: accountUsage, archiveThread: archiver, readStatus: async () => ({ capturedAt: new Date().toISOString(), context: { usedTokens: 100_000, windowTokens: 258_000 } }) }, continuityReviewer: async () => "related" });
     await orchestrator.runBatch(completed.id);
     expect(queue.get(completed.id)?.status).toBe("SUCCESS");
     expect(queue.get(next.id)?.status).toBe("SUCCESS");
-    expect(compactor).toHaveBeenCalledWith("related-thread", expect.any(String));
+    expect(compactor).toHaveBeenCalledWith("related-thread", expect.objectContaining({ projectPath: project }));
     expect(compactor).toHaveBeenCalledTimes(1);
     expect(archiver).not.toHaveBeenCalled();
   }, 3000);

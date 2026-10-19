@@ -3,7 +3,7 @@ import { AppConfigStore } from "./app-config.js";
 import { createConfiguredJevProvider, type JevDecision } from "./jev-provider.js";
 import { estimateJevInputCost } from "./jev-pricing.js";
 import { logJev, logJevError } from "./jev-logger.js";
-import { defaultRoute } from "./codex-models.js";
+import { defaultRoute } from "./model-routing.js";
 import type { Complexity, JevAnalysis, Job, TaskSpec } from "./types.js";
 
 export type TaskEvaluator = (state: string) => Promise<JevDecision>;

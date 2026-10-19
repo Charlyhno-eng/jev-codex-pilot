@@ -1,10 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { CodexModel, Complexity, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
-import { codexModelId, defaultRoute, MODEL_LEVELS, REASONING_LEVELS, routesForComplexity } from "./codex-models.js";
+import type { ModelKey, Complexity, Job, JobStatus, Reasoning, TaskSpec } from "./types.js";
+import { configuredModelId, defaultRoute, MODEL_LEVELS, REASONING_LEVELS, routesForComplexity } from "./model-routing.js";
 import { readDurableJson, writeDurableJson } from "./durable-json.js";
-import { implementationBlocked } from "./codex-execution.js";
+import { findExecutionProvider } from "./execution/provider.js";
 
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -18,10 +18,15 @@ function hasManualRoute(job: Job): boolean {
 export class JobQueue {
   private jobs: Job[] = [];
   private readonly file: string;
+  private readonly dismissedLintersFile: string;
+  private readonly dismissedLinters: Set<string>;
   private persistenceTimer?: ReturnType<typeof setTimeout>;
   constructor(dataDirectory = ".jev") {
     mkdirSync(dataDirectory, { recursive: true });
     this.file = join(dataDirectory, "jobs.json");
+    this.dismissedLintersFile = join(dataDirectory, "dismissed-linter-projects.json");
+    this.dismissedLinters = new Set(readDurableJson(this.dismissedLintersFile,
+      (value): value is string[] => Array.isArray(value) && value.every(path => typeof path === "string"), () => []));
     this.jobs = readDurableJson(this.file, validJobs, () => []);
     this.jobs = this.jobs.map(job => {
       const current = { ...job } as Job & Record<string, unknown>;
@@ -45,15 +50,15 @@ export class JobQueue {
           job = { ...job, analysis: { ...analysis, complexity } as unknown as typeof job.analysis };
         }
       }
-      if (job.status === "PENDING" && job.analysis && !job.execution?.escalationPending && !hasManualRoute(job)) {
+      if (job.status === "PENDING" && job.analysis && !job.execution?.escalationPending && !job.execution?.continuationPending && !hasManualRoute(job)) {
         const routes = routesForComplexity(job.analysis.complexity);
         if (!routes.some(route => route.model === job.analysis!.model && route.reasoning === job.analysis!.reasoning)) {
           const route = defaultRoute(job.analysis.complexity);
           job = { ...job, analysis: { ...job.analysis, ...route, rationale: [...job.analysis.rationale, "Pending recommendation refreshed from config/model.toml."] } };
         }
       }
-      if (job.status === "SUCCESS" && implementationBlocked(job.output ?? "")) {
-        return { ...job, status: "FAILED", errorCategory: "code", updatedAt: new Date().toISOString(), error: "Codex reported that it could not implement the task", execution: job.execution ? { ...job.execution, phase: "ERROR" } : undefined } as Job;
+      if (job.status === "SUCCESS" && (job.execution?.implementationBlocked ?? findExecutionProvider(job.execution?.providerId ?? "codex")?.implementationBlocked(job.output ?? ""))) {
+        return { ...job, status: "FAILED", errorCategory: "code", updatedAt: new Date().toISOString(), error: `${job.execution?.providerName ?? "Codex"} reported that it could not implement the task`, execution: job.execution ? { ...job.execution, phase: "ERROR" } : undefined } as Job;
       }
       return job;
     });
@@ -122,56 +127,56 @@ export class JobQueue {
     else if (!this.persistenceTimer) this.persistenceTimer = setTimeout(() => this.persist(), 250);
     return this.jobs[index];
   }
-  /** Archives every saved ticket entry that belongs to a cleared Codex thread. */
-  clearProjectThread(projectId: string, threadId: string, detail = "JEV cleared this project thread; the next task starts a fresh Codex conversation.") {
+  /** Archives every saved ticket entry that belongs to a cleared provider thread. */
+  clearProjectThread(projectId: string, threadId: string, detail = "JEV cleared this project thread; the next task starts a fresh conversation.", providerLabel = "Codex", providerId = "codex") {
     const now = new Date().toISOString();
-    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId ? job : {
+    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId || (job.execution?.providerId ?? "codex") !== providerId ? job : {
       ...job,
       execution: {
         ...job.execution,
         threadArchivedAt: now,
-        events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system" as const, title: "Codex /clear confirmed", detail, status: "success" as const }]
+        events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system" as const, title: `${providerLabel} /clear confirmed`, detail, status: "success" as const }]
       }
     });
     this.persist();
   }
   /** Prevents JEV from resuming a thread whose automatic archive failed. */
-  disableProjectThreadResume(projectId: string, threadId: string) {
+  disableProjectThreadResume(projectId: string, threadId: string, providerId = "codex") {
     const now = new Date().toISOString();
-    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId ? job : {
+    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId || (job.execution?.providerId ?? "codex") !== providerId ? job : {
       ...job,
       execution: { ...job.execution, threadResumeDisabledAt: now }
     });
     this.persist();
   }
-  appendProjectThreadEvent(projectId: string, threadId: string, title: string, detail: string, status: "active" | "success" | "error" = "success") {
+  appendProjectThreadEvent(projectId: string, threadId: string, title: string, detail: string, status: "active" | "success" | "error" = "success", providerId = "codex") {
     const now = new Date().toISOString();
-    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId ? job : {
+    this.jobs = this.jobs.map(job => job.projectId !== projectId || job.execution?.threadId !== threadId || (job.execution?.providerId ?? "codex") !== providerId ? job : {
       ...job,
       execution: { ...job.execution, lastActivityAt: now, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: status === "error" ? "error" as const : "system" as const, title, detail, status }] }
     });
     this.persist();
   }
   transition(id: string, status: JobStatus, more: Partial<Job> = {}) { return this.update(id, { ...more, status }); }
-  /** Recovers work only when its former Codex process is no longer alive. */
+  /** Recovers work only when its former execution process is no longer alive. */
   recoverInterrupted(isActive: (pid: number) => boolean, owned: (projectId: string) => boolean = () => false): Job[] {
     const recovered: Job[] = [];
     for (const job of this.jobs.filter(item => (item.status === "RUNNING" || item.status === "ESCALATING") && !owned(item.projectId))) {
       if (job.execution?.pid && isActive(job.execution.pid)) {
-        if (!job.recoveryNote) this.update(job.id, { errorCategory: "interruption", recoveryNote: "Server restarted while the previous Codex process is still active. Waiting for that process to exit before allowing a new launch." });
+        if (!job.recoveryNote) this.update(job.id, { errorCategory: "interruption", recoveryNote: `Server restarted while the previous ${job.execution?.providerName ?? "Codex"} process is still active. Waiting for that process to exit before allowing a new launch.` });
         continue;
       }
       const now = new Date().toISOString();
       const wasEscalating = job.status === "ESCALATING" || job.execution?.escalationPending;
       const note = wasEscalating
         ? "JEV was interrupted during model escalation. This ticket is ready to run again at the selected route, continuing the partial work."
-        : "Server execution was interrupted. Codex is no longer running; review the project before restarting this ticket.";
+        : `Server execution was interrupted. ${job.execution?.providerName ?? "Codex"} is no longer running; review the project before restarting this ticket.`;
       const updated = this.update(job.id, { status: "PENDING", error: undefined, errorCategory: "interruption", recoveryNote: note, execution: job.execution ? { ...job.execution, phase: "QUEUED", escalationPending: Boolean(wasEscalating), pid: undefined, lastActivityAt: now, completedAt: undefined, events: [...job.execution.events, { id: randomUUID(), timestamp: now, kind: "system", title: wasEscalating ? "Escalation interrupted" : "Execution interrupted", detail: note, status: "active" }] } : undefined });
       if (updated) recovered.push(updated);
     }
     return recovered;
   }
-  pauseForSessionLimit(id: string, resumeAt?: string) {
+  pauseForSessionLimit(id: string, resumeAt?: string, providerLabel = "Codex") {
     const job = this.get(id);
     if (!job) throw new Error("Job not found");
     const now = new Date().toISOString();
@@ -179,8 +184,8 @@ export class JobQueue {
       id: randomUUID(),
       timestamp: now,
       kind: "system" as const,
-      title: "Codex session limit reached",
-      detail: resumeAt ? `Development paused until Codex can start its next session at ${resumeAt}.` : "Development paused until Codex can start its next session.",
+      title: `${providerLabel} session limit reached`,
+      detail: resumeAt ? `Development paused until ${providerLabel} can start its next session at ${resumeAt}.` : `Development paused until ${providerLabel} can start its next session.`,
       status: "active" as const
     };
     return this.update(id, {
@@ -196,7 +201,7 @@ export class JobQueue {
     if (!job) throw new Error("Job not found");
     if (job.status !== "SESSION_PAUSED") throw new Error("Only session-paused tasks can resume");
     const now = new Date().toISOString();
-    const event = { id: randomUUID(), timestamp: now, kind: "system" as const, title: "Codex session available", detail: "Development automatically resumed after the Codex session limit reset.", status: "active" as const };
+    const event = { id: randomUUID(), timestamp: now, kind: "system" as const, title: `${job.execution?.providerName ?? "Codex"} session available`, detail: `Development automatically resumed after the ${job.execution?.providerName ?? "Codex"} session limit reset.`, status: "active" as const };
     return this.update(id, {
       status: "PENDING",
       errorCategory: undefined,
@@ -231,6 +236,7 @@ export class JobQueue {
       execution: job.execution ? {
         ...job.execution,
         escalationPending: false,
+        continuationPending: false,
         phase: status === "SUCCESS" ? "COMPLETED" : "ERROR",
         completedAt: status === "SUCCESS" ? (job.execution.completedAt ?? now) : undefined,
         events: [...job.execution.events, event]
@@ -280,14 +286,14 @@ export class JobQueue {
     const levels = dimension === "model"
       ? MODEL_LEVELS
       : REASONING_LEVELS;
-    const current = job.analysis[dimension] as CodexModel | Reasoning;
+    const current = job.analysis[dimension] as ModelKey | Reasoning;
     const configuredIndex = levels.indexOf(current as never);
     const index = configuredIndex < 0 ? (dimension === "reasoning" && current === "max" ? levels.length - 1 : dimension === "reasoning" && current === "xhigh" ? Math.max(0, levels.length - 2) : 0) : configuredIndex;
     const requestedIndex = Math.max(0, Math.min(levels.length - 1, index + delta));
     const next = levels[requestedIndex];
     if (next === current) return job;
     const direction = delta < 0 ? "lower" : "higher";
-    const label = dimension === "model" ? codexModelId(next as CodexModel) : next === "xhigh" ? "Extra high" : next === "max" ? "Max" : next;
+    const label = dimension === "model" ? configuredModelId(next as ModelKey) : next === "xhigh" ? "Extra high" : next === "max" ? "Max" : next;
     return this.update(id, {
       analysis: {
         ...job.analysis,
@@ -308,12 +314,24 @@ export class JobQueue {
     if (!job) return undefined;
     return this.update(id, { archivedAt: undefined });
   }
+  /** Checks whether the user permanently dismissed automatic lint tickets for this project path. */
+  isProjectLinterDismissed(projectPath: string): boolean {
+    return this.dismissedLinters.has(resolve(projectPath));
+  }
+  /** Removes a pending ticket and remembers dismissed automatic lint setup across reloads. */
   removePending(id: string) {
     const index = this.jobs.findIndex(job => job.id === id);
     if (index < 0) return undefined;
     if (this.jobs[index].status !== "PENDING") throw new Error("Only pending tasks can be removed");
+    if (this.jobs[index].kind === "linter_setup") {
+      this.dismissedLinters.add(resolve(this.jobs[index].projectPath));
+      writeDurableJson(this.dismissedLintersFile, [...this.dismissedLinters]);
+      // Keep the fallback snapshot from undoing an explicit user dismissal.
+      writeDurableJson(this.dismissedLintersFile, [...this.dismissedLinters]);
+    }
     const [removed] = this.jobs.splice(index, 1);
     this.persist();
+    if (removed.kind === "linter_setup") this.persist();
     return removed;
   }
   clear() { this.jobs = []; this.persist(); }

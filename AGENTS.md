@@ -2,7 +2,7 @@
 
 JEV Codex Pilot turns software requests into traceable Codex tickets. The API lives in `src/api`, the ticket engine in `src/core`, and the web app in `src/web`. The project also includes a headless `jc-pilot` CLI documented in the README.
 
-JEV scores and routes tickets by complexity, keeps project history in `.jev/`, and lets Codex choose and run task checks. It preserves related work in a Codex thread, clears unrelated work, compacts long context at 100,000 tokens, and stops repeated failed actions when the project has not changed. The headless CLI runs tickets through the same engine, one command at a time in queue order.
+JEV scores and routes tickets by complexity, keeps project history in `.jev/`, and lets Codex choose and run task checks. It preserves related work in a Codex thread, clears unrelated work, compacts long context at 100,000 tokens, and allows Codex to continue through inactivity and repeated actions. The headless CLI runs tickets through the same engine, one command at a time in queue order.
 
 Do not change target project code or run its tests as part of JEV. Create or edit a target project's `AGENTS.md` only through the user flow, and run Codex only after an explicit API or Run action. Never expose secrets in code, logs, documentation, or the UI. Keep project instructions short and task focused, and record durable product behavior in `README.md`.
 
@@ -117,3 +117,15 @@ This update audits API, queue, CLI, Git, hooks, and composer behavior. It reject
 This update supports clipboard image paste in draft and pending-ticket descriptions while retaining file uploads, previews, removal, and shared image limits. Pending edits wait for image loading before saving and serialize image reads to preserve cumulative limits.
 
 This update separates web ticket creation and evaluation from explicit queue execution. Saved tickets stay in To do for re-evaluation and model or reasoning adjustments; review submissions wait for active sequences to finish, and evaluation-only API requests preserve saved tickets when analysis fails.
+
+This update permanently remembers deletion of automatic linter setup tickets by project path, preventing recreation when projects reopen or queues launch again while preserving lint instructions on ordinary work and automatic setup for other projects.
+
+This update preserves the browser Host header through the Vite API proxy so Browse and other local workspace requests remain authorized when Vite uses a fallback port. External origins remain blocked, regression coverage checks fallback-port folder selection, and the README directs users to the URL printed by Vite.
+
+This update keeps unfinished implementations and technical Codex failures in Running with unlimited spaced continuations at the selected route and saved thread. Inactivity and repetition no longer stop Codex, implementation routing has no turn limit, and regression coverage verifies retries, queue ownership, human review, and restart continuity while preserving explicit blocked, linter setup, quota, and JEV error handling.
+
+This update isolates coding AI execution behind a provider contract and moves Codex CLI transport, protocol parsing, model discovery, private state, native hooks, session lifecycle, status, and console formatting into one adapter directory. The API, CLI, and ticket engine select or inject an adapter, preserve provider-specific thread and quota boundaries, and retain legacy history compatibility; fake-provider regression coverage verifies execution without launching Codex.
+
+This update explains ticket failures directly in the selected board ticket and console, showing the recorded origin, exact reason, verification and recovery context, and the last provider response from on-demand ticket details. It links to the full console history, distinguishes quota pauses and Git delivery failures, and explicitly identifies missing historical causes without inferring one.
+
+This update reduces the bundled skill library to README writing and Anatomy, removing the retired general design, performance, and architecture packages. Anatomy retains pinned upstream instructions, references, kit modules, runtime scripts, example sources, and MIT attribution in ticket-scoped snapshots. Existing tickets retain frozen skill resources and usage guidance, portable imports remain available, and regression coverage verifies the reduced catalog and legacy ticket compatibility.

@@ -2,7 +2,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { AppConfigStore } from "../core/app-config.js";
-import { codexModelId } from "../core/codex-models.js";
+import { createExecutionProvider } from "../core/execution/provider.js";
 import { JobQueue } from "../core/queue.js";
 import { Orchestrator } from "../core/orchestrator.js";
 import { ProjectStore } from "../core/projects.js";
@@ -10,6 +10,7 @@ import { acquireApiInstance } from "../core/single-instance.js";
 import { interactiveSession } from "./interactive.js";
 import type { Job, ProjectRecord } from "../core/types.js";
 
+const executionProvider = createExecutionProvider();
 const cliCommand = `node "${realpathSync(process.argv[1] ?? "bin/jc-pilot.mjs")}"`;
 const help = `Usage: ${cliCommand}                 interactive terminal
        ${cliCommand} run "describe one task"
@@ -33,7 +34,7 @@ function done(job: Job): boolean { return ["SUCCESS", "FAILED", "SESSION_PAUSED"
 
 function summary(job: Job) {
   say(`\nTicket ${job.id} · ${job.status}`);
-  if (job.analysis) say(`Route: ${job.execution?.model ?? codexModelId(job.analysis.model)} / ${job.execution?.reasoning ?? job.analysis.reasoning} · complexity ${job.analysis.complexity}/5`);
+  if (job.analysis) say(`Route: ${job.execution?.model ?? executionProvider.modelId(job.analysis.model)} / ${job.execution?.reasoning ?? job.analysis.reasoning} · complexity ${job.analysis.complexity}/5`);
   if (job.execution) say(`Verification: ${job.execution.verification}`);
   if (job.error) say(`Error: ${job.error}`);
   if (job.gitDelivery?.status === "committed") say(`Git: committed ${job.gitDelivery.commit} on ${job.gitDelivery.branch}`);
@@ -87,7 +88,7 @@ async function runViaApi(base: string, projectDirectory: string, descriptions: s
   for (const [index, job] of created.entries()) say(`Ticket ${index + 1}/${created.length} · ${job.id.slice(0, 8)} · ${descriptions[index]}`);
   for (const job of created) {
     const prepared = await request<Job>(base, `/jobs/${job.id}/prepare`, "POST");
-    if (prepared.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
+    if (prepared.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${executionProvider.modelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
   }
   await request<Job>(base, `/jobs/${created[0].id}/${created.length > 1 ? "run-batch" : "run"}`, "POST");
   say("Codex started. Waiting for JEV validation…");
@@ -136,12 +137,12 @@ async function runLocally(dataDirectory: string, projectDirectory: string, descr
   const jobs = descriptions.length === 1 ? [queue.create(project.id, project.path, [{ description: descriptions[0] }])] : queue.createBatch(project.id, project.path, descriptions.map(description => ({ description })));
   try {
   for (const [index, job] of jobs.entries()) say(`Ticket ${index + 1}/${jobs.length} · ${job.id.slice(0, 8)} · ${descriptions[index]}`);
-  const orchestrator = new Orchestrator(queue);
+  const orchestrator = new Orchestrator(queue, { provider: executionProvider });
   orchestrator.configureGitDelivery(projectId => Boolean(projects.get(projectId)?.autoCommitPush));
   orchestrator.configureHumanReview(projectId => Boolean(projects.get(projectId)?.humanInTheLoop));
   for (const job of jobs) {
     const prepared = await orchestrator.prepare(job);
-    if (prepared?.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${codexModelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
+    if (prepared?.analysis) say(`JEV ${job.id.slice(0, 8)}: complexity ${prepared.analysis.complexity}/5 · ${executionProvider.modelId(prepared.analysis.model)}/${prepared.analysis.reasoning}`);
   }
   const singleResult = jobs.length === 1 ? await orchestrator.run(jobs[0].id) : undefined;
   if (jobs.length > 1) await orchestrator.runBatch(jobs[0].id);

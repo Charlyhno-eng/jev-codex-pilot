@@ -1,10 +1,10 @@
 import type { Analysis } from "../lib/types.js";
 import { formatUsd, reasoningLabel } from "../lib/format.js";
-import { useCodexModels } from "../hooks/use-codex-models.js";
+import { useExecutionModels } from "../hooks/use-execution-models.js";
 
 /** Renders JEV analysis and pending route controls. */
 export function Plan({ analysis, adjustable, onAdjust }: { analysis: Analysis; adjustable: boolean; onAdjust: (dimension: "model" | "reasoning", delta: -1 | 1) => Promise<void> }) {
-  const { models, modelLevels, reasoningLevels } = useCodexModels();
+  const { models, modelLevels, reasoningLevels } = useExecutionModels();
   const availableModels = modelLevels;
   const availableReasoning = reasoningLevels;
   const configuredModelIndex = availableModels.indexOf(analysis.model);
